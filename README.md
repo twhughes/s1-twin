@@ -9,7 +9,7 @@
 ```
 
 Terminal synth editor for the Roland S-1. Sliders, patch management, and a
-piano roll sequencer — because GUIs are overrated and your S-1 looks lonely.
+piano roll sequencer.
 
 ## What's in the box
 

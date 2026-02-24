@@ -11,6 +11,14 @@
 Terminal synth editor for the Roland S-1. Sliders, patch management, and a
 piano roll sequencer.
 
+<p align="center">
+  <img src="docs/screenshot.svg" alt="Piano roll sequencer" width="100%">
+</p>
+
+<p align="center">
+  <img src="docs/panel.svg" alt="Parameter sliders" width="100%">
+</p>
+
 ## What's in the box
 
 - All 54 CC parameters as sliders/toggles/selectors across three tabs

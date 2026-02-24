@@ -123,22 +123,20 @@ def build_animated_svg(frame_paths: list[Path], output: Path, frame_duration: fl
     vb_match = re.search(r'viewBox="([^"]+)"', first_text)
     viewbox = vb_match.group(1) if vb_match else "0 0 1238 928.4"
 
-    # Extract shared <style>
-    style_match = re.search(r"<style>(.*?)</style>", first_text, re.DOTALL)
-    shared_style = style_match.group(1) if style_match else ""
-
+    # Collect each frame's full inner content INCLUDING its own <style> block,
+    # since each Textual render generates unique class name prefixes.
     frame_contents = []
     for path in frame_paths:
         svg_text = path.read_text()
         inner = re.sub(r"<svg[^>]*>", "", svg_text, count=1)
         inner = re.sub(r"</svg>\s*$", "", inner)
-        inner = re.sub(r"<style>.*?</style>", "", inner, flags=re.DOTALL)
+        # Keep <!-- comments --> but that's fine
         frame_contents.append(inner.strip())
 
     n = len(frame_contents)
     total = n * frame_duration
 
-    anim_css = "\n        .frame { opacity: 0; position: absolute; }\n"
+    anim_css = "\n        .frame { opacity: 0; }\n"
     for i in range(n):
         s = (i / n) * 100
         e = ((i + 1) / n) * 100
@@ -153,7 +151,7 @@ def build_animated_svg(frame_paths: list[Path], output: Path, frame_duration: fl
 
     parts = [
         f'<svg class="rich-terminal" viewBox="{viewbox}" xmlns="http://www.w3.org/2000/svg">',
-        f"<style>{shared_style}\n{anim_css}</style>",
+        f"<style>{anim_css}</style>",
     ]
     for i, content in enumerate(frame_contents):
         parts.append(f'<g class="frame f{i}">{content}</g>')

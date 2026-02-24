@@ -131,9 +131,9 @@ class S1App(App):
             return
         if not ports:
             return
-        # Prefer a port with "S-1" in the name
+        # Prefer a port with "S-1" in the name (case-insensitive)
         for port in ports:
-            if "S-1" in port or "s-1" in port.lower():
+            if "s-1" in port.lower() or "s1" in port.lower():
                 try:
                     self.midi.connect(port)
                     self.notify(f"Connected: {port}", severity="information")

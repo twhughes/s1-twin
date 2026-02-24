@@ -46,10 +46,15 @@ You'll need system MIDI libs — macOS and Windows ship them, Linux wants
 
 ```bash
 s1tui                          # auto-connects to S-1 if it sees one
-s1tui --port "S-1"             # specific port
-s1tui --channel 2              # MIDI channel (default: 1)
+s1tui --port "S-1" --channel 3 # port + channel (the S-1 defaults to ch 3)
 s1tui --list-ports             # what's plugged in?
 ```
+
+It tries to auto-connect to any port with "S-1" in the name. If your port is
+named something else, use `--port`. Run `--list-ports` first if you're not sure.
+
+The S-1 ships on MIDI channel 3 — if notes aren't going through, try
+`--channel 3`.
 
 ## Keys
 

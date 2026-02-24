@@ -15,8 +15,8 @@ def main() -> None:
         help="Auto-connect to this MIDI port on startup",
     )
     parser.add_argument(
-        "--channel", "-c", type=int, default=1,
-        help="MIDI channel (1-16, default: 1)",
+        "--channel", "-c", type=int, default=3,
+        help="MIDI channel (1-16, default: 3 — the S-1's factory setting)",
     )
     args = parser.parse_args()
 

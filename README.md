@@ -50,11 +50,26 @@ s1tui --port "S-1" --channel 3 # port + channel (the S-1 defaults to ch 3)
 s1tui --list-ports             # what's plugged in?
 ```
 
-It tries to auto-connect to any port with "S-1" in the name. If your port is
-named something else, use `--port`. Run `--list-ports` first if you're not sure.
+It tries to auto-connect to any port with "S-1" in the name. If it doesn't
+find one, you'll see "No MIDI" in the status bar — press `c` to pick a port
+manually. Run `--list-ports` first if you're not sure what yours is called.
 
 The S-1 ships on MIDI channel 3 — if notes aren't going through, try
 `--channel 3`.
+
+### Hearing audio
+
+The S-1 over USB is MIDI only — no audio. You have two options:
+
+1. **Direct**: plug the S-1's headphone or line out into speakers/headphones.
+   This is the simplest setup, the S-1 is its own synth.
+2. **Through a DAW**: open Logic/Ableton/etc, create a track that receives
+   MIDI from the S-1 port, and route it to a software instrument or back to
+   the S-1 as an external instrument. This is what's happening if you can
+   only hear sound with Logic open.
+
+If you're not hearing anything at all, check that the S-1 is on the right
+MIDI channel and that `s1tui --list-ports` shows it.
 
 ## Keys
 

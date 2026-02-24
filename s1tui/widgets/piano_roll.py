@@ -48,7 +48,7 @@ class PianoRoll(Widget, can_focus=True):
     ]
 
     cursor_step: reactive[int] = reactive(0)
-    cursor_pitch: reactive[int] = reactive(36)  # C2
+    cursor_pitch: reactive[int] = reactive(48)  # C3
     playhead: reactive[int] = reactive(-1)  # -1 = not playing
 
     class NoteToggled(Message):
@@ -67,8 +67,8 @@ class PianoRoll(Widget, can_focus=True):
         super().__init__(**kwargs)
         self.sequence = sequence or Sequence()
         self._visible_rows = visible_rows
-        # Pitch range: center around C2 (MIDI 36)
-        self._pitch_top = 36 + visible_rows // 2  # center on C2
+        # Pitch range: center around C3 (MIDI 48)
+        self._pitch_top = 48 + visible_rows // 2  # center on C3
         self._cell_width = 3  # chars per step cell
 
     @property

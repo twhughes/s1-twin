@@ -273,7 +273,7 @@ async def test_midi_input_wrong_channel_ignored(mock_midi):
 async def test_keybinding_quit(mock_midi):
     app = S1App()
     async with app.run_test(size=(120, 40)) as pilot:
-        await pilot.press("q")
+        await pilot.press("ctrl+c")
         # App should have called disconnect
         mock_midi.disconnect.assert_called()
 

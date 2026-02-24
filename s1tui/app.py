@@ -76,7 +76,7 @@ class S1App(App):
         Binding("k", "focus_prev_slider", "Prev", show=False),
         Binding("down", "focus_next_slider", "Next", show=False),
         Binding("up", "focus_prev_slider", "Prev", show=False),
-        Binding("q", "quit", "Quit"),
+        Binding("ctrl+c", "quit", "Quit", priority=True),
     ]
 
     def __init__(self) -> None:

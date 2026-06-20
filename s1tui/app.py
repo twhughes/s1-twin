@@ -8,8 +8,10 @@ from textual import on, work
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal
-from textual.widgets import Footer, Header, Label, TabbedContent, TabPane
+from textual.widgets import Footer, Label, TabbedContent, TabPane
 
+from . import theme as T
+from .theme import SYNTHWAVE
 from .midi_backend import MidiBackend
 from .patches import save_patch, load_patch
 from .schema import S1_PARAMS, SEQ_PARAMS, SeqParam, param_by_cc
@@ -19,7 +21,10 @@ from .sequence import Sequence, load_midi, save_midi
 from .sequencer_engine import SequencerEngine
 from .views import PanelView, MenuView, SequencerView
 from .widgets import CCSlider, CCToggle, CCSelector
+from .widgets.param_widget import ParamChanged
 from .widgets.piano_roll import PianoRoll
+from .widgets.wave_scope import WaveScope
+from .widgets.brand_header import BrandHeader
 
 
 class S1App(App):
@@ -30,33 +35,27 @@ class S1App(App):
 
     CSS = """
     Screen {
-        background: $surface-darken-1;
+        background: $background;
+    }
+    Tabs {
+        background: $surface;
     }
     #status-bar {
         dock: bottom;
         height: 1;
-        background: $primary-background;
+        background: $surface;
         color: $text;
-        padding: 0 2;
+        padding: 0 1;
     }
     #status-bar .status-port {
         width: 1fr;
     }
     #status-bar .status-ch {
-        width: 12;
+        width: 14;
         text-align: right;
     }
     TabPane {
         padding: 0;
-    }
-    CCSlider:focus, CCToggle:focus, CCSelector:focus {
-        background: $boost;
-    }
-    CCSlider:focus .slider-label,
-    CCToggle:focus .toggle-label,
-    CCSelector:focus .selector-label {
-        color: $text;
-        text-style: bold;
     }
     """
 
@@ -91,7 +90,7 @@ class S1App(App):
         self._midi_file_path: Path | None = None
 
     def compose(self) -> ComposeResult:
-        yield Header()
+        yield BrandHeader()
         with TabbedContent(id="top-tabs"):
             with TabPane("Panel", id="tab-panel"):
                 yield PanelView()
@@ -105,6 +104,9 @@ class S1App(App):
         yield Footer()
 
     def on_mount(self) -> None:
+        # Apply the synthwave-neon theme
+        self.register_theme(SYNTHWAVE)
+        self.theme = "synthwave"
         # Index all param widgets by CC number (or key for seq params)
         for widget in self.query("CCSlider, CCToggle, CCSelector"):
             if hasattr(widget, "param"):
@@ -118,8 +120,26 @@ class S1App(App):
         # Auto-connect to first available S-1 port
         self._auto_connect()
         self._update_status()
+        self._refresh_scope()
         # Start MIDI polling
         self.set_interval(0.05, self._poll_midi_input)
+
+    # ── Oscilloscope ──
+
+    _OSC_CCS = frozenset({15, 19, 20, 21})  # PW, Square, Saw, Sub levels
+
+    def _refresh_scope(self) -> None:
+        """Push the current oscillator mix to the scope widget."""
+        try:
+            scope = self.query_one("#wave-scope", WaveScope)
+        except Exception:
+            return
+        scope.set_mix(
+            saw=self.state.get(20) / 127.0,
+            square=self.state.get(19) / 127.0,
+            sub=self.state.get(21) / 127.0,
+            pw=self.state.get(15) / 127.0,
+        )
 
     def _auto_connect(self) -> None:
         """Try to auto-connect to an S-1 or the first available port."""
@@ -153,16 +173,21 @@ class S1App(App):
         if self.engine and self.engine.playing:
             step = self.engine.position + 1
             bpm = self.engine.sequence.bpm
-            transport = f"▶ Playing step {step} ({bpm:.0f} BPM)"
+            transport = (
+                f"[b {T.MAGENTA}]▶ PLAY[/]  [{T.MUTED}]step[/] {step}  "
+                f"[b {T.CYAN}]{bpm:.0f} BPM[/]"
+            )
         elif self._transport_playing:
-            transport = "▶ Playing"
+            transport = f"[b {T.MAGENTA}]▶ PLAY[/]"
         else:
-            transport = "■ Stopped"
+            transport = f"[{T.MUTED}]■ STOP[/]"
         if self.midi.connected:
-            port_label.update(f"✓ {self.midi.port_name}  {transport}")
+            port_label.update(f"[{T.LIME}]◉[/] [b]{self.midi.port_name}[/]   {transport}")
         else:
-            port_label.update("⚡ No MIDI — [b]c[/b] to connect")
-        ch_label.update(f"CH {self.midi.channel + 1}")
+            port_label.update(
+                f"[{T.MUTED}]○ no midi[/]  [b {T.CYAN}]c[/] connect   {transport}"
+            )
+        ch_label.update(f"[{T.MUTED}]CH[/] [b {T.GOLD}]{self.midi.channel + 1}[/]")
 
     def _get_piano_roll(self) -> PianoRoll | None:
         """Get the piano roll widget if it exists."""
@@ -208,16 +233,16 @@ class S1App(App):
 
     # ── Widget → MIDI (unified handler for all widget types) ──
 
-    @on(CCSlider.Changed)
-    @on(CCToggle.Changed)
-    @on(CCSelector.Changed)
-    def _on_param_changed(self, event: CCSlider.Changed | CCToggle.Changed | CCSelector.Changed) -> None:
+    @on(ParamChanged)
+    def _on_param_changed(self, event: ParamChanged) -> None:
         # SeqParam widgets don't have CCs — skip MIDI CC send
         if isinstance(event.param, SeqParam):
             if event.param.key == "seq_tempo":
                 self._sync_tempo_from_widget(event.cc_value)
             return
         self.state.set(event.param.cc, event.cc_value, source="ui")
+        if event.param.cc in self._OSC_CCS:
+            self._refresh_scope()
         if not self._suppress_midi_send:
             self.midi.send_cc(event.param.cc, event.cc_value)
 
@@ -264,6 +289,7 @@ class S1App(App):
             if send_midi:
                 self.midi.send_cc(cc, val)
         self._suppress_midi_send = False
+        self._refresh_scope()
 
     def action_save_patch(self) -> None:
         self.push_screen(SavePatchScreen(), self._on_save_patch)
@@ -411,3 +437,5 @@ class S1App(App):
                 self.state.set(cc, value, source="midi")
                 if cc in self._widgets:
                     self._widgets[cc].value = value
+                if cc in self._OSC_CCS:
+                    self._refresh_scope()

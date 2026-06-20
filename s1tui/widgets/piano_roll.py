@@ -2,36 +2,35 @@
 
 from __future__ import annotations
 
-from textual.app import ComposeResult
+from rich.text import Text
 from textual.binding import Binding
 from textual.events import Click
 from textual.message import Message
 from textual.reactive import reactive
 from textual.widget import Widget
-from textual.widgets import Static
 
 from ..sequence import Note, Sequence
+from .. import theme as T
 
-# MIDI note names
 _NOTE_NAMES = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"]
+_BLACK_KEYS = {1, 3, 6, 8, 10}
+
+# Subtle alternating 4-step bands so the eye can count bars.
+_BAND_A = "#14112a"
+_BAND_B = "#1a1638"
+_BARLINE = "#4a4378"
 
 
 def _note_name(pitch: int) -> str:
-    """Convert MIDI pitch to note name like 'C4'."""
     octave = (pitch // 12) - 1
-    name = _NOTE_NAMES[pitch % 12]
-    return f"{name}{octave}"
+    return f"{_NOTE_NAMES[pitch % 12]}{octave}"
 
 
 class PianoRoll(Widget, can_focus=True):
     """A grid-based piano roll for viewing and editing a Sequence."""
 
     DEFAULT_CSS = """
-    PianoRoll {
-        height: 1fr;
-        width: 1fr;
-        min-height: 16;
-    }
+    PianoRoll { height: 1fr; width: 1fr; min-height: 16; }
     """
 
     BINDINGS = [
@@ -51,34 +50,34 @@ class PianoRoll(Widget, can_focus=True):
     cursor_pitch: reactive[int] = reactive(48)  # C3
     playhead: reactive[int] = reactive(-1)  # -1 = not playing
 
+    _LABEL_COLS = 4  # name(3) + key strip(1)
+
     class NoteToggled(Message):
-        """Fired when a note is added or removed."""
         def __init__(self, step: int, pitch: int) -> None:
             super().__init__()
             self.step = step
             self.pitch = pitch
 
-    def __init__(
-        self,
-        sequence: Sequence | None = None,
-        visible_rows: int = 16,
-        **kwargs,
-    ) -> None:
+    def __init__(self, sequence: Sequence | None = None, visible_rows: int = 16, **kwargs) -> None:
         super().__init__(**kwargs)
         self.sequence = sequence or Sequence()
         self._visible_rows = visible_rows
-        # Pitch range: center around C3 (MIDI 48)
         self._pitch_top = 48 + visible_rows // 2  # center on C3
-        self._cell_width = 3  # chars per step cell
+        self._cell_width = 3
 
     @property
     def _pitch_bottom(self) -> int:
         return self._pitch_top - self._visible_rows + 1
 
+    def _cw(self) -> int:
+        """Cell width that fills the available card width."""
+        steps = max(1, self.sequence.steps)
+        avail = (self.size.width or 60) - self._LABEL_COLS
+        self._cell_width = max(2, min(6, avail // steps))
+        return self._cell_width
+
     def set_sequence(self, seq: Sequence) -> None:
-        """Replace the current sequence and re-render."""
         self.sequence = seq
-        # Center pitch range on note content if any
         if seq.notes:
             pitches = [n.pitch for n in seq.notes]
             mid = (min(pitches) + max(pitches)) // 2
@@ -87,85 +86,92 @@ class PianoRoll(Widget, can_focus=True):
         self.cursor_step = 0
         self.refresh()
 
-    def render(self) -> str:
-        """Render the piano roll grid as text."""
-        seq = self.sequence
-        cw = self._cell_width
-        lines: list[str] = []
+    # ── colour helpers ──
 
-        # Build a set of (step, pitch) for quick lookup
+    @staticmethod
+    def _vel_color(vel: int) -> str:
+        """Quiet → loud mapped along dark-teal → bright cyan-white."""
+        t = max(0.0, min(1.0, (vel - 1) / 126))
+        return T.blend("#0e8f86", "#b6ffff", t)
+
+    @staticmethod
+    def _band(step: int) -> str:
+        return _BAND_A if (step // 4) % 2 == 0 else _BAND_B
+
+    # ── render ──
+
+    def render(self) -> Text:
+        seq = self.sequence
+        cw = self._cw()
+        out = Text(no_wrap=True, overflow="crop")
+
         note_map: dict[tuple[int, int], Note] = {}
         for note in seq.notes:
             for s in range(note.step, min(note.step + note.duration, seq.steps)):
                 note_map[(s, note.pitch)] = note
 
         for pitch in range(self._pitch_top, self._pitch_bottom - 1, -1):
+            is_black = pitch % 12 in _BLACK_KEYS
+            on_cursor_row = pitch == self.cursor_pitch
+            # gutter: note name + key strip
             name = _note_name(pitch).rjust(3)
-            row_chars: list[str] = [name, " "]
+            name_style = T.CYAN if on_cursor_row else (T.MUTED if is_black else T.FG)
+            out.append(name, style=("bold " + name_style) if on_cursor_row else name_style)
+            out.append("█", style="#2a2740" if is_black else "#cdc8ee")
 
             for step in range(seq.steps):
-                is_cursor = step == self.cursor_step and pitch == self.cursor_pitch
-                is_playhead = step == self.playhead
+                bg = self._band(step)
+                is_cursor = step == self.cursor_step and on_cursor_row
+                is_ph = step == self.playhead
                 note = note_map.get((step, pitch))
+                if is_ph:
+                    bg = T.blend(T.MAGENTA, T.BG, 0.35)
 
                 if note is not None:
-                    # Note start vs continuation
-                    if step == note.step:
-                        cell = "█" * cw
-                    else:
-                        cell = "▓" * cw
+                    vc = self._vel_color(note.velocity)
                     if is_cursor:
-                        cell = f"[reverse green]{cell}[/reverse green]"
-                    elif is_playhead:
-                        cell = f"[bold cyan]{cell}[/bold cyan]"
-                    else:
-                        cell = f"[green]{cell}[/green]"
+                        out.append("█" * cw, style=f"bold {T.FG} on {T.CYAN}")
+                    elif step == note.step:
+                        out.append("█" * cw, style=f"{vc} on {bg}")
+                    else:  # sustained
+                        out.append("▬" * cw, style=f"{T.blend(vc, T.BG, 0.3)} on {bg}")
                 else:
-                    # Empty cell
                     if is_cursor:
-                        cell = f"[reverse]{'·' * cw}[/reverse]"
-                    elif is_playhead:
-                        cell = f"[bold cyan]{'▎' + '·' * (cw - 1)}[/bold cyan]"
+                        out.append(" ◆ ", style=f"bold {T.CYAN} on {bg}")
+                    elif step % 4 == 0:
+                        out.append("▏", style=f"{_BARLINE} on {bg}")
+                        out.append("··", style=f"{T.FAINT} on {bg}")
                     else:
-                        # Alternate shading for black/white keys
-                        is_black = pitch % 12 in (1, 3, 6, 8, 10)
-                        if is_black:
-                            cell = f"[dim]{'─' * cw}[/dim]"
-                        else:
-                            cell = f"[dim]{'·' * cw}[/dim]"
+                        out.append("·" * cw, style=f"{T.FAINT} on {bg}")
+            out.append("\n")
 
-                row_chars.append(cell)
-
-            lines.append("".join(row_chars))
-
-        # Step numbers footer
-        footer_parts = ["    "]
+        # step-number footer
+        out.append(" " * self._LABEL_COLS)
         for step in range(seq.steps):
             num = str(step + 1)
             if step == self.playhead:
-                footer_parts.append(f"[bold cyan]{num:^{cw}}[/bold cyan]")
-            elif step == self.cursor_step:
-                footer_parts.append(f"[reverse]{num:^{cw}}[/reverse]")
+                style = f"bold {T.MAGENTA}"
+            elif step % 4 == 0:
+                style = f"bold {T.CYAN}"
             else:
-                footer_parts.append(f"[dim]{num:^{cw}}[/dim]")
-        lines.append("".join(footer_parts))
+                style = T.MUTED
+            out.append(f"{num:^{cw}}", style=style)
+        out.append("\n")
 
-        # Info line
-        note_at_cursor = seq.note_at(self.cursor_step, self.cursor_pitch)
-        if note_at_cursor:
-            info = (
-                f" {seq.bpm:.0f} BPM | Step {self.cursor_step + 1}/{seq.steps} | "
-                f"{_note_name(self.cursor_pitch)} | "
-                f"Vel: {note_at_cursor.velocity} | Dur: {note_at_cursor.duration}"
-            )
+        # info line
+        note_at = seq.note_at(self.cursor_step, self.cursor_pitch)
+        info = Text()
+        info.append(f" ▸ {seq.bpm:.0f} BPM", style=f"bold {T.CYAN}")
+        info.append("   step ", style=T.MUTED)
+        info.append(f"{self.cursor_step + 1}/{seq.steps}", style=T.FG)
+        info.append("   ", style=T.MUTED)
+        info.append(_note_name(self.cursor_pitch), style=f"bold {T.VIOLET}")
+        if note_at:
+            info.append(f"   vel {note_at.velocity}  dur {note_at.duration}", style=T.GOLD)
         else:
-            info = (
-                f" {seq.bpm:.0f} BPM | Step {self.cursor_step + 1}/{seq.steps} | "
-                f"{_note_name(self.cursor_pitch)} | (empty)"
-            )
-        lines.append(info)
-
-        return "\n".join(lines)
+            info.append("   —", style=T.FAINT)
+        out.append_text(info)
+        return out
 
     def watch_cursor_step(self) -> None:
         self.refresh()
@@ -176,12 +182,17 @@ class PianoRoll(Widget, can_focus=True):
     def watch_playhead(self) -> None:
         self.refresh()
 
-    # ── Mouse editing ──
+    # ── scrolling ──
 
-    _LABEL_COLS = 4  # "C#2 " = 4 chars before grid starts
+    def _ensure_cursor_visible(self) -> None:
+        if self.cursor_pitch > self._pitch_top:
+            self._pitch_top = min(127, self.cursor_pitch)
+        elif self.cursor_pitch < self._pitch_bottom:
+            self._pitch_top = self.cursor_pitch + self._visible_rows - 1
+
+    # ── mouse editing ──
 
     def _click_to_grid(self, x: int, y: int) -> tuple[int, int] | None:
-        """Convert widget-relative click coords to (step, pitch) or None."""
         col = x - self._LABEL_COLS
         if col < 0:
             return None
@@ -194,36 +205,29 @@ class PianoRoll(Widget, can_focus=True):
         return step, pitch
 
     def on_click(self, event: Click) -> None:
-        """Click on a grid cell to move cursor there and toggle the note."""
         result = self._click_to_grid(event.x, event.y)
         if result is None:
             return
+        self.focus()
         step, pitch = result
         self.cursor_step = step
         self.cursor_pitch = pitch
-        # Scroll into view if needed
-        if pitch > self._pitch_top:
-            self._pitch_top = min(127, pitch + self._visible_rows // 2)
-        elif pitch < self._pitch_bottom:
-            self._pitch_top = max(self._visible_rows - 1, pitch + self._visible_rows // 2)
+        self._ensure_cursor_visible()
         self.sequence.toggle_note(step, pitch)
         self.post_message(self.NoteToggled(step, pitch))
         self.refresh()
 
-    # ── Cursor actions ──
+    # ── cursor actions ──
 
     def action_cursor_up(self) -> None:
         if self.cursor_pitch < 127:
             self.cursor_pitch += 1
-            # Scroll view if needed
-            if self.cursor_pitch > self._pitch_top:
-                self._pitch_top = min(127, self._pitch_top + 1)
+            self._ensure_cursor_visible()
 
     def action_cursor_down(self) -> None:
         if self.cursor_pitch > 0:
             self.cursor_pitch -= 1
-            if self.cursor_pitch < self._pitch_bottom:
-                self._pitch_top = max(self._visible_rows - 1, self._pitch_top - 1)
+            self._ensure_cursor_visible()
 
     def action_cursor_left(self) -> None:
         if self.cursor_step > 0:
@@ -233,7 +237,7 @@ class PianoRoll(Widget, can_focus=True):
         if self.cursor_step < self.sequence.steps - 1:
             self.cursor_step += 1
 
-    # ── Note editing ──
+    # ── note editing ──
 
     def action_toggle_note(self) -> None:
         self.sequence.toggle_note(self.cursor_step, self.cursor_pitch)
@@ -255,8 +259,7 @@ class PianoRoll(Widget, can_focus=True):
     def action_duration_up(self) -> None:
         note = self.sequence.note_at(self.cursor_step, self.cursor_pitch)
         if note:
-            max_dur = self.sequence.steps - note.step
-            note.duration = min(max_dur, note.duration + 1)
+            note.duration = min(self.sequence.steps - note.step, note.duration + 1)
             self.refresh()
 
     def action_duration_down(self) -> None:

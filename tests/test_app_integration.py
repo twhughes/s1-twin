@@ -69,7 +69,7 @@ async def test_status_bar_shows_not_connected(mock_midi):
         label = app.query_one("#status-port")
         # Check the label's update content (textual 8+ uses _content)
         text = repr(label._content) if hasattr(label, "_content") else str(label.render())
-        assert "No MIDI" in text
+        assert "no midi" in text.lower()
 
 
 @pytest.mark.asyncio

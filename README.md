@@ -12,11 +12,11 @@ Terminal synth editor for the Roland S-1. Sliders, patch management, and a
 piano roll sequencer.
 
 <p align="center">
-  <img src="docs/screenshot.svg" alt="Piano roll sequencer" width="100%">
+  <img src="docs/screenshot.svg" alt="Piano roll sequencer with live playback" width="100%">
 </p>
 
 <p align="center">
-  <img src="docs/panel.svg" alt="Parameter sliders" width="100%">
+  <img src="docs/panel.svg" alt="Synth panel — live oscilloscope and neon parameter meters" width="100%">
 </p>
 
 ## What's in the box

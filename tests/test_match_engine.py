@@ -48,8 +48,12 @@ class TestParamSpace:
         assert all(0 <= v <= 127 for v in out.values())
 
     def test_switch_snaps_binary(self):
-        sp = ParamSpace()
-        switch_cc = next(p.cc for p in sp.params if p.control_type == ControlType.SWITCH)
+        # The timbre space holds no SWITCH params since the schema audit, so
+        # build a space that includes one (CC 65: Portamento) explicitly.
+        from s1tui.schema import param_by_cc
+
+        sp = ParamSpace(params=ParamSpace().params + [param_by_cc(65)])
+        switch_cc = 65
         hi = sp.decode(np.where(np.array(sp.ccs) == switch_cc, 0.9, 0.5))
         lo = sp.decode(np.where(np.array(sp.ccs) == switch_cc, 0.1, 0.5))
         assert hi[switch_cc] == 127

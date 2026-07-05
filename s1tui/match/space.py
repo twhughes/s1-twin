@@ -14,8 +14,8 @@ import numpy as np
 from ..schema import S1_PARAMS, ControlType, S1Param
 
 # Sections whose parameters shape *timbre* (vs. pitch/voicing/routing).
-TIMBRE_SECTIONS: tuple[str, ...] = ("LFO", "Oscillator", "Draw/Chop", "Filter", "Envelope")
-EFFECTS_SECTION = "Effects"
+TIMBRE_SECTIONS: tuple[str, ...] = ("LFO", "OSC", "FILTER", "AMP", "ENV")
+EFFECTS_SECTION = "EFX"
 
 # CCs to hold fixed even within timbre sections: they shift pitch (which we hold
 # constant via a fixed probe note) rather than tone.
@@ -67,7 +67,7 @@ class ParamSpace:
                 idx = int(round(value * (len(keys) - 1)))
                 out[p.cc] = keys[idx]
             else:
-                out[p.cc] = int(round(value * 127))
+                out[p.cc] = p.min_val + int(round(value * (p.max_val - p.min_val)))
         return out
 
     def encode(self, params: dict[int, int]) -> np.ndarray:
@@ -82,7 +82,8 @@ class ParamSpace:
                 nearest = min(range(len(keys)), key=lambda k: abs(keys[k] - value))
                 v[i] = nearest / max(len(keys) - 1, 1)
             else:
-                v[i] = value / 127.0
+                span = max(p.max_val - p.min_val, 1)
+                v[i] = min(max(value - p.min_val, 0), span) / span
         return v
 
     def default_vector(self) -> np.ndarray:

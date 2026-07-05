@@ -398,20 +398,26 @@ if STATIC_DIR.exists():
     app.mount("/", StaticFiles(directory=str(STATIC_DIR), html=True), name="static")
 
 
-def main() -> None:
+def run(host: str | None = None, port: int | None = None, open_browser: bool = True) -> None:
     import uvicorn
 
-    host, port = HOST, PORT
+    host = host or HOST
+    port = port or PORT
     url = f"http://{host}:{port}"
 
-    def _open() -> None:
-        import webbrowser
+    if open_browser:
+        def _open() -> None:
+            import webbrowser
 
-        webbrowser.open(url)
+            webbrowser.open(url)
 
-    threading.Timer(1.2, _open).start()
-    print(f"s1tui studio → {url}")
+        threading.Timer(1.2, _open).start()
+    print(f"s1 cockpit → {url}")
     uvicorn.run(app, host=host, port=port, log_level="warning")
+
+
+def main() -> None:
+    run()
 
 
 if __name__ == "__main__":

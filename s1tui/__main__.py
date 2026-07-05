@@ -1,22 +1,34 @@
-"""CLI entry point for S1 TUI."""
+"""`s1` — start the S-1 web cockpit.
+
+The happy path is zero-argument: start the server, open the browser, and let
+the sync engine find the hardware. Everything else (MIDI, audio, keyboards)
+is hot-plugged automatically.
+"""
+
+from __future__ import annotations
 
 import argparse
 import sys
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Terminal UI controller for the Roland S-1")
+    parser = argparse.ArgumentParser(
+        prog="s1",
+        description="Roland S-1 cockpit — the whole synth in a browser tab.",
+    )
     parser.add_argument(
         "--list-ports", action="store_true",
         help="List available MIDI ports and exit",
     )
     parser.add_argument(
-        "--port", "-p", type=str, default=None,
-        help="Auto-connect to this MIDI port on startup",
+        "--host", default=None, help="Bind address (default: 127.0.0.1)",
     )
     parser.add_argument(
-        "--channel", "-c", type=int, default=3,
-        help="MIDI channel (1-16, default: 3 — the S-1's factory setting)",
+        "--port", type=int, default=None, help="HTTP port (default: 8765)",
+    )
+    parser.add_argument(
+        "--no-browser", action="store_true",
+        help="Don't auto-open the browser tab",
     )
     args = parser.parse_args()
 
@@ -30,18 +42,9 @@ def main() -> None:
             print(f"  {p}")
         sys.exit(0)
 
-    from .app import S1App
+    from .web.server import run
 
-    app = S1App()
-    app.midi.channel = args.channel - 1  # 0-indexed internally
-
-    if args.port:
-        try:
-            app.midi.connect(args.port)
-        except Exception as e:
-            print(f"Warning: Could not connect to '{args.port}': {e}", file=sys.stderr)
-
-    app.run()
+    run(host=args.host, port=args.port, open_browser=not args.no_browser)
 
 
 if __name__ == "__main__":

@@ -4,33 +4,30 @@ build-backend = "hatchling.build"
 
 [project]
 name = "s1tui"
-version = "0.1.0"
-description = "Terminal UI controller for the Roland S-1 synthesizer"
+version = "0.2.0"
+description = "The Roland S-1, fully present in software — web cockpit, live sync, audio monitor"
 readme = "README.md"
 requires-python = ">=3.10"
 license = "MIT"
 dependencies = [
-    "textual>=0.47.0",
     "mido>=1.3.0",
     "python-rtmidi>=1.5.0",
-]
-
-[project.optional-dependencies]
-# Automated sound design: audio capture/analysis, optimizer, and web app.
-# Install with: pip install -e ".[studio]"
-studio = [
-    "numpy>=1.24",
-    "scipy>=1.10",
-    "soundfile>=0.12",
-    "sounddevice>=0.4",
-    "cma>=3.2",
     "fastapi>=0.110",
     "uvicorn>=0.27",
     "websockets>=12",
     "python-multipart>=0.0.9",
+    "numpy>=1.24",
+    "sounddevice>=0.4",
+    "soundfile>=0.12",
 ]
-# Tests and linting. The web tests need the studio extra too:
-# pip install -e ".[studio,dev]"
+
+[project.optional-dependencies]
+# The match engine's heavy numerics. Install with: pip install -e ".[studio]"
+studio = [
+    "scipy>=1.10",
+    "cma>=3.2",
+]
+# Tests and linting: pip install -e ".[studio,dev]"
 dev = [
     "pytest>=8",
     "pytest-asyncio>=0.23",
@@ -39,9 +36,9 @@ dev = [
 ]
 
 [project.scripts]
-s1tui = "s1tui.__main__:main"
+s1 = "s1tui.__main__:main"
+s1tui-web = "s1tui.__main__:main"
 s1tui-match = "s1tui.match.cli:main"
-s1tui-web = "s1tui.web.server:main"
 
 [tool.ruff]
 line-length = 110

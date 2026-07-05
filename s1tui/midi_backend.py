@@ -15,9 +15,12 @@ class MidiBackend:
     All sends are serialized through one lock — the UI thread, the sequencer
     thread, and worker threads share this backend. A send that fails (device
     unplugged) marks the backend disconnected instead of raising.
+
+    ``midi_module`` lets tests inject a fake mido-shaped module.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, midi_module=None) -> None:
+        self._mido = midi_module or mido
         self._output: mido.ports.BaseOutput | None = None
         self._input: mido.ports.BaseInput | None = None
         self._port_name: str | None = None
@@ -31,6 +34,12 @@ class MidiBackend:
     @staticmethod
     def list_input_ports() -> list[str]:
         return mido.get_input_names()
+
+    def output_names(self) -> list[str]:
+        return self._mido.get_output_names()
+
+    def input_names(self) -> list[str]:
+        return self._mido.get_input_names()
 
     @property
     def connected(self) -> bool:
@@ -52,15 +61,15 @@ class MidiBackend:
         """Open an output (and optionally input) port."""
         self.disconnect()
         with self._lock:
-            self._output = mido.open_output(port_name)
+            self._output = self._mido.open_output(port_name)
             self._port_name = port_name
             # Try to open matching input for receiving CC feedback
             # Output ports are "X MIDI IN", input ports are "X MIDI OUT"
-            inputs = self.list_input_ports()
+            inputs = self.input_names()
             # First try exact match
             if port_name in inputs:
                 try:
-                    self._input = mido.open_input(port_name)
+                    self._input = self._mido.open_input(port_name)
                 except Exception:
                     pass
             else:
@@ -69,7 +78,7 @@ class MidiBackend:
                 for inp in inputs:
                     if base_name in inp:
                         try:
-                            self._input = mido.open_input(inp)
+                            self._input = self._mido.open_input(inp)
                             break
                         except Exception:
                             pass
@@ -150,10 +159,17 @@ class MidiBackend:
         """Send MIDI Continue message (system real-time, no channel)."""
         return self._send(mido.Message("continue"))
 
-    def send_program_change(self, program: int) -> bool:
+    def send_clock(self) -> bool:
+        """Send one MIDI timing-clock tick (24 per quarter note)."""
+        return self._send(mido.Message("clock"))
+
+    def send_program_change(self, program: int, channel: int | None = None) -> bool:
+        """Program Change; ``channel`` overrides the synth channel (the S-1
+        listens for pattern-select PCs on a dedicated channel, default 16)."""
+        ch = self._channel if channel is None else max(0, min(15, channel))
         return self._send(
             mido.Message(
-                "program_change", channel=self._channel, program=max(0, min(127, program))
+                "program_change", channel=ch, program=max(0, min(127, program))
             )
         )
 

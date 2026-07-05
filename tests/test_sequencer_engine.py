@@ -299,3 +299,56 @@ def test_probability_zero_skips_all_notes(mock_midi):
     time.sleep(0.2)
     engine.stop()
     mock_midi.send_note_on.assert_not_called()
+
+
+# ── MIDI clock emission (G7) ─────────────────────────────────
+def test_clock_emitted_while_playing(mock_midi, simple_sequence):
+    engine = SequencerEngine(mock_midi, simple_sequence)
+    engine.play()
+    time.sleep(0.3)
+    engine.stop()
+    # 600 BPM → clock period 60/(600*24) ≈ 4.2 ms → ~72 ticks in 300 ms.
+    ticks = mock_midi.send_clock.call_count
+    assert 30 <= ticks <= 200, ticks
+
+
+def test_clock_rate_follows_bpm(mock_midi):
+    seq = Sequence(notes=[Note(step=0, pitch=60)], steps=4, bpm=300.0)
+    engine = SequencerEngine(mock_midi, seq)
+    engine.play()
+    time.sleep(0.3)
+    engine.stop()
+    # 300 BPM → period 8.3 ms → ~36 ticks in 300 ms.
+    ticks = mock_midi.send_clock.call_count
+    assert 15 <= ticks <= 100, ticks
+
+
+def test_clock_disabled(mock_midi, simple_sequence):
+    engine = SequencerEngine(mock_midi, simple_sequence)
+    engine.clock_enabled = False
+    engine.play()
+    time.sleep(0.2)
+    engine.stop()
+    mock_midi.send_clock.assert_not_called()
+
+
+def test_clock_stops_with_transport(mock_midi, simple_sequence):
+    engine = SequencerEngine(mock_midi, simple_sequence)
+    engine.play()
+    time.sleep(0.15)
+    engine.stop()
+    count = mock_midi.send_clock.call_count
+    time.sleep(0.15)
+    assert mock_midi.send_clock.call_count == count
+
+
+def test_clock_pauses_with_transport(mock_midi, simple_sequence):
+    engine = SequencerEngine(mock_midi, simple_sequence)
+    engine.play()
+    time.sleep(0.1)
+    engine.pause()
+    time.sleep(0.05)
+    count = mock_midi.send_clock.call_count
+    time.sleep(0.15)
+    assert mock_midi.send_clock.call_count <= count + 1  # at most one in-flight tick
+    engine.stop()

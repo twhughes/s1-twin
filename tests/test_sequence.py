@@ -201,3 +201,22 @@ def test_pattern_length_extends_to_32():
         _create_test_midi(path, [(60, 120 * 17, 120)])
         seq = load_midi(path)
         assert seq.steps == 32
+
+
+# ── device limits (G7) ───────────────────────────────────────
+def test_poly_warning_over_four_notes_per_step():
+    from s1tui.sequence import MAX_NOTES_PER_STEP
+
+    seq = Sequence(steps=4)
+    for pitch in (60, 64, 67, 71):
+        seq.toggle_note(0, pitch)
+    assert MAX_NOTES_PER_STEP == 4
+    assert seq.poly_warnings() == []
+    seq.toggle_note(0, 74)  # fifth note on step 0
+    assert seq.poly_warnings() == [0]
+
+
+def test_max_steps_constant():
+    from s1tui.sequence import MAX_STEPS
+
+    assert MAX_STEPS == 64

@@ -7,6 +7,10 @@ from pathlib import Path
 
 import mido
 
+# Device limits (the S-1's .PRM pattern format).
+MAX_STEPS = 64
+MAX_NOTES_PER_STEP = 4  # 4-note poly per step is the PRM ceiling
+
 
 @dataclass
 class Note:
@@ -50,6 +54,13 @@ class Sequence:
     def clear(self) -> None:
         """Remove all notes."""
         self.notes.clear()
+
+    def poly_warnings(self) -> list[int]:
+        """Steps holding more notes than the device can store (PRM: 4/step)."""
+        return sorted(
+            step for step in {n.step for n in self.notes}
+            if len(self.notes_at_step(step)) > MAX_NOTES_PER_STEP
+        )
 
 
 def parse_resolution(resolution: str) -> tuple[int, int]:

@@ -20,6 +20,8 @@ class SequencerEngine:
       fraction of a step (0-1).
     - ``last_step``: truncate the pattern to this many steps (None = full).
     - ``probability``: chance each step's notes fire (0-1).
+    - ``clock_enabled``: emit MIDI clock (24 ticks per quarter note) while
+      playing, so the device's delay/LFO tempo-sync follows the app.
     """
 
     def __init__(
@@ -46,6 +48,9 @@ class SequencerEngine:
         self.shuffle: float = 0.0
         self.last_step: int | None = None
         self.probability: float = 1.0
+        self.clock_enabled: bool = True
+        # MIDI clock scheduling (playback thread only).
+        self._next_clock: float = 0.0
         self._rng = rng or random.Random()
 
     @property
@@ -141,11 +146,13 @@ class SequencerEngine:
                 return
 
             next_tick = time.monotonic()
+            self._next_clock = next_tick
             while not self._stop_event.is_set():
                 if self._paused:
                     # Spin-wait while paused; restart the clock on resume
                     time.sleep(0.01)
                     next_tick = time.monotonic()
+                    self._next_clock = next_tick
                     continue
 
                 step = self._position
@@ -203,10 +210,11 @@ class SequencerEngine:
             self._playing = False
 
     def _wait_until(self, deadline: float) -> None:
-        """Sleep until *deadline*, waking early to service due note-offs."""
+        """Sleep until *deadline*, waking early for due note-offs and clock ticks."""
         while not self._stop_event.is_set():
             now = time.monotonic()
             self._flush_note_offs(now)
+            self._flush_clock(now)
             if now >= deadline:
                 return
             target = deadline
@@ -214,9 +222,25 @@ class SequencerEngine:
                 for _, off_time in self._active:
                     if off_time < target:
                         target = off_time
+            if self.clock_enabled and self._next_clock < target:
+                target = self._next_clock
             remaining = target - now
             if remaining > 0:
                 self._stop_event.wait(remaining)
+
+    def _clock_period_seconds(self) -> float:
+        """One MIDI clock tick: 24 per quarter note at the sequence BPM."""
+        bpm = max(self._sequence.bpm, 1.0)
+        return 60.0 / (bpm * 24.0)
+
+    def _flush_clock(self, now: float) -> None:
+        """Emit any due MIDI clock ticks (absolute-clock scheduled)."""
+        if not self.clock_enabled or self._paused:
+            return
+        period = self._clock_period_seconds()
+        while self._next_clock <= now and not self._stop_event.is_set():
+            self._midi.send_clock()
+            self._next_clock += period
 
     def _flush_note_offs(self, now: float) -> None:
         """Send note-off for notes whose hold time has expired.

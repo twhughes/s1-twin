@@ -46,7 +46,7 @@ class SectionCard(Container):
         self.styles.border = ("round", self._accent)
         try:
             self.styles.border_title_color = self._accent
-        except Exception:
+        except AttributeError:  # older Textual without border_title_color
             pass
 
 

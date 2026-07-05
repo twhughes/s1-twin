@@ -1,9 +1,11 @@
 """Tests for midi_backend.py — MIDI I/O layer."""
 
+import threading
 from unittest.mock import MagicMock, patch
+
 import mido
 
-from s1tui.midi_backend import MidiBackend
+from s1tui.midi_backend import ALL_NOTES_OFF_CC, MidiBackend
 
 
 class TestMidiBackendInit:
@@ -126,6 +128,80 @@ class TestMidiBackendConnect:
         mb.disconnect()
         assert not mb.connected
         assert mb.port_name is None
+
+    def test_disconnect_sends_all_notes_off_before_closing(self):
+        mb = MidiBackend()
+        out = MagicMock()
+        mb._output = out
+        mb.disconnect()
+        msg = out.send.call_args[0][0]
+        assert msg.type == "control_change"
+        assert msg.control == ALL_NOTES_OFF_CC
+        out.close.assert_called_once()
+
+    def test_close_is_explicit_disconnect(self):
+        mb = MidiBackend()
+        out = MagicMock()
+        mb._output = out
+        mb.close()
+        assert not mb.connected
+        out.close.assert_called_once()
+
+
+class TestMidiBackendThreadSafety:
+    def test_concurrent_sends_are_serialized(self):
+        """Sends from many threads must all pass through the lock — a port
+        that detects overlapping calls proves serialization."""
+        mb = MidiBackend()
+        in_send = threading.Semaphore(1)
+        overlaps = []
+
+        class SlowPort:
+            def send(self, msg):
+                if not in_send.acquire(blocking=False):
+                    overlaps.append(msg)
+                    return
+                try:
+                    for _ in range(50):
+                        pass
+                finally:
+                    in_send.release()
+
+            def close(self):
+                pass
+
+        mb._output = SlowPort()
+
+        def worker(i):
+            for _ in range(100):
+                mb.send_cc(74, i)
+                mb.send_note_on(60 + i)
+                mb.send_note_off(60 + i)
+
+        threads = [threading.Thread(target=worker, args=(i,)) for i in range(4)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+        assert overlaps == []
+
+    def test_send_failure_marks_disconnected(self):
+        mb = MidiBackend()
+        out = MagicMock()
+        out.send.side_effect = OSError("device unplugged")
+        mb._output = out
+        mb._port_name = "S-1"
+        assert mb.send_cc(74, 64) is False  # no raise
+        assert not mb.connected
+        assert mb.port_name is None
+        # Subsequent sends are silent no-ops
+        assert mb.send_note_on(60) is False
+
+    def test_send_returns_true_on_success(self):
+        mb = MidiBackend()
+        mb._output = MagicMock()
+        assert mb.send_cc(74, 64) is True
+        assert mb.send_note_on(60) is True
 
     def test_list_ports_static(self):
         with patch("mido.get_output_names", return_value=["Port A", "Port B"]):

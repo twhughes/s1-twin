@@ -13,8 +13,8 @@ from textual.message import Message
 from textual.reactive import reactive
 from textual.widget import Widget
 
-from ..schema import S1Param, SeqParam, ControlType
 from .. import theme as T
+from ..schema import ControlType, S1Param, SeqParam
 
 LABEL_W = 15  # columns reserved for the parameter name
 # Fractional fill ramp (eighth-blocks) for sub-cell meter precision.
@@ -122,9 +122,9 @@ class ParamWidget(Widget, can_focus=True):
 
 def make_param_widget(param: S1Param | SeqParam, accent: str | None = None, **kwargs):
     """Create the right widget for a parameter, tinted with ``accent``."""
+    from .cc_selector import CCSelector
     from .cc_slider import CCSlider
     from .cc_toggle import CCToggle
-    from .cc_selector import CCSelector
 
     if isinstance(param, SeqParam):
         widget_id = kwargs.pop("id", f"seq-{param.key}")

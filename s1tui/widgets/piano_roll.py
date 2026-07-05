@@ -9,8 +9,8 @@ from textual.message import Message
 from textual.reactive import reactive
 from textual.widget import Widget
 
-from ..sequence import Note, Sequence
 from .. import theme as T
+from ..sequence import Note, Sequence
 
 _NOTE_NAMES = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"]
 _BLACK_KEYS = {1, 3, 6, 8, 10}

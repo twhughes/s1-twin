@@ -1,9 +1,8 @@
 """Tests for widget factory and widget types."""
 
-import pytest
 
-from s1tui.schema import S1Param, S1_PARAMS, AccessLevel, ControlType, param_by_cc
-from s1tui.widgets import CCSlider, CCToggle, CCSelector, make_param_widget
+from s1tui.schema import S1_PARAMS, ControlType, S1Param
+from s1tui.widgets import CCSelector, CCSlider, CCToggle, make_param_widget
 
 
 class TestWidgetFactory:

@@ -1,0 +1,157 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>S-1 STUDIO</title>
+  <link rel="stylesheet" href="/style.css" />
+</head>
+<body>
+  <header class="brand">
+    <div class="logo">◉ <span class="grad">S-1</span> STUDIO</div>
+    <nav class="nav">
+      <button class="tab active" data-view="setup">SETUP</button>
+      <button class="tab" data-view="studio">STUDIO</button>
+    </nav>
+    <div class="conn">
+      <span id="dot" class="dot off"></span>
+      <span id="conn-label">disconnected</span>
+    </div>
+  </header>
+
+  <!-- ════════════════ SETUP ════════════════ -->
+  <section id="view-setup" class="view active">
+    <p class="lede">Plug in the S-1, open Logic, and let's get the loop working — I'll test it for you so you don't have to look at Logic.</p>
+
+    <section class="card">
+      <h2>1 · CONNECT THE S-1</h2>
+      <div id="chk-midi" class="check-row">scanning…</div>
+      <div class="row">
+        <label>MIDI port <select id="port"></select></label>
+        <label>Channel <input id="channel" type="number" min="1" max="16" value="3" /></label>
+        <button id="connect" class="btn primary">CONNECT</button>
+        <button id="refresh" class="btn ghost" title="Re-scan">⟳</button>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>2 · LIVE MONITOR — hear &amp; record the S-1 (no Logic)</h2>
+      <div id="chk-audio" class="check-row">scanning…</div>
+      <div class="row">
+        <label>Capture (S-1 in) <select id="device"></select></label>
+        <label>Output (headphones) <select id="output"></select></label>
+        <label>Volume <input id="gain" type="range" min="1" max="12" step="0.5" value="3" /></label>
+        <button id="monitor" class="btn primary">▸ START MONITOR</button>
+      </div>
+      <div class="meter">
+        <div class="meter-head"><span>INPUT LEVEL</span><span id="level-val">—</span></div>
+        <div class="bar"><div id="level-fill" class="bar-fill"></div></div>
+      </div>
+      <div class="row">
+        <label>Take name <input id="rec-name" type="text" value="s1-take" /></label>
+        <label class="check"><input id="rec-target" type="checkbox" /> use as match target</label>
+        <button id="record" class="btn" disabled>● RECORD</button>
+      </div>
+      <p class="hint">Start the monitor to route the S-1 straight to your headphones. Play a few notes — the bar should jump. Record a take to store it, optionally sending it to the matcher as the target.</p>
+    </section>
+
+    <section class="card">
+      <h2>3 · TEST THE CHAIN</h2>
+      <p class="hint">I'll trigger a note on the S-1 and listen on the selected input. No need to touch Logic.</p>
+      <button id="test-signal" class="btn primary">TEST SIGNAL</button>
+      <div id="test-result" class="test-result"></div>
+    </section>
+
+    <details class="card guide">
+      <summary>Logic routing guide (if the test fails)</summary>
+      <ol>
+        <li>Install <a href="https://existential.audio/blackhole/" target="_blank">BlackHole</a> (2ch) — a virtual audio cable.</li>
+        <li>In Logic: create a track for the S-1 (External Instrument or Audio), so its sound plays through Logic.</li>
+        <li>Set that track's output (or Logic's main output) to <b>BlackHole 2ch</b>. Tip: an Aggregate Device with your speakers + BlackHole lets you hear it <em>and</em> capture it.</li>
+        <li>Back here, pick <b>BlackHole</b> as the capture device and run TEST SIGNAL again.</li>
+      </ol>
+    </details>
+
+    <div id="ready-banner" class="ready-banner hidden">✓ READY — the S-1 is reaching your Mac. <button class="btn tiny" data-view="studio">Open Studio →</button></div>
+  </section>
+
+  <!-- ════════════════ STUDIO ════════════════ -->
+  <section id="view-studio" class="view">
+    <div id="studio-status" class="studio-status">not connected — head to <a href="#" data-view="setup">Setup</a></div>
+    <div class="grid">
+      <section class="card match">
+        <h2>MATCH</h2>
+        <div id="drop" class="drop">
+          <input id="file" type="file" accept="audio/*" hidden />
+          <div class="drop-inner">
+            <strong>drop a target sound</strong>
+            <span>or click to choose · wav / aiff / flac</span>
+          </div>
+        </div>
+        <div class="scopes">
+          <figure>
+            <figcaption>TARGET</figcaption>
+            <canvas id="spec-target" width="320" height="128"></canvas>
+            <button class="btn tiny" data-clip="target" disabled>▸ listen</button>
+          </figure>
+          <figure>
+            <figcaption>BEST MATCH</figcaption>
+            <canvas id="spec-best" width="320" height="128"></canvas>
+            <button class="btn tiny" data-clip="best" disabled>▸ listen</button>
+          </figure>
+        </div>
+        <div class="meter">
+          <div class="meter-head"><span>CLOSENESS</span><span id="closeness-val">0.0%</span></div>
+          <div class="bar"><div id="bar-fill" class="bar-fill"></div></div>
+          <div class="counters">
+            <span>iter <b id="iter">0</b>/<span id="maxiter">0</span></span>
+            <span>evals <b id="evals">0</b></span>
+            <span id="state-label">idle</span>
+          </div>
+        </div>
+
+        <figure class="curve-wrap">
+          <figcaption>OPTIMIZATION · <span class="dot-mag">●</span> candidate &nbsp; <span class="dot-lime">▬</span> best so far</figcaption>
+          <canvas id="curve" width="640" height="180"></canvas>
+        </figure>
+        <div class="controls">
+          <label>Mode
+            <select id="mode">
+              <option value="auto">Automated</option>
+              <option value="interactive">Interactive (listen each step)</option>
+            </select>
+          </label>
+          <label>Optimizer
+            <select id="optimizer">
+              <option value="cma">CMA-ES</option>
+              <option value="random">Random</option>
+            </select>
+          </label>
+          <label>Iterations <input id="iters" type="number" min="1" value="40" /></label>
+          <label class="check"><input id="fx" type="checkbox" checked /> Effects</label>
+          <label class="check"><input id="calib" type="checkbox" checked /> Calibrate</label>
+        </div>
+        <div class="actions">
+          <button id="start" class="btn primary" disabled>START</button>
+          <button id="pause" class="btn" disabled>PAUSE</button>
+          <button id="resume" class="btn" disabled>RESUME</button>
+          <button id="stop" class="btn danger" disabled>STOP</button>
+          <button class="btn ghost tiny" data-clip="last" disabled>▸ last candidate</button>
+        </div>
+      </section>
+
+      <section class="card bank">
+        <h2>SOUND BANK</h2>
+        <div class="save-row">
+          <input id="save-name" placeholder="patch name" />
+          <button id="save" class="btn primary" disabled>SAVE BEST</button>
+        </div>
+        <ul id="patch-list" class="patch-list"></ul>
+      </section>
+    </div>
+  </section>
+
+  <div id="toast" class="toast"></div>
+  <script src="/app.js"></script>
+</body>
+</html>

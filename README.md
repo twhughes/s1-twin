@@ -42,6 +42,13 @@ pip install -e .
 You'll need system MIDI libs — macOS and Windows ship them, Linux wants
 `sudo apt install libasound2-dev`.
 
+For hacking on s1tui itself (tests + lint):
+
+```bash
+pip install -e ".[studio,dev]"
+pytest -q && ruff check .
+```
+
 ## Usage
 
 ```bash
@@ -71,6 +78,51 @@ The S-1 over USB is MIDI only — no audio. You have two options:
 If you're not hearing anything at all, check that the S-1 is on the right
 MIDI channel and that `s1tui --list-ports` shows it.
 
+## Studio — automated sound design
+
+Drop in an audio snippet and let an agent recreate it on the S-1. The engine
+records the synth's *actual* audio, scores how close it is to your target, and
+tunes the CC parameters with a derivative-free optimizer (CMA-ES) until it
+matches — then saves the result to your patch bank.
+
+```bash
+pip install -e ".[studio]"   # adds audio capture, analysis, optimizer, web app
+```
+
+### Hooking up audio capture
+
+The matching engine needs to *hear* the S-1. Since the S-1 is MIDI-only over USB,
+its audio has to reach the Mac as an input device. The clean route with Logic:
+
+1. Install [BlackHole](https://existential.audio/blackhole/) (a virtual audio driver).
+2. In Logic, send the S-1's track output to BlackHole (or use an Aggregate Device).
+3. Point the engine at the BlackHole input — it'll show up in the device list.
+
+Any real audio-interface input the S-1 is plugged into works too.
+
+### Web app
+
+```bash
+s1tui-web        # opens http://127.0.0.1:8765
+```
+
+Pick your MIDI port + audio input, drag-drop a target sound, and hit START. You
+get live target-vs-best spectrograms, a closeness meter, and iteration count.
+**Automated** mode runs to completion; **Interactive** mode pauses each round so
+you can listen to the candidate. Save the winner to the bank, then play-sample,
+overwrite, or delete patches from the same screen.
+
+### CLI
+
+```bash
+s1tui-match target.wav --device "BlackHole" --iters 40 --out my-match
+s1tui-match --list-devices    # audio inputs
+s1tui-match --list-ports      # MIDI ports
+```
+
+Matching is single-note timbre: the engine plays a fixed probe note (C3) for each
+candidate and compares the recorded tone (log-mel + MFCC + amplitude envelope).
+
 ## Keys
 
 `Ctrl+C` to quit. Everything else:
@@ -84,6 +136,8 @@ MIDI channel and that `s1tui --list-ports` shows it.
 | `0` | Zero everything |
 | `t` | Test note (C4) |
 | `m` | Load a `.mid` file |
+| `M` | Save the piano roll as a `.mid` file |
+| `!` | Panic — all notes off (CC 123) |
 | `space` | Play / stop |
 | `p` / `x` | Play / stop (alternate) |
 | `j` / `k` | Navigate widgets |
@@ -103,7 +157,10 @@ MIDI channel and that `s1tui --list-ports` shows it.
 | Click | Toggle note at mouse pos |
 
 Tempo is shared between the piano roll and the SEQ Tempo widget — change
-one and the other follows.
+one and the other follows, even mid-playback. The other sequencer cards are
+live too: **Gate** scales how long each note is held, **Shuffle** swings the
+offbeats, **Last Step** truncates the pattern, **Master Prob** randomly drops
+steps, and **Scale** switches the grid resolution.
 
 ## The piano roll
 
@@ -121,7 +178,8 @@ one and the other follows.
 ```
 
 Hit `m` to load a MIDI file, or just click around to place notes. Press
-`space` to hear it. Notes are quantized to the grid on import. The default
+`space` to hear it. `M` (shift+m) exports your edits — next to the file you
+loaded, or into `~/.s1tui/midi/` if you started from scratch. Notes are quantized to the grid on import. The default
 view is centered on C2 since, y'know, bass synth.
 
 ## Scripting
@@ -153,7 +211,9 @@ s1tui/
 ├── state.py             # param state store
 ├── widgets/             # sliders, toggles, selectors, piano roll
 ├── views/               # Panel, Menu, Seq tabs
-└── screens/             # modal dialogs
+├── screens/             # modal dialogs
+├── match/               # sound-matching engine (capture, features, optimizer)
+└── web/                 # FastAPI backend + synthwave web app
 ```
 
 ## License

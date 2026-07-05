@@ -26,6 +26,7 @@ class Sequence:
     steps: int = 16  # total pattern length
     bpm: float = 120.0
     step_resolution: str = "1/16"  # grid quantization
+    dropped_notes: int = 0  # notes discarded on import (past max_steps)
 
     def note_at(self, step: int, pitch: int) -> Note | None:
         """Return the note at a given step and pitch, or None."""
@@ -51,13 +52,23 @@ class Sequence:
         self.notes.clear()
 
 
-def _resolution_ticks(resolution: str, ticks_per_beat: int) -> int:
-    """Convert a resolution string like '1/16' to ticks."""
+def parse_resolution(resolution: str) -> tuple[int, int]:
+    """Parse a resolution string like '1/16' into (numerator, denominator).
+
+    Falls back to a quarter note (1, 4) on anything unparseable.
+    """
     parts = resolution.split("/")
     if len(parts) == 2:
-        numerator, denominator = int(parts[0]), int(parts[1])
-    else:
-        return ticks_per_beat  # fallback to quarter note
+        try:
+            return int(parts[0]), int(parts[1])
+        except ValueError:
+            return 1, 4
+    return 1, 4
+
+
+def _resolution_ticks(resolution: str, ticks_per_beat: int) -> int:
+    """Convert a resolution string like '1/16' to ticks."""
+    numerator, denominator = parse_resolution(resolution)
     # 1/4 = 1 beat, 1/8 = half beat, 1/16 = quarter beat
     return int(ticks_per_beat * 4 * numerator / denominator)
 
@@ -80,18 +91,22 @@ def load_midi(path: Path, quantize: str = "1/16", max_steps: int = 64) -> Sequen
                 bpm = mido.tempo2bpm(msg.tempo)
                 break
 
-    # Collect note-on/off pairs from all tracks
+    # Collect note-on/off pairs from all tracks. Pending on-events are stacked
+    # per pitch so overlapping same-pitch notes within a track don't clobber
+    # each other (first-on pairs with first-off).
     notes: list[Note] = []
+    dropped = 0
     for track in mid.tracks:
         abs_time = 0
-        pending: dict[int, tuple[int, int]] = {}  # pitch -> (start_tick, velocity)
+        pending: dict[int, list[tuple[int, int]]] = {}  # pitch -> [(start_tick, velocity)]
         for msg in track:
             abs_time += msg.time
             if msg.type == "note_on" and msg.velocity > 0:
-                pending[msg.note] = (abs_time, msg.velocity)
+                pending.setdefault(msg.note, []).append((abs_time, msg.velocity))
             elif msg.type == "note_off" or (msg.type == "note_on" and msg.velocity == 0):
-                if msg.note in pending:
-                    start_tick, velocity = pending.pop(msg.note)
+                stack = pending.get(msg.note)
+                if stack:
+                    start_tick, velocity = stack.pop(0)
                     dur_ticks = abs_time - start_tick
                     step = round(start_tick / step_ticks)
                     duration = max(1, round(dur_ticks / step_ticks))
@@ -102,6 +117,8 @@ def load_midi(path: Path, quantize: str = "1/16", max_steps: int = 64) -> Sequen
                             velocity=velocity,
                             duration=duration,
                         ))
+                    else:
+                        dropped += 1
 
     # Determine pattern length
     if notes:
@@ -111,7 +128,9 @@ def load_midi(path: Path, quantize: str = "1/16", max_steps: int = 64) -> Sequen
     else:
         steps = 16
 
-    return Sequence(notes=notes, steps=steps, bpm=bpm, step_resolution=quantize)
+    return Sequence(
+        notes=notes, steps=steps, bpm=bpm, step_resolution=quantize, dropped_notes=dropped
+    )
 
 
 def save_midi(seq: Sequence, path: Path) -> None:

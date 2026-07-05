@@ -2,14 +2,12 @@
 
 import asyncio
 import re
-import xml.etree.ElementTree as ET
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 from s1tui.app import S1App
 from s1tui.sequence import Note, Sequence
 from s1tui.widgets.piano_roll import PianoRoll
-from s1tui.widgets import CCSlider
 
 OUTDIR = Path("./docs")
 

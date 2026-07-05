@@ -67,7 +67,6 @@ SECTION_ACCENT: dict[str, str] = {
     "Effects": MAGENTA,
     "Controls": LIME,
     "Sequencer": CYAN,
-    "Arpeggiator": VIOLET,
 }
 
 DEFAULT_ACCENT = MAGENTA

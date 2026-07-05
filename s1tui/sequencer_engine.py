@@ -2,17 +2,32 @@
 
 from __future__ import annotations
 
+import random
 import threading
 import time
 
 from .midi_backend import MidiBackend
-from .sequence import Note, Sequence
+from .sequence import Sequence
 
 
 class SequencerEngine:
-    """Plays a Sequence by sending MIDI note-on/off in a background thread."""
+    """Plays a Sequence by sending MIDI note-on/off in a background thread.
 
-    def __init__(self, midi: MidiBackend, sequence: Sequence | None = None) -> None:
+    Performance controls (set from the UI, read live by the playback thread):
+
+    - ``gate``: fraction of each note's duration actually held (0-1].
+    - ``shuffle``: swing — even-numbered steps (1-indexed) are delayed by this
+      fraction of a step (0-1).
+    - ``last_step``: truncate the pattern to this many steps (None = full).
+    - ``probability``: chance each step's notes fire (0-1).
+    """
+
+    def __init__(
+        self,
+        midi: MidiBackend,
+        sequence: Sequence | None = None,
+        rng: random.Random | None = None,
+    ) -> None:
         self._midi = midi
         self._sequence = sequence or Sequence()
         self._playing = False
@@ -20,8 +35,18 @@ class SequencerEngine:
         self._position = 0  # current step
         self._thread: threading.Thread | None = None
         self._stop_event = threading.Event()
-        self._active_notes: set[int] = set()  # pitches currently sounding
+        # (pitch, off_time) for notes currently sounding; off_time is
+        # time.monotonic()-based so gate fractions and loop wrap-around need
+        # no special casing. Guarded by _active_lock — pause() touches it
+        # from the UI thread while _run() owns playback.
+        self._active: list[tuple[int, float]] = []
+        self._active_lock = threading.Lock()
         self._position_callback: callable | None = None
+        self.gate: float = 1.0
+        self.shuffle: float = 0.0
+        self.last_step: int | None = None
+        self.probability: float = 1.0
+        self._rng = rng or random.Random()
 
     @property
     def sequence(self) -> Sequence:
@@ -90,83 +115,138 @@ class SequencerEngine:
             self._all_notes_off()
             self._midi.send_stop()
 
+    def all_notes_off(self) -> None:
+        """Panic: turn off everything this engine has sounding."""
+        self._all_notes_off()
+
     def _all_notes_off(self) -> None:
         """Send note-off for all currently sounding notes."""
-        for pitch in list(self._active_notes):
+        with self._active_lock:
+            pitches = {pitch for pitch, _ in self._active}
+            self._active.clear()
+        for pitch in pitches:
             self._midi.send_note_off(pitch)
-        self._active_notes.clear()
+
+    def _effective_steps(self) -> int:
+        steps = self._sequence.steps
+        if self.last_step is not None:
+            steps = min(steps, self.last_step)
+        return max(1, steps)
 
     def _run(self) -> None:
         """Main playback loop running in a background thread."""
-        seq = self._sequence
-        if not seq.notes or seq.steps == 0:
+        try:
+            seq = self._sequence
+            if not seq.notes or seq.steps == 0:
+                return
+
+            next_tick = time.monotonic()
+            while not self._stop_event.is_set():
+                if self._paused:
+                    # Spin-wait while paused; restart the clock on resume
+                    time.sleep(0.01)
+                    next_tick = time.monotonic()
+                    continue
+
+                step = self._position
+                step_duration = self._step_duration_seconds()
+                # Snapshot: the UI thread edits the live note list mid-play
+                notes = list(seq.notes)
+
+                # Swing: delay even-numbered steps (1-indexed → odd index)
+                if self.shuffle > 0.0 and step % 2 == 1:
+                    self._wait_until(time.monotonic() + self.shuffle * step_duration)
+                    if self._stop_event.is_set():
+                        break
+
+                connected_before = self._midi.connected
+                now = time.monotonic()
+                self._flush_note_offs(now)
+
+                if self._rng.random() < self.probability:
+                    for note in notes:
+                        if note.step != step:
+                            continue
+                        self._midi.send_note_on(note.pitch, note.velocity)
+                        held = max(0.05, note.duration * self.gate)
+                        with self._active_lock:
+                            self._active.append((note.pitch, now + held * step_duration))
+
+                if connected_before and not self._midi.connected:
+                    # Device vanished mid-send — stop cleanly
+                    break
+
+                # Notify UI of position change
+                if self._position_callback is not None:
+                    try:
+                        self._position_callback(step)
+                    except Exception:
+                        pass
+
+                # Absolute-clock scheduling: no per-step processing drift
+                next_tick += step_duration
+                self._wait_until(next_tick)
+                if self._stop_event.is_set():
+                    break
+
+                # Advance position, loop at end
+                self._position = (step + 1) % self._effective_steps()
+        except Exception:
+            # The real MidiBackend never raises from sends, but a broken
+            # backend or callback must not leave _playing set or notes stuck.
+            pass
+        finally:
+            try:
+                self._all_notes_off()
+            except Exception:
+                pass
             self._playing = False
-            return
 
-        step_duration = self._step_duration_seconds()
-
+    def _wait_until(self, deadline: float) -> None:
+        """Sleep until *deadline*, waking early to service due note-offs."""
         while not self._stop_event.is_set():
-            if self._paused:
-                # Spin-wait while paused
-                time.sleep(0.01)
-                continue
+            now = time.monotonic()
+            self._flush_note_offs(now)
+            if now >= deadline:
+                return
+            target = deadline
+            with self._active_lock:
+                for _, off_time in self._active:
+                    if off_time < target:
+                        target = off_time
+            remaining = target - now
+            if remaining > 0:
+                self._stop_event.wait(remaining)
 
-            step = self._position
+    def _flush_note_offs(self, now: float) -> None:
+        """Send note-off for notes whose hold time has expired.
 
-            # Turn off notes that should end on this step
-            self._process_note_offs(step)
-
-            # Turn on notes that start on this step
-            for note in seq.notes_at_step(step):
-                self._midi.send_note_on(note.pitch, note.velocity)
-                self._active_notes.add(note.pitch)
-
-            # Notify UI of position change
-            if self._position_callback is not None:
-                try:
-                    self._position_callback(step)
-                except Exception:
-                    pass
-
-            # Wait for next step
-            self._stop_event.wait(step_duration)
-            if self._stop_event.is_set():
-                break
-
-            # Advance position, loop at end
-            self._position = (step + 1) % seq.steps
-
-        self._all_notes_off()
-        self._playing = False
-
-    def _process_note_offs(self, current_step: int) -> None:
-        """Send note-off for notes whose duration has expired."""
-        seq = self._sequence
-        for note in seq.notes:
-            note_end = note.step + note.duration
-            # Note should turn off at this step
-            if note_end == current_step and note.pitch in self._active_notes:
-                self._midi.send_note_off(note.pitch)
-                self._active_notes.discard(note.pitch)
-            # Handle wrap-around for looping
-            if note_end >= seq.steps:
-                wrapped_end = note_end % seq.steps
-                if wrapped_end == current_step and note.pitch in self._active_notes:
-                    self._midi.send_note_off(note.pitch)
-                    self._active_notes.discard(note.pitch)
+        A pitch still held by a later, overlapping note is not turned off —
+        its expiry is dropped silently so the sustaining note keeps sounding.
+        """
+        with self._active_lock:
+            due = {pitch for pitch, off_time in self._active if off_time <= now}
+            if not due:
+                return
+            self._active = [(p, t) for p, t in self._active if t > now]
+            still_held = {pitch for pitch, _ in self._active}
+        for pitch in due:
+            if pitch not in still_held:
+                self._midi.send_note_off(pitch)
 
     def _step_duration_seconds(self) -> float:
         """Calculate the duration of one step in seconds from BPM and resolution."""
         seq = self._sequence
-        # Parse resolution like "1/16"
-        parts = seq.step_resolution.split("/")
-        if len(parts) == 2:
-            numerator, denominator = int(parts[0]), int(parts[1])
-        else:
-            numerator, denominator = 1, 4  # quarter note fallback
+        return step_duration_seconds(seq.bpm, seq.step_resolution)
 
-        # beats per second
-        bps = seq.bpm / 60.0
-        # steps per beat: e.g., 1/16 = 4 steps per beat
-        steps_per_beat = denominator / (4 * numerator)
-        return 1.0 / (bps * steps_per_beat)
+
+def step_duration_seconds(bpm: float, resolution: str) -> float:
+    """Duration of one step in seconds for a BPM and resolution like '1/16'."""
+    from .sequence import parse_resolution
+
+    numerator, denominator = parse_resolution(resolution)
+    # beats per second
+    bps = bpm / 60.0
+    # steps per beat: e.g., 1/16 = 4 steps per beat
+    steps_per_beat = denominator / (4 * numerator)
+    return 1.0 / (bps * steps_per_beat)

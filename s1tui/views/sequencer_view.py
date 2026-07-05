@@ -1,15 +1,16 @@
-"""Sequencer view — piano roll + transport + seq/arp parameter cards."""
+"""Sequencer view — piano roll + transport + sequencer parameter cards."""
 
 from __future__ import annotations
 
 from textual.app import ComposeResult
 from textual.containers import Container, VerticalScroll
+from textual.css.query import NoMatches
 from textual.widgets import Label, Static
 
 from ..schema import SEQ_PARAMS, all_seq_sections
 from ..theme import section_accent
-from .cards import ModuleColumns
 from ..widgets.piano_roll import PianoRoll
+from .cards import ModuleColumns
 
 _TRANSPORT_HELP = (
     "[$secondary]space[/] play/stop   [$secondary]p[/]/[$secondary]x[/] play·stop   "
@@ -19,7 +20,7 @@ _TRANSPORT_HELP = (
 
 
 class SequencerView(Static):
-    """Sequencer view with piano roll, transport, and seq/arp params."""
+    """Sequencer view with piano roll, transport, and sequencer params."""
 
     DEFAULT_CSS = """
     SequencerView { height: 1fr; width: 100%; }
@@ -51,5 +52,5 @@ class SequencerView(Static):
     def on_mount(self) -> None:
         try:
             self.query_one("#roll-card").border_title = " PIANO ROLL "
-        except Exception:
+        except NoMatches:
             pass

@@ -4,9 +4,10 @@ from __future__ import annotations
 
 from textual.app import ComposeResult
 from textual.containers import Container, VerticalScroll
+from textual.css.query import NoMatches
 from textual.widgets import Static
 
-from ..schema import S1_PARAMS, AccessLevel, S1Param
+from ..schema import AccessLevel, S1Param, sections_for_access
 from ..theme import section_accent
 from ..widgets.wave_scope import WaveScope
 from .cards import ModuleColumns
@@ -25,15 +26,7 @@ def _signal_ribbon() -> str:
 
 
 def _build_panel_sections() -> list[tuple[str, list[S1Param]]]:
-    sections: dict[str, list[S1Param]] = {}
-    order: list[str] = []
-    for p in S1_PARAMS:
-        if p.access in (AccessLevel.PANEL, AccessLevel.SHIFT):
-            if p.section not in sections:
-                sections[p.section] = []
-                order.append(p.section)
-            sections[p.section].append(p)
-    return [(name, sections[name]) for name in order]
+    return sections_for_access((AccessLevel.PANEL, AccessLevel.SHIFT))
 
 
 class PanelView(Static):
@@ -71,5 +64,5 @@ class PanelView(Static):
     def on_mount(self) -> None:
         try:
             self.query_one("#scope-card").border_title = " SCOPE "
-        except Exception:
+        except NoMatches:
             pass

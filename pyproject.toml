@@ -15,5 +15,40 @@ dependencies = [
     "python-rtmidi>=1.5.0",
 ]
 
+[project.optional-dependencies]
+# Automated sound design: audio capture/analysis, optimizer, and web app.
+# Install with: pip install -e ".[studio]"
+studio = [
+    "numpy>=1.24",
+    "scipy>=1.10",
+    "soundfile>=0.12",
+    "sounddevice>=0.4",
+    "cma>=3.2",
+    "fastapi>=0.110",
+    "uvicorn>=0.27",
+    "websockets>=12",
+    "python-multipart>=0.0.9",
+]
+# Tests and linting. The web tests need the studio extra too:
+# pip install -e ".[studio,dev]"
+dev = [
+    "pytest>=8",
+    "pytest-asyncio>=0.23",
+    "ruff>=0.4",
+    "httpx",
+]
+
 [project.scripts]
 s1tui = "s1tui.__main__:main"
+s1tui-match = "s1tui.match.cli:main"
+s1tui-web = "s1tui.web.server:main"
+
+[tool.ruff]
+line-length = 110
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "I"]
+ignore = [
+    "E741",  # single-letter loss variable `l` reads fine in the math code
+]

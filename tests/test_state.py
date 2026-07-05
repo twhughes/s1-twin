@@ -1,14 +1,16 @@
 """Tests for state.py — centralized parameter state store."""
 
-from s1tui.state import ParamState
 from s1tui.schema import S1_PARAMS
+from s1tui.state import ParamState
 
 
 class TestParamState:
     def test_initial_values_are_defaults(self):
         state = ParamState()
         for p in S1_PARAMS:
-            assert state.get(p.cc) == p.default, f"{p.name} (CC {p.cc}) expected {p.default}, got {state.get(p.cc)}"
+            assert state.get(p.cc) == p.default, (
+                f"{p.name} (CC {p.cc}) expected {p.default}, got {state.get(p.cc)}"
+            )
 
     def test_set_and_get(self):
         state = ParamState()
@@ -58,7 +60,9 @@ class TestParamState:
     def test_remove_listener(self):
         state = ParamState()
         changes = []
-        cb = lambda cc, val, src: changes.append(cc)
+        def cb(cc, val, src):
+            changes.append(cc)
+
         state.add_listener(cb)
         state.set(74, 50)
         assert len(changes) == 1

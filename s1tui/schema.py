@@ -21,6 +21,16 @@ class ControlType(Enum):
     DISCRETE = "discrete"     # Named choices (e.g., waveform)
 
 
+def _label_for_value(value_labels: dict[int, str], value: int) -> str:
+    """Human-readable label for a value: exact match, else nearest key."""
+    if not value_labels:
+        return str(value)
+    if value in value_labels:
+        return value_labels[value]
+    closest = min(value_labels.keys(), key=lambda k: abs(k - value))
+    return value_labels[closest]
+
+
 @dataclass(frozen=True)
 class S1Param:
     """A single Roland S-1 MIDI CC parameter."""
@@ -38,14 +48,7 @@ class S1Param:
 
     def label_for_value(self, value: int) -> str:
         """Return human-readable label for a value, or the numeric value."""
-        if self.value_labels:
-            # For discrete params, find closest matching label
-            if value in self.value_labels:
-                return self.value_labels[value]
-            # Find nearest key
-            closest = min(self.value_labels.keys(), key=lambda k: abs(k - value))
-            return self.value_labels[closest]
-        return str(value)
+        return _label_for_value(self.value_labels, value)
 
 
 # ──────────────────────────────────────────────
@@ -156,7 +159,7 @@ class SeqParam:
     """A sequencer parameter (not CC-controlled, device-menu only)."""
     name: str
     key: str          # unique identifier (e.g., "seq_tempo")
-    section: str      # "Sequencer" or "Arpeggiator"
+    section: str      # "Sequencer"
     control_type: ControlType = ControlType.CONTINUOUS
     min_val: int = 0
     max_val: int = 127
@@ -166,12 +169,7 @@ class SeqParam:
 
     def label_for_value(self, value: int) -> str:
         """Return human-readable label for a value, or the numeric value."""
-        if self.value_labels:
-            if value in self.value_labels:
-                return self.value_labels[value]
-            closest = min(self.value_labels.keys(), key=lambda k: abs(k - value))
-            return self.value_labels[closest]
-        return str(value)
+        return _label_for_value(self.value_labels, value)
 
 
 SEQ_PARAMS: tuple[SeqParam, ...] = (
@@ -202,16 +200,6 @@ SEQ_PARAMS: tuple[SeqParam, ...] = (
     SeqParam("Count-In", "count_in", "Sequencer",
              ControlType.SWITCH, 0, 127, 0,
              value_labels={0: "Off", 127: "On"}),
-
-    # ── Arpeggiator ──
-    SeqParam("ARP Type", "arp_type", "Arpeggiator",
-             ControlType.DISCRETE,
-             value_labels={0: "Off", 26: "Up", 51: "Down", 77: "Up&Down", 102: "Random", 127: "Note Order"},
-             description="Arpeggiator pattern type"),
-    SeqParam("ARP Note Len", "arp_note_len", "Arpeggiator",
-             ControlType.DISCRETE,
-             value_labels={0: "1/4", 32: "1/8", 64: "1/16", 96: "1/32"},
-             description="Arpeggiator note length"),
 )
 
 _SEQ_KEY_INDEX: dict[str, SeqParam] = {p.key: p for p in SEQ_PARAMS}
@@ -259,6 +247,23 @@ def params_by_section(section: str) -> list[S1Param]:
 def params_by_access(access: AccessLevel) -> list[S1Param]:
     """Return all params with a given access level."""
     return [p for p in S1_PARAMS if p.access == access]
+
+
+def sections_for_access(levels: tuple[AccessLevel, ...]) -> list[tuple[str, list[S1Param]]]:
+    """Ordered (section, params) groups for params at the given access levels.
+
+    Shared by the Panel and Menu views, which differ only in which access
+    levels they show.
+    """
+    grouped: dict[str, list[S1Param]] = {}
+    order: list[str] = []
+    for p in S1_PARAMS:
+        if p.access in levels:
+            if p.section not in grouped:
+                grouped[p.section] = []
+                order.append(p.section)
+            grouped[p.section].append(p)
+    return [(name, grouped[name]) for name in order]
 
 
 def panel_params() -> list[S1Param]:

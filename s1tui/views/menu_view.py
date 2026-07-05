@@ -6,22 +6,14 @@ from textual.app import ComposeResult
 from textual.containers import VerticalScroll
 from textual.widgets import Static
 
-from ..schema import S1_PARAMS, AccessLevel, S1Param
+from ..schema import AccessLevel, S1Param, sections_for_access
 from ..theme import section_accent
 from .cards import ModuleColumns, columns_for_width
 
 
 def _build_menu_sections() -> list[tuple[str, list[S1Param]]]:
     """Ordered menu sections (MENU/SHIFT/EXTERNAL access)."""
-    sections: dict[str, list[S1Param]] = {}
-    order: list[str] = []
-    for p in S1_PARAMS:
-        if p.access in (AccessLevel.MENU, AccessLevel.SHIFT, AccessLevel.EXTERNAL):
-            if p.section not in sections:
-                sections[p.section] = []
-                order.append(p.section)
-            sections[p.section].append(p)
-    return [(name, sections[name]) for name in order]
+    return sections_for_access((AccessLevel.MENU, AccessLevel.SHIFT, AccessLevel.EXTERNAL))
 
 
 class MenuView(Static):

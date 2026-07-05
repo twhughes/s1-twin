@@ -5,7 +5,6 @@ from __future__ import annotations
 from rich.text import Text
 
 from .param_widget import ParamWidget, neon_meter
-from .. import theme as T
 
 
 class CCSlider(ParamWidget):

@@ -2,20 +2,18 @@
 
 from s1tui.schema import (
     S1_PARAMS,
-    S1Param,
     SEQ_PARAMS,
-    SeqParam,
     AccessLevel,
     ControlType,
-    param_by_cc,
-    params_by_section,
-    params_by_access,
-    panel_params,
-    menu_params,
     all_sections,
+    all_seq_sections,
+    menu_params,
+    panel_params,
+    param_by_cc,
+    params_by_access,
+    params_by_section,
     seq_param_by_key,
     seq_params_by_section,
-    all_seq_sections,
 )
 
 
@@ -195,7 +193,7 @@ class TestKnownParams:
 
 class TestSeqParamDefinitions:
     def test_seq_param_count(self):
-        assert len(SEQ_PARAMS) == 10
+        assert len(SEQ_PARAMS) == 8
 
     def test_all_keys_unique(self):
         keys = [p.key for p in SEQ_PARAMS]
@@ -229,15 +227,10 @@ class TestSeqParamSections:
         params = seq_params_by_section("Sequencer")
         assert len(params) == 8
 
-    def test_arpeggiator_section(self):
-        params = seq_params_by_section("Arpeggiator")
-        assert len(params) == 2
-
     def test_all_seq_sections(self):
         sections = all_seq_sections()
         assert "Sequencer" in sections
-        assert "Arpeggiator" in sections
-        assert len(sections) == 2
+        assert len(sections) == 1
 
 
 class TestSeqParamLookup:
@@ -258,12 +251,6 @@ class TestSeqParamLookup:
         p = seq_param_by_key("seq_tempo")
         assert p is not None
         assert p.label_for_value(64) == "64"
-
-    def test_arp_type_labels(self):
-        p = seq_param_by_key("arp_type")
-        assert p is not None
-        assert p.label_for_value(0) == "Off"
-        assert p.label_for_value(26) == "Up"
 
     def test_switch_params(self):
         met = seq_param_by_key("metronome")

@@ -4,10 +4,8 @@ import tempfile
 from pathlib import Path
 
 import mido
-import pytest
 
-from s1tui.sequence import Note, Sequence, load_midi, save_midi, _resolution_ticks
-
+from s1tui.sequence import Note, Sequence, _resolution_ticks, load_midi, save_midi
 
 # ── Note / Sequence dataclass tests ──
 

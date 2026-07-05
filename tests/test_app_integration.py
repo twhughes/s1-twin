@@ -1,12 +1,12 @@
 """Integration tests for the full app using Textual's test runner."""
 
-import pytest
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 from s1tui.app import S1App
-from s1tui.schema import S1_PARAMS, SEQ_PARAMS, param_by_cc
+from s1tui.schema import S1_PARAMS, SEQ_PARAMS
 from s1tui.sequence import Note, Sequence
-from s1tui.widgets import CCSlider, CCToggle, CCSelector
 from s1tui.widgets.piano_roll import PianoRoll
 
 
@@ -27,7 +27,7 @@ def mock_midi():
 @pytest.mark.asyncio
 async def test_app_launches(mock_midi):
     app = S1App()
-    async with app.run_test(size=(120, 40)) as pilot:
+    async with app.run_test(size=(120, 40)):
         # App should render without errors
         assert app.title == "S-1 TUI"
 
@@ -35,7 +35,7 @@ async def test_app_launches(mock_midi):
 @pytest.mark.asyncio
 async def test_panel_tab_is_default(mock_midi):
     app = S1App()
-    async with app.run_test(size=(120, 40)) as pilot:
+    async with app.run_test(size=(120, 40)):
         # Panel view should be visible by default
         panel_views = app.query("PanelView")
         assert len(panel_views) > 0
@@ -44,7 +44,7 @@ async def test_panel_tab_is_default(mock_midi):
 @pytest.mark.asyncio
 async def test_panel_view_has_widgets(mock_midi):
     app = S1App()
-    async with app.run_test(size=(120, 40)) as pilot:
+    async with app.run_test(size=(120, 40)):
         # Should have param widgets
         sliders = app.query("CCSlider")
         toggles = app.query("CCToggle")
@@ -57,7 +57,7 @@ async def test_panel_view_has_widgets(mock_midi):
 @pytest.mark.asyncio
 async def test_menu_view_exists(mock_midi):
     app = S1App()
-    async with app.run_test(size=(120, 40)) as pilot:
+    async with app.run_test(size=(120, 40)):
         menu_views = app.query("MenuView")
         assert len(menu_views) > 0
 
@@ -65,7 +65,7 @@ async def test_menu_view_exists(mock_midi):
 @pytest.mark.asyncio
 async def test_status_bar_shows_not_connected(mock_midi):
     app = S1App()
-    async with app.run_test(size=(120, 40)) as pilot:
+    async with app.run_test(size=(120, 40)):
         label = app.query_one("#status-port")
         # Check the label's update content (textual 8+ uses _content)
         text = repr(label._content) if hasattr(label, "_content") else str(label.render())
@@ -75,7 +75,7 @@ async def test_status_bar_shows_not_connected(mock_midi):
 @pytest.mark.asyncio
 async def test_widget_index_built(mock_midi):
     app = S1App()
-    async with app.run_test(size=(120, 40)) as pilot:
+    async with app.run_test(size=(120, 40)):
         # _widgets dict should be populated after mount
         assert len(app._widgets) == 54
 
@@ -275,7 +275,7 @@ async def test_keybinding_quit(mock_midi):
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.press("ctrl+c")
         # App should have called disconnect
-        mock_midi.disconnect.assert_called()
+        mock_midi.close.assert_called()
 
 
 # ── Sequencer tab tests ──
@@ -284,7 +284,7 @@ async def test_keybinding_quit(mock_midi):
 @pytest.mark.asyncio
 async def test_sequencer_tab_exists(mock_midi):
     app = S1App()
-    async with app.run_test(size=(120, 40)) as pilot:
+    async with app.run_test(size=(120, 40)):
         seq_views = app.query("SequencerView")
         assert len(seq_views) > 0
 
@@ -292,7 +292,7 @@ async def test_sequencer_tab_exists(mock_midi):
 @pytest.mark.asyncio
 async def test_sequencer_widgets_indexed(mock_midi):
     app = S1App()
-    async with app.run_test(size=(120, 40)) as pilot:
+    async with app.run_test(size=(120, 40)):
         assert len(app._seq_widgets) == len(SEQ_PARAMS)
 
 
@@ -303,7 +303,7 @@ async def test_transport_play_sends_start(mock_midi):
         app.action_transport_play()
         await pilot.pause()
         mock_midi.send_start.assert_called_once()
-        assert app._transport_playing is True
+        assert app._transport_active is True
 
 
 @pytest.mark.asyncio
@@ -315,21 +315,21 @@ async def test_transport_stop_sends_stop(mock_midi):
         app.action_transport_stop()
         await pilot.pause()
         mock_midi.send_stop.assert_called_once()
-        assert app._transport_playing is False
+        assert app._transport_active is False
 
 
 @pytest.mark.asyncio
 async def test_transport_toggle(mock_midi):
     app = S1App()
     async with app.run_test(size=(120, 40)) as pilot:
-        assert app._transport_playing is False
+        assert app._transport_active is False
         app.action_transport_toggle()
         await pilot.pause()
-        assert app._transport_playing is True
+        assert app._transport_active is True
         mock_midi.send_start.assert_called_once()
         app.action_transport_toggle()
         await pilot.pause()
-        assert app._transport_playing is False
+        assert app._transport_active is False
         mock_midi.send_stop.assert_called_once()
 
 
@@ -356,7 +356,7 @@ async def test_seq_param_change_no_cc_send(mock_midi):
 @pytest.mark.asyncio
 async def test_piano_roll_exists_in_seq_tab(mock_midi):
     app = S1App()
-    async with app.run_test(size=(120, 40)) as pilot:
+    async with app.run_test(size=(120, 40)):
         rolls = app.query("PianoRoll")
         assert len(rolls) > 0
 
@@ -364,7 +364,7 @@ async def test_piano_roll_exists_in_seq_tab(mock_midi):
 @pytest.mark.asyncio
 async def test_piano_roll_default_sequence(mock_midi):
     app = S1App()
-    async with app.run_test(size=(120, 40)) as pilot:
+    async with app.run_test(size=(120, 40)):
         roll = app.query_one("#piano-roll", PianoRoll)
         assert roll.sequence.steps == 16
         assert roll.sequence.notes == []
@@ -409,8 +409,66 @@ async def test_transport_with_sequence(mock_midi):
         await pilot.pause()
         app.action_transport_play()
         await pilot.pause()
-        assert app._transport_playing is True
+        assert app._transport_active is True
         assert app.engine is not None
         app.action_transport_stop()
         await pilot.pause()
-        assert app._transport_playing is False
+        assert app._transport_active is False
+
+
+# ── Phase 2: panic, MIDI save, seq-param wiring ──
+
+
+@pytest.mark.asyncio
+async def test_panic_sends_all_notes_off(mock_midi):
+    app = S1App()
+    async with app.run_test(size=(120, 40)):
+        app.action_panic()
+        mock_midi.all_notes_off.assert_called()
+
+
+@pytest.mark.asyncio
+async def test_save_midi_roundtrip(mock_midi, tmp_path):
+    app = S1App()
+    async with app.run_test(size=(120, 40)):
+        roll = app.query_one("#piano-roll", PianoRoll)
+        roll.sequence.toggle_note(0, 48)
+        roll.sequence.toggle_note(4, 52)
+        app.MIDI_DIR = tmp_path
+        app._on_save_midi("pattern-x")
+        path = tmp_path / "pattern-x.mid"
+        assert path.exists()
+        from s1tui.sequence import load_midi
+
+        seq2 = load_midi(path)
+        assert {(n.step, n.pitch) for n in seq2.notes} == {(0, 48), (4, 52)}
+
+
+@pytest.mark.asyncio
+async def test_save_midi_rejects_bad_names(mock_midi, tmp_path):
+    app = S1App()
+    async with app.run_test(size=(120, 40)):
+        roll = app.query_one("#piano-roll", PianoRoll)
+        roll.sequence.toggle_note(0, 48)
+        app.MIDI_DIR = tmp_path
+        app._on_save_midi("../evil")
+        assert not (tmp_path.parent / "evil.mid").exists()
+
+
+@pytest.mark.asyncio
+async def test_seq_params_steer_engine(mock_midi):
+    app = S1App()
+    async with app.run_test(size=(120, 40)):
+        app._apply_seq_param("seq_gate", 127)
+        assert abs(app.engine.gate - 1.0) < 1e-6
+        app._apply_seq_param("seq_gate", 0)
+        assert abs(app.engine.gate - 0.05) < 1e-6
+        app._apply_seq_param("seq_shuffle", 127)
+        assert abs(app.engine.shuffle - 0.5) < 1e-6
+        app._apply_seq_param("last_step", 12)
+        assert app.engine.last_step == 12
+        app._apply_seq_param("master_prob", 0)
+        assert app.engine.probability == 0.0
+        app._apply_seq_param("seq_scale", 32)
+        roll = app.query_one("#piano-roll", PianoRoll)
+        assert roll.sequence.step_resolution == "1/8"

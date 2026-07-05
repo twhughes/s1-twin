@@ -4,8 +4,8 @@ from __future__ import annotations
 
 from rich.text import Text
 
-from .param_widget import ParamWidget
 from .. import theme as T
+from .param_widget import ParamWidget
 
 
 class CCToggle(ParamWidget):

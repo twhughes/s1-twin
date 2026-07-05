@@ -1,7 +1,11 @@
-"""A tiny audio monitor host — hear the S-1 without Logic.
+"""First-class audio monitoring — hear the S-1 out of the Mac, no DAW.
+
+The S-1 is class-compliant USB audio: plugging in the data cable exposes a
+2-channel "S-1" input device in CoreAudio. This module finds that device and
+routes it to the default output.
 
 Runs two independent PortAudio streams (input from the S-1, output to your
-headphones/speakers) bridged by a lock-protected numpy ring buffer. Two streams
+speakers/headphones) bridged by a lock-protected numpy ring buffer. Two streams
 rather than one duplex stream because CoreAudio can't open a single duplex stream
 across mismatched devices (AUHAL error -10851). A startup cushion + bounded ring
 keep the passthrough glitch-free despite the two devices running on separate clocks.
@@ -18,12 +22,83 @@ import time
 
 import numpy as np
 
-from . import WORKING_SR
-from .capture import AudioClip
+from .match import WORKING_SR
+from .match.capture import AudioClip
 
 BLOCKSIZE = 512
 RING_SECONDS = 0.5      # bounded buffer -> bounded latency
 PREFILL_SECONDS = 0.15  # cushion so the output never starves at startup
+
+# Substrings that identify the S-1's USB audio device in CoreAudio.
+S1_DEVICE_MARKERS = ("s-1",)
+
+
+def list_input_devices() -> list[dict]:
+    """All audio input devices: [{index, name, channels, samplerate}]."""
+    import sounddevice as sd
+
+    out = []
+    for i, d in enumerate(sd.query_devices()):
+        if d["max_input_channels"] > 0:
+            out.append({
+                "index": i,
+                "name": d["name"],
+                "channels": d["max_input_channels"],
+                "samplerate": d["default_samplerate"],
+            })
+    return out
+
+
+def list_output_devices() -> list[dict]:
+    """All audio output devices: [{index, name, channels, samplerate}]."""
+    import sounddevice as sd
+
+    out = []
+    for i, d in enumerate(sd.query_devices()):
+        if d["max_output_channels"] > 0:
+            out.append({
+                "index": i,
+                "name": d["name"],
+                "channels": d["max_output_channels"],
+                "samplerate": d["default_samplerate"],
+            })
+    return out
+
+
+def find_s1_input() -> int | None:
+    """Index of the S-1's USB audio input device, or None if not plugged in."""
+    for d in list_input_devices():
+        name = d["name"].lower()
+        if any(marker in name for marker in S1_DEVICE_MARKERS):
+            return d["index"]
+    return None
+
+
+def default_output() -> int | None:
+    """Index of the system default output device, or None."""
+    import sounddevice as sd
+
+    try:
+        dev = sd.default.device[1]
+    except Exception:
+        return None
+    return dev if isinstance(dev, int) and dev >= 0 else None
+
+
+def rescan_devices() -> None:
+    """Refresh PortAudio's device list so hot-plugged hardware appears.
+
+    PortAudio snapshots devices at initialization; a reinitialize is the only
+    way to see USB devices plugged in after startup. Only safe while no
+    streams are open — callers must check that first.
+    """
+    import sounddevice as sd
+
+    try:
+        sd._terminate()
+        sd._initialize()
+    except Exception:
+        pass
 
 
 class _Ring:
@@ -81,6 +156,7 @@ class AudioMonitor:
         self.input: int | str | None = None
         self.output: int | str | None = None
         self.gain: float = 1.0
+        self.muted: bool = False
         self.samplerate: int | None = None
         self.peak: float = 0.0
         self.rms: float = 0.0
@@ -118,7 +194,7 @@ class AudioMonitor:
                 self._rec.append(x)
 
         def out_cb(outdata, frames, t, status):  # noqa: ANN001
-            buf = self._ring.read(frames) * self.gain
+            buf = self._ring.read(frames) * (0.0 if self.muted else self.gain)
             np.clip(buf, -1.0, 1.0, out=buf)
             outdata[:] = buf[:, None]
 
@@ -137,13 +213,26 @@ class AudioMonitor:
     def stop(self) -> None:
         for s in (self._in, self._out):
             if s is not None:
-                s.stop()
-                s.close()
+                try:
+                    s.stop()
+                    s.close()
+                except Exception:
+                    pass
         self._in = self._out = None
         self._ring = None
         self.peak = 0.0
         self.rms = 0.0
         self._capturing = self._recording = False
+
+    @property
+    def healthy(self) -> bool:
+        """True while both streams report active (device still present)."""
+        if self._in is None or self._out is None:
+            return False
+        try:
+            return bool(self._in.active) and bool(self._out.active)
+        except Exception:
+            return False
 
     @property
     def peak_db(self) -> float:

@@ -10,9 +10,9 @@ import threading
 import time
 from pathlib import Path
 
+from ..audio import AudioMonitor
 from ..match.capture import AudioClip
 from ..match.driver import SynthDriver
-from ..match.monitor import AudioMonitor
 from ..match.session import MatchConfig, MatchSession, Progress
 from ..midi_backend import MidiBackend
 

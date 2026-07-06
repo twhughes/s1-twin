@@ -1,4 +1,4 @@
-"""Tests for s1tui.audio — the first-class monitor, with fake streams."""
+"""Tests for synth.audio — the first-class monitor, with fake streams."""
 
 from __future__ import annotations
 
@@ -15,13 +15,13 @@ def fake_sd(monkeypatch):
     fake = FakeSounddevice()
     monkeypatch.setitem(sys.modules, "sounddevice", fake)
     # No live callbacks in tests — skip the output-prefill wait.
-    monkeypatch.setattr("s1tui.audio.PREFILL_SECONDS", 0.0)
+    monkeypatch.setattr("synth.audio.PREFILL_SECONDS", 0.0)
     return fake
 
 
 @pytest.fixture
 def monitor():
-    from s1tui.audio import AudioMonitor
+    from synth.audio import AudioMonitor
 
     m = AudioMonitor()
     yield m
@@ -31,36 +31,36 @@ def monitor():
 # ── device discovery ─────────────────────────────────────────
 class TestDiscovery:
     def test_find_s1_absent(self, fake_sd):
-        from s1tui.audio import find_s1_input
+        from synth.audio import find_s1_input
 
         assert find_s1_input() is None
 
     def test_find_s1_present(self, fake_sd):
-        from s1tui.audio import find_s1_input
+        from synth.audio import find_s1_input
 
         idx = fake_sd.add_s1()
         assert find_s1_input() == idx
 
     def test_find_s1_requires_input_channels(self, fake_sd):
-        from s1tui.audio import find_s1_input
+        from synth.audio import find_s1_input
 
         fake_sd.devices.append({"name": "S-1", "max_input_channels": 0,
                                 "max_output_channels": 2, "default_samplerate": 44100.0})
         assert find_s1_input() is None
 
     def test_default_output(self, fake_sd):
-        from s1tui.audio import default_output
+        from synth.audio import default_output
 
         assert default_output() == 1
 
     def test_default_output_none_when_unset(self, fake_sd):
-        from s1tui.audio import default_output
+        from synth.audio import default_output
 
         fake_sd.default.device = (0, -1)
         assert default_output() is None
 
     def test_list_devices(self, fake_sd):
-        from s1tui.audio import list_input_devices, list_output_devices
+        from synth.audio import list_input_devices, list_output_devices
 
         fake_sd.add_s1()
         names = [d["name"] for d in list_input_devices()]
@@ -68,7 +68,7 @@ class TestDiscovery:
         assert all(d["channels"] > 0 for d in list_output_devices())
 
     def test_rescan_reinitializes_portaudio(self, fake_sd):
-        from s1tui.audio import rescan_devices
+        from synth.audio import rescan_devices
 
         rescan_devices()
         assert fake_sd.reinitialized == 1
@@ -167,7 +167,7 @@ class TestRecording:
 # ── ring buffer ──────────────────────────────────────────────
 class TestRing:
     def test_write_read_roundtrip(self):
-        from s1tui.audio import _Ring
+        from synth.audio import _Ring
 
         r = _Ring(16)
         r.write(np.arange(8, dtype=np.float32))
@@ -175,7 +175,7 @@ class TestRing:
         np.testing.assert_array_equal(out, np.arange(8, dtype=np.float32))
 
     def test_read_underrun_pads_zeros(self):
-        from s1tui.audio import _Ring
+        from synth.audio import _Ring
 
         r = _Ring(16)
         r.write(np.ones(4, dtype=np.float32))
@@ -184,7 +184,7 @@ class TestRing:
         assert out[4:].sum() == 0.0
 
     def test_wraparound(self):
-        from s1tui.audio import _Ring
+        from synth.audio import _Ring
 
         r = _Ring(8)
         r.write(np.ones(6, dtype=np.float32))
@@ -193,7 +193,7 @@ class TestRing:
         np.testing.assert_array_equal(r.read(6), np.full(6, 2.0, dtype=np.float32))
 
     def test_overrun_drops_oldest(self):
-        from s1tui.audio import _Ring
+        from synth.audio import _Ring
 
         r = _Ring(8)
         r.write(np.arange(12, dtype=np.float32))
@@ -222,7 +222,7 @@ class TestScope:
         assert min(points) < -0.3  # signed peaks keep the waveform's shape
 
     def test_window_is_recent_blocks_only(self, fake_sd, monitor):
-        from s1tui.audio import BLOCKSIZE, SCOPE_BLOCKS
+        from synth.audio import BLOCKSIZE, SCOPE_BLOCKS
 
         idx = fake_sd.add_s1()
         monitor.start(idx, 1)

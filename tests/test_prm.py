@@ -1,8 +1,8 @@
-"""Tests for s1tui.prm — parse/serialize fidelity against a real device dump.
+"""Tests for synth.prm — parse/serialize fidelity against a real device dump.
 
-The bundled template (s1tui/data/init_pattern.prm) is a real S-1 disk-mode
+The bundled template (synth/data/init_pattern.prm) is a real S-1 disk-mode
 backup. If you've backed up your own device, drop .PRM files into
-~/.s1tui/backups/ and they are round-trip-tested here automatically.
+~/.synth/backups/ and they are round-trip-tested here automatically.
 """
 
 from __future__ import annotations
@@ -11,7 +11,7 @@ from pathlib import Path
 
 import pytest
 
-from s1tui.prm import (
+from synth.prm import (
     CC_PRM_KEYS,
     PRM_CC_KEYS,
     TEMPLATE_PATH,
@@ -27,11 +27,11 @@ from s1tui.prm import (
     ticks_per_step,
     write_to_device,
 )
-from s1tui.schema import S1_PARAMS, param_by_cc
-from s1tui.sequence import Note, Sequence
+from synth.schema import S1_PARAMS, param_by_cc
+from synth.sequence import Note, Sequence
 
-EXTRA_BACKUPS = sorted((Path.home() / ".s1tui" / "backups").glob("**/*.PRM")) + sorted(
-    (Path.home() / ".s1tui" / "backups").glob("**/*.prm")
+EXTRA_BACKUPS = sorted((Path.home() / ".synth" / "backups").glob("**/*.PRM")) + sorted(
+    (Path.home() / ".synth" / "backups").glob("**/*.prm")
 )
 REAL_DUMPS = [TEMPLATE_PATH] + EXTRA_BACKUPS
 
@@ -264,7 +264,7 @@ class TestParser:
 # ── the librarian's discovery helpers ────────────────────────
 class TestDiscovery:
     def test_parse_pattern_filename(self):
-        from s1tui.prm import parse_pattern_filename
+        from synth.prm import parse_pattern_filename
         assert parse_pattern_filename("S1_PTN1-01.PRM") == (1, 1)
         assert parse_pattern_filename("S1_PTN4-16.PRM") == (4, 16)
         assert parse_pattern_filename("s1_ptn2-5.prm") == (2, 5)
@@ -274,7 +274,7 @@ class TestDiscovery:
         assert parse_pattern_filename("S1_PTN1-01.WAV") is None
 
     def test_list_prm_files_recursive_sorted(self, tmp_path):
-        from s1tui.prm import list_prm_files
+        from synth.prm import list_prm_files
         (tmp_path / "b").mkdir()
         (tmp_path / "b" / "S1_PTN1-02.PRM").write_text("LENG = 16\n")
         (tmp_path / "S1_PTN1-01.prm").write_text("LENG = 16\n")
@@ -283,5 +283,5 @@ class TestDiscovery:
         assert [p.name for p in found] == ["S1_PTN1-01.prm", "S1_PTN1-02.PRM"]
 
     def test_list_prm_files_missing_dir(self, tmp_path):
-        from s1tui.prm import list_prm_files
+        from synth.prm import list_prm_files
         assert list_prm_files(tmp_path / "nope") == []

@@ -1,7 +1,7 @@
 """Match session orchestrator.
 
-Ties the target, the :class:`~s1tui.match.driver.SynthDriver`, the
-:class:`~s1tui.match.space.ParamSpace`, and an :mod:`~s1tui.match.optimizer`
+Ties the target, the :class:`~synth.match.driver.SynthDriver`, the
+:class:`~synth.match.space.ParamSpace`, and an :mod:`~synth.match.optimizer`
 together into one loop: ask candidates -> apply + probe + score -> tell. Emits a
 :class:`Progress` snapshot through a callback so a CLI or the web app can render
 it. Supports automated and interactive (pause-to-listen) modes, plus pause/resume/

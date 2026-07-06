@@ -13,7 +13,7 @@ One FastAPI app serves:
 - **The match studio** (``/api/match/...``): the automated sound-design
   engine, available when the ``[studio]`` extras are installed.
 
-Launch with ``s1`` (or ``s1tui-web``).
+Launch with ``s1`` (or ``synth-web``).
 """
 
 from __future__ import annotations
@@ -29,7 +29,7 @@ from fastapi.responses import JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-import s1tui.engine as engine_module
+import synth.engine as engine_module
 
 from .. import patches as patch_bank
 from .. import prm as prm_module
@@ -592,7 +592,7 @@ class RecordStopReq(BaseModel):
 
 @app.post("/api/monitor/record/stop", tags=["monitor"], summary="Stop recording")
 def record_stop(req: RecordStopReq) -> dict:
-    """Writes the take to ~/.s1tui/recordings; optionally sets it as the
+    """Writes the take to ~/.synth/recordings; optionally sets it as the
     match target (requires the studio extras)."""
     if req.as_target:
         _require_studio()
@@ -674,7 +674,7 @@ def _prm_entry(root: Path, path: Path) -> dict:
 def import_sources() -> dict:
     """Patterns readable back into the app: the mounted S-1's BACKUP/ folder
     (when the disk-mode ritual has been performed) and any device dumps kept
-    in ~/.s1tui/backups. Load one with POST /api/import/prm."""
+    in ~/.synth/backups. Load one with POST /api/import/prm."""
     vol = prm_module.find_s1_volume()
     device_files = []
     if vol is not None:
@@ -763,7 +763,7 @@ async def import_upload(
 def _require_studio() -> None:
     if not studio_available():
         raise HTTPException(
-            501, 'the match studio needs the studio extras: pip install "s1tui[studio]"'
+            501, 'the match studio needs the studio extras: pip install "synth[studio]"'
         )
 
 

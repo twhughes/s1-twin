@@ -4,7 +4,7 @@ Ground truth encoded here: the official Roland S-1 MIDI implementation
 chart v1.02 ("Knob assignments" manual page + midi.guide/d/roland/s-1).
 """
 
-from s1tui.schema import (
+from synth.schema import (
     PRM_PARAMS,
     S1_PARAMS,
     SEQ_PARAMS,

@@ -878,7 +878,7 @@ async function refreshImports() {
     const r = await api("GET", "/api/import/prm");
     $("imp-device-status").textContent = r.device.mounted
       ? "✓ S-1 mounted — its BACKUP/ patterns are listed below"
-      : "S-1 not in disk mode — patterns from ~/.s1tui/backups below";
+      : "S-1 not in disk mode — patterns from ~/.synth/backups below";
     const rows = [];
     for (const [source, files, tag] of [["device", r.device.files, "S-1"], ["backups", r.backups, "local"]]) {
       for (const f of files) {

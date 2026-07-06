@@ -4,7 +4,7 @@
 pattern (device-generated settings data, via the denzlobin/S1Utility project).
 It serves two roles:
 
-1. **Template for the PRM writer** (`s1tui/prm.py`): every key the writer
+1. **Template for the PRM writer** (`synth/prm.py`): every key the writer
    touches already exists in this device-authored file, so exported patterns
    never contain keys the firmware didn't write itself.
 2. **Ground truth in tests**: parse → serialize round-trips byte-identically,

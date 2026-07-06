@@ -1,7 +1,7 @@
 """Tests for state.py — centralized parameter state store."""
 
-from s1tui.schema import S1_PARAMS
-from s1tui.state import ParamState
+from synth.schema import S1_PARAMS
+from synth.state import ParamState
 
 
 class TestParamState:

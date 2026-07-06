@@ -5,8 +5,8 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from s1tui.sequence import Note, Sequence
-from s1tui.sequencer_engine import SequencerEngine
+from synth.sequence import Note, Sequence
+from synth.sequencer_engine import SequencerEngine
 
 
 @pytest.fixture

@@ -1,4 +1,4 @@
-"""Tests for s1tui.engine — two-way sync, hot-plug, keyboard forwarding."""
+"""Tests for synth.engine — two-way sync, hot-plug, keyboard forwarding."""
 
 from __future__ import annotations
 
@@ -7,8 +7,8 @@ import sys
 import mido
 import pytest
 
-from s1tui.engine import CONNECTING, DISCONNECTED, SYNCED, S1Engine
-from s1tui.schema import S1_PARAMS
+from synth.engine import CONNECTING, DISCONNECTED, SYNCED, S1Engine
+from synth.schema import S1_PARAMS
 from tests.fakes import FakeMidiWorld, FakeSounddevice
 
 
@@ -274,7 +274,7 @@ class TestAudioAutoStart:
     def fake_sd(self, monkeypatch):
         fake = FakeSounddevice()
         monkeypatch.setitem(sys.modules, "sounddevice", fake)
-        monkeypatch.setattr("s1tui.audio.PREFILL_SECONDS", 0.0)
+        monkeypatch.setattr("synth.audio.PREFILL_SECONDS", 0.0)
         return fake
 
     @pytest.fixture

@@ -6,7 +6,7 @@ sequencer — live-synced in both directions. The S-1's audio comes out of the
 Mac speakers with no DAW and no config. An AI agent can drive all of it
 through a documented API.
 
-> The package is still named `s1tui` for historical reasons (it began life as
+> The package is still named `synth` for historical reasons (it began life as
 > a terminal UI, long since retired). The rename is on the roadmap; the `s1`
 > command is the identity that will survive it.
 
@@ -30,12 +30,12 @@ computer keyboard (`A`–`K` rows, `Z`/`X` for octave) right in the browser.
   from the schema and organized exactly like the hardware: the faceplate
   sections (LFO / OSC / FILTER / AMP / ENV / EFX / CONTROLLER, with ⇧ badges
   for SHIFT combos), the settings menu in the manual's order, and the
-  MIDI-only performance controls. Patch bank (JSON, `~/.s1tui/patches/`),
+  MIDI-only performance controls. Patch bank (JSON, `~/.synth/patches/`),
   on-screen keyboard, and **Save to S-1**.
 - **SEQUENCER** — a piano roll driving the S-1 live: click to add notes, drag
   for length, velocity editing, transport with gate/shuffle/probability, and
   MIDI clock out so the S-1's delay and LFO tempo-sync follow the app.
-  Patterns live app-side (`~/.s1tui/sequences/`), respecting device limits
+  Patterns live app-side (`~/.synth/sequences/`), respecting device limits
   (64 steps, 4 notes per step). A Program Change control switches the S-1's
   64 internal patterns live.
 - **STUDIO** — the automated sound-matcher: drop in a target sound and let
@@ -68,7 +68,7 @@ ritual, guided in the UI:
 3. Press **[HOLD]** on the S-1, wait for `dOnE`, power-cycle.
 
 The librarian also works the other way: **LOAD FROM S-1** lists the mounted
-device's `BACKUP/` patterns (plus any dumps in `~/.s1tui/backups/`) and reads
+device's `BACKUP/` patterns (plus any dumps in `~/.synth/backups/`) and reads
 one back into the app — patch and sequence, live and editable. Any `.PRM`
 file can also be uploaded directly.
 
@@ -91,8 +91,8 @@ curl -X POST localhost:8765/api/notes -H 'content-type: application/json' -d '{"
 s1                 # start the cockpit (opens the browser)
 s1 --no-browser    # just the server
 s1 --list-ports    # what MIDI ports does the Mac see?
-s1tui-web          # alias for s1
-s1tui-match        # the matcher's CLI (needs [studio])
+synth-web          # alias for s1
+synth-match        # the matcher's CLI (needs [studio])
 ```
 
 ## Development
@@ -100,7 +100,7 @@ s1tui-match        # the matcher's CLI (needs [studio])
 ```bash
 pip install -e ".[studio,dev]"
 pytest             # the whole suite runs against fake MIDI/audio — no hardware
-ruff check s1tui tests
+ruff check synth tests
 ```
 
 Architecture: `schema.py` (the single source of truth for every parameter,

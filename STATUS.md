@@ -1,4 +1,4 @@
-# STATUS — s1tui
+# STATUS — synth
 *updated 2026-07-06 (post-spec polish: librarian, synesthesia colors, live scope)*
 
 - **state:** active

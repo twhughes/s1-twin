@@ -1,6 +1,6 @@
 """Timbre feature extraction (numpy + scipy only — no librosa).
 
-Computes a small bundle of features on a prepared :class:`~s1tui.match.capture.AudioClip`:
+Computes a small bundle of features on a prepared :class:`~synth.match.capture.AudioClip`:
 a log-mel spectrogram (the workhorse), MFCCs, per-frame spectral descriptors, and
 an RMS amplitude envelope (captures the ADSR shape). Target and candidate clips are
 fixed-length, so every field has a deterministic shape and can be compared directly.

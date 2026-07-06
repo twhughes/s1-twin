@@ -3,7 +3,7 @@
 ## 0.2.x — 2026-07-06 (autonomous polish run)
 
 - **The librarian**: patterns read back *from* the S-1. `LOAD FROM S-1` card
-  lists the mounted device's `BACKUP/` and `~/.s1tui/backups/`; loading one
+  lists the mounted device's `BACKUP/` and `~/.synth/backups/`; loading one
   applies patch + sequence live (and any `.PRM` file can be uploaded).
   API: `GET/POST /api/import/prm`, `POST /api/import/upload`.
 - **Synesthesia note colors**: notes are colored by note name in the piano

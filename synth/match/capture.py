@@ -1,7 +1,7 @@
 """Audio I/O for the matching engine: load target files, record the S-1.
 
-All clips are normalized to mono float32 at :data:`s1tui.match.WORKING_SR`, onset-
-trimmed, and clamped to :data:`s1tui.match.ANALYSIS_SECONDS` so that any two clips
+All clips are normalized to mono float32 at :data:`synth.match.WORKING_SR`, onset-
+trimmed, and clamped to :data:`synth.match.ANALYSIS_SECONDS` so that any two clips
 are directly comparable.
 """
 

@@ -5,7 +5,7 @@ from unittest.mock import MagicMock, patch
 
 import mido
 
-from s1tui.midi_backend import ALL_NOTES_OFF_CC, MidiBackend
+from synth.midi_backend import ALL_NOTES_OFF_CC, MidiBackend
 
 
 class TestMidiBackendInit:

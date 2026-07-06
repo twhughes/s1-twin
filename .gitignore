@@ -31,4 +31,4 @@ htmlcov/
 .mypy_cache/
 
 # S1 TUI
-~/.s1tui/
+~/.synth/

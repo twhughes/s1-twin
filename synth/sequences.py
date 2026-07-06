@@ -1,4 +1,4 @@
-"""Sequence bank — app-side pattern storage (JSON in ~/.s1tui/sequences/).
+"""Sequence bank — app-side pattern storage (JSON in ~/.synth/sequences/).
 
 Same shape as the patch bank: one JSON file per pattern, with optional
 metadata. Device limits are enforced on load (64 steps; notes past the end
@@ -11,9 +11,10 @@ import json
 from pathlib import Path
 
 from .patches import resolve_in_dir, sanitize_name
+from .paths import data_dir
 from .sequence import MAX_STEPS, Note, Sequence
 
-SEQUENCE_DIR = Path.home() / ".s1tui" / "sequences"
+SEQUENCE_DIR = data_dir() / "sequences"
 
 
 def sequence_to_dict(seq: Sequence) -> dict:

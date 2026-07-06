@@ -6,15 +6,15 @@ from __future__ import annotations
 import pytest
 from fastapi.testclient import TestClient
 
-import s1tui.engine as engine_module
-import s1tui.patches as patches_mod
-import s1tui.prm as prm_mod
-import s1tui.sequences as sequences_mod
-import s1tui.web.server as server_mod
-from s1tui.engine import S1Engine
-from s1tui.prm import PrmFile
-from s1tui.schema import S1_PARAMS
-from s1tui.web.server import app
+import synth.engine as engine_module
+import synth.patches as patches_mod
+import synth.prm as prm_mod
+import synth.sequences as sequences_mod
+import synth.web.server as server_mod
+from synth.engine import S1Engine
+from synth.prm import PrmFile
+from synth.schema import S1_PARAMS
+from synth.web.server import app
 from tests.fakes import FakeMidiWorld
 
 BASE_URL = "http://127.0.0.1:8765"

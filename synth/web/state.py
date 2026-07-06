@@ -1,7 +1,7 @@
 """Match-studio state: the running match session and its target clip.
 
 The cockpit itself (params, sync, monitor, sequencer) lives in
-:mod:`s1tui.engine`; this object only manages sound-match sessions, borrowing
+:mod:`synth.engine`; this object only manages sound-match sessions, borrowing
 the engine's MIDI connection and audio monitor so there is exactly one of
 each in the process. The match engine's heavy numerics (scipy, cma) stay
 behind the ``[studio]`` extra — endpoints check :func:`studio_available`.
@@ -20,8 +20,9 @@ if TYPE_CHECKING:  # heavy studio types, imported lazily at runtime
     from ..match.session import MatchConfig, MatchSession, Progress
 
 from ..engine import S1Engine
+from ..paths import data_dir
 
-RECORDING_DIR = Path.home() / ".s1tui" / "recordings"
+RECORDING_DIR = data_dir() / "recordings"
 
 
 class MatchAlreadyRunning(RuntimeError):

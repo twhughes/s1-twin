@@ -2,7 +2,7 @@
 record the audio it produces.
 
 This is the only hardware-touching piece of the engine. It bridges the existing
-:class:`~s1tui.midi_backend.MidiBackend` with the audio :mod:`~s1tui.match.capture`
+:class:`~synth.midi_backend.MidiBackend` with the audio :mod:`~synth.match.capture`
 layer, plus a latency calibration so recordings line up with note-on.
 """
 

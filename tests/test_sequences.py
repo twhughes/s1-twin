@@ -1,11 +1,11 @@
-"""Tests for the sequence bank (s1tui/sequences.py)."""
+"""Tests for the sequence bank (synth/sequences.py)."""
 
 from __future__ import annotations
 
 import pytest
 
-from s1tui import sequences
-from s1tui.sequence import Note, Sequence
+from synth import sequences
+from synth.sequence import Note, Sequence
 
 
 @pytest.fixture(autouse=True)

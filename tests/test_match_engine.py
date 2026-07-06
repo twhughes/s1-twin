@@ -1,4 +1,4 @@
-"""Tests for the sound-matching engine (s1tui/match).
+"""Tests for the sound-matching engine (synth/match).
 
 Uses synthetic audio and a fake driver — no hardware, no audio device, no file I/O.
 sounddevice/soundfile are imported lazily inside capture/driver, so they are never
@@ -8,14 +8,14 @@ touched here.
 import numpy as np
 import pytest
 
-from s1tui.match import WORKING_SR
-from s1tui.match.capture import AudioClip, find_onset, is_silent, prepare
-from s1tui.match.distance import Weights, closeness, loss, reference_scales
-from s1tui.match.features import extract
-from s1tui.match.optimizer import RandomOptimizer, make_optimizer
-from s1tui.match.session import SILENCE_PENALTY_LOSS, MatchConfig, MatchSession
-from s1tui.match.space import ParamSpace
-from s1tui.schema import ControlType
+from synth.match import WORKING_SR
+from synth.match.capture import AudioClip, find_onset, is_silent, prepare
+from synth.match.distance import Weights, closeness, loss, reference_scales
+from synth.match.features import extract
+from synth.match.optimizer import RandomOptimizer, make_optimizer
+from synth.match.session import SILENCE_PENALTY_LOSS, MatchConfig, MatchSession
+from synth.match.space import ParamSpace
+from synth.schema import ControlType
 
 
 def tone(freq: float, seconds: float = 2.0, sr: int = WORKING_SR, harmonics: int = 1) -> AudioClip:
@@ -50,7 +50,7 @@ class TestParamSpace:
     def test_switch_snaps_binary(self):
         # The timbre space holds no SWITCH params since the schema audit, so
         # build a space that includes one (CC 65: Portamento) explicitly.
-        from s1tui.schema import param_by_cc
+        from synth.schema import param_by_cc
 
         sp = ParamSpace(params=ParamSpace().params + [param_by_cc(65)])
         switch_cc = 65
@@ -108,7 +108,7 @@ class TestCapture:
 
     def test_prepare_fixes_length_and_normalizes(self):
         clip = prepare(tone(440, seconds=5.0))
-        from s1tui.match import ANALYSIS_SECONDS
+        from synth.match import ANALYSIS_SECONDS
 
         assert len(clip.samples) == int(ANALYSIS_SECONDS * clip.samplerate)
         assert np.abs(clip.samples).max() == pytest.approx(1.0, abs=1e-3)
@@ -132,7 +132,7 @@ class TestOptimizer:
 
     def test_cma_optimizer_converges(self):
         cma = pytest.importorskip("cma")  # noqa: F841
-        from s1tui.match.optimizer import CMAESOptimizer
+        from synth.match.optimizer import CMAESOptimizer
 
         opt = CMAESOptimizer(dim=4, x0=np.full(4, 0.5), max_iters=30, seed=1)
         target = np.array([0.2, 0.8, 0.5, 0.1])
@@ -360,7 +360,7 @@ class TestCalibration:
     def test_calibrate_applies_bright_patch_before_note(self):
         from unittest.mock import MagicMock
 
-        from s1tui.match.driver import CALIBRATION_PATCH, SynthDriver
+        from synth.match.driver import CALIBRATION_PATCH, SynthDriver
 
         events = []
         midi = MagicMock()
@@ -383,7 +383,7 @@ class TestCalibration:
 
 class TestCliGuards:
     def test_cli_refuses_empty_best(self, monkeypatch, capsys):
-        from s1tui.match import cli
+        from synth.match import cli
 
         class FakeSession:
             best_closeness = 0.0

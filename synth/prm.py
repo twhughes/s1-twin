@@ -28,6 +28,7 @@ import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from .paths import data_dir
 from .sequence import MAX_NOTES_PER_STEP, MAX_STEPS, Note, Sequence
 
 # ──────────────────────────────────────────────────────────────
@@ -417,7 +418,7 @@ VOLUMES_DIR = Path("/Volumes")
 
 # Where users keep device dumps app-side (the test suite also round-trips
 # every file found here against the parser).
-BACKUPS_DIR = Path.home() / ".s1tui" / "backups"
+BACKUPS_DIR = data_dir() / "backups"
 
 _PATTERN_NAME_RE = re.compile(r"^S1_PTN([1-4])-(\d{1,2})\.PRM$", re.IGNORECASE)
 

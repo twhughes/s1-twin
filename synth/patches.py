@@ -1,11 +1,13 @@
-"""Patch save/load utilities — the s1tui sound bank (JSON in ~/.s1tui/patches/)."""
+"""Patch save/load utilities — the synth sound bank (JSON in ~/.synth/patches/)."""
 
 from __future__ import annotations
 
 import json
 from pathlib import Path
 
-PATCH_DIR = Path.home() / ".s1tui" / "patches"
+from .paths import data_dir
+
+PATCH_DIR = data_dir() / "patches"
 
 
 def sanitize_name(name: str) -> str:

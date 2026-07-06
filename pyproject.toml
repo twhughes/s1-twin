@@ -3,9 +3,9 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "s1tui"
-version = "0.2.0"
-description = "The Roland S-1, fully present in software — web cockpit, live sync, audio monitor"
+name = "synth"
+version = "0.3.0"
+description = "A hardware synth, fully present in software — web cockpit, live sync, sequencer, agent API (backend: Roland S-1)"
 readme = "README.md"
 requires-python = ">=3.10"
 license = "MIT"
@@ -36,9 +36,8 @@ dev = [
 ]
 
 [project.scripts]
-s1 = "s1tui.__main__:main"
-s1tui-web = "s1tui.__main__:main"
-s1tui-match = "s1tui.match.cli:main"
+synth = "synth.__main__:main"
+synth-match = "synth.match.cli:main"
 
 [tool.ruff]
 line-length = 110

@@ -3,7 +3,7 @@
 Records the synth's *actual* audio output, scores it against a target clip, and
 drives the S-1's MIDI CC parameters with a derivative-free optimizer until the
 sound matches. Pure-Python and UI-agnostic — used by both the CLI
-(``s1tui-match``) and the web app.
+(``synth-match``) and the web app.
 
 The heavy audio/optimizer dependencies (soundfile, sounddevice, cma) live behind
 the ``studio`` optional extra; importing this package does not pull them in until

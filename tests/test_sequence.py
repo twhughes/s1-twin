@@ -5,7 +5,7 @@ from pathlib import Path
 
 import mido
 
-from s1tui.sequence import Note, Sequence, _resolution_ticks, load_midi, save_midi
+from synth.sequence import Note, Sequence, _resolution_ticks, load_midi, save_midi
 
 # ── Note / Sequence dataclass tests ──
 
@@ -205,7 +205,7 @@ def test_pattern_length_extends_to_32():
 
 # ── device limits (G7) ───────────────────────────────────────
 def test_poly_warning_over_four_notes_per_step():
-    from s1tui.sequence import MAX_NOTES_PER_STEP
+    from synth.sequence import MAX_NOTES_PER_STEP
 
     seq = Sequence(steps=4)
     for pitch in (60, 64, 67, 71):
@@ -217,6 +217,6 @@ def test_poly_warning_over_four_notes_per_step():
 
 
 def test_max_steps_constant():
-    from s1tui.sequence import MAX_STEPS
+    from synth.sequence import MAX_STEPS
 
     assert MAX_STEPS == 64

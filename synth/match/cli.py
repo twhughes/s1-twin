@@ -1,7 +1,7 @@
-"""``s1tui-match`` — headless sound matching from the command line.
+"""``synth-match`` — headless sound matching from the command line.
 
 Drives the full capture -> score -> optimize loop on real hardware and writes the
-winning patch to the s1tui JSON bank. This is the smoke test that proves the
+winning patch to the synth JSON bank. This is the smoke test that proves the
 engine before any GUI sits on top of it.
 """
 

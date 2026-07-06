@@ -199,3 +199,41 @@ class TestRing:
         r.write(np.arange(12, dtype=np.float32))
         out = r.read(8)
         np.testing.assert_array_equal(out, np.arange(4, 12, dtype=np.float32))
+
+
+# ── the live scope ───────────────────────────────────────────
+class TestScope:
+    def test_zeros_when_stopped(self, fake_sd, monitor):
+        assert monitor.scope(64) == [0.0] * 64
+
+    def test_zeros_before_any_audio(self, fake_sd, monitor):
+        idx = fake_sd.add_s1()
+        monitor.start(idx, 1)
+        assert monitor.scope(32) == [0.0] * 32
+
+    def test_reflects_recent_input(self, fake_sd, monitor):
+        idx = fake_sd.add_s1()
+        monitor.start(idx, 1)
+        t = np.linspace(0, 1, 2048, endpoint=False)
+        fake_sd.pump(0.5 * np.sin(2 * np.pi * 200 * t).astype(np.float32))
+        points = monitor.scope(128)
+        assert len(points) == 128
+        assert max(abs(p) for p in points) == pytest.approx(0.5, abs=0.02)
+        assert min(points) < -0.3  # signed peaks keep the waveform's shape
+
+    def test_window_is_recent_blocks_only(self, fake_sd, monitor):
+        from s1tui.audio import BLOCKSIZE, SCOPE_BLOCKS
+
+        idx = fake_sd.add_s1()
+        monitor.start(idx, 1)
+        fake_sd.pump(np.full(BLOCKSIZE * (SCOPE_BLOCKS + 2), 0.9, dtype=np.float32))
+        for _ in range(SCOPE_BLOCKS):
+            fake_sd.pump(np.zeros(BLOCKSIZE, dtype=np.float32))
+        assert max(abs(p) for p in monitor.scope(64)) == 0.0
+
+    def test_cleared_on_stop(self, fake_sd, monitor):
+        idx = fake_sd.add_s1()
+        monitor.start(idx, 1)
+        fake_sd.pump(np.full(1024, 0.7, dtype=np.float32))
+        monitor.stop()
+        assert monitor.scope(16) == [0.0] * 16

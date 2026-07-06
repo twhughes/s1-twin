@@ -187,6 +187,7 @@ class TestApiCompleteness:
         "load sequence": ("post", "/api/sequences/{name}/load"),
         "delete sequence": ("delete", "/api/sequences/{name}"),
         "monitor status": ("get", "/api/monitor"),
+        "live waveform scope": ("get", "/api/monitor/scope"),
         "monitor mute": ("post", "/api/monitor/mute"),
         "monitor gain": ("post", "/api/monitor/gain"),
         "monitor stop": ("post", "/api/monitor/stop"),

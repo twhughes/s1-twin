@@ -17,6 +17,7 @@ as it's tried.
 
 from __future__ import annotations
 
+import collections
 import threading
 import time
 
@@ -28,6 +29,7 @@ from .match.capture import AudioClip
 BLOCKSIZE = 512
 RING_SECONDS = 0.5      # bounded buffer -> bounded latency
 PREFILL_SECONDS = 0.15  # cushion so the output never starves at startup
+SCOPE_BLOCKS = 4        # last ~46 ms (at 44.1k/512) feed the UI oscilloscope
 
 # Substrings that identify the S-1's USB audio device in CoreAudio.
 S1_DEVICE_MARKERS = ("s-1",)
@@ -162,6 +164,8 @@ class AudioMonitor:
         self.rms: float = 0.0
 
         self._ring: _Ring | None = None
+        # deque append/iteration is GIL-atomic — safe across the audio thread
+        self._scope: collections.deque = collections.deque(maxlen=SCOPE_BLOCKS)
         self._capturing = False
         self._cap: list[np.ndarray] = []
         self._recording = False
@@ -188,6 +192,7 @@ class AudioMonitor:
             self.peak = float(np.abs(x).max()) if x.size else 0.0
             self.rms = float(np.sqrt(np.mean(x**2))) if x.size else 0.0
             self._ring.write(x)
+            self._scope.append(x)
             if self._capturing:
                 self._cap.append(x)
             if self._recording:
@@ -220,6 +225,7 @@ class AudioMonitor:
                     pass
         self._in = self._out = None
         self._ring = None
+        self._scope.clear()
         self.peak = 0.0
         self.rms = 0.0
         self._capturing = self._recording = False
@@ -233,6 +239,20 @@ class AudioMonitor:
             return bool(self._in.active) and bool(self._out.active)
         except Exception:
             return False
+
+    def scope(self, points: int = 128) -> list[float]:
+        """The last ~50 ms of input as ``points`` signed peaks — the UI's
+        live oscilloscope. All zeros while stopped or silent."""
+        blocks = list(self._scope)
+        if not self.running or not blocks:
+            return [0.0] * points
+        data = np.concatenate(blocks)
+        if len(data) < points:
+            data = np.pad(data, (points - len(data), 0))
+        return [
+            float(chunk[np.abs(chunk).argmax()]) if len(chunk) else 0.0
+            for chunk in np.array_split(data, points)
+        ]
 
     @property
     def peak_db(self) -> float:

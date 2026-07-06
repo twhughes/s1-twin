@@ -525,6 +525,16 @@ def monitor_status() -> dict:
     return eng().monitor_status()
 
 
+@app.get("/api/monitor/scope", tags=["monitor"],
+         summary="Recent waveform for the live oscilloscope")
+def monitor_scope(points: int = 128) -> dict:
+    """The last ~50 ms of the S-1's audio, downsampled to signed peaks —
+    poll this to render a live scope. All zeros while the monitor is off."""
+    points = max(16, min(512, points))
+    mon = eng().monitor
+    return {"running": mon.running, "peak_db": mon.peak_db, "points": mon.scope(points)}
+
+
 class MuteReq(BaseModel):
     muted: bool
 

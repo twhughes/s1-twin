@@ -307,6 +307,15 @@ class TestMonitor:
         r = client.get("/api/monitor").json()
         assert r["running"] is False
 
+    def test_scope_zeros_while_stopped(self, client, engine):
+        r = client.get("/api/monitor/scope").json()
+        assert r["running"] is False
+        assert r["points"] == [0.0] * 128
+
+    def test_scope_points_clamped(self, client, engine):
+        assert len(client.get("/api/monitor/scope?points=9999").json()["points"]) == 512
+        assert len(client.get("/api/monitor/scope?points=1").json()["points"]) == 16
+
 
 # ── G8: export endpoints ─────────────────────────────────────
 class TestExport:

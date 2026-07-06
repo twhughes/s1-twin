@@ -340,6 +340,23 @@ figure .btn { margin-top: 8px; }
 .key.held .kband { opacity: 0.35; }
 .colors-ctl { min-width: 120px; }
 
+/* ════════════════ live scope ════════════════ */
+.scope-strip {
+  position: relative;
+  border: 1px solid var(--faint);
+  border-radius: 12px;
+  background: linear-gradient(var(--panel), var(--bg));
+  overflow: hidden;
+  margin-bottom: 20px;
+  box-shadow: inset 0 0 30px rgba(45,226,230,0.06), 0 8px 30px rgba(0,0,0,0.35);
+}
+#live-scope { display: block; width: 100%; height: 72px; border: none; border-radius: 0; background: transparent; image-rendering: auto; }
+.scope-label {
+  position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+  color: var(--faint); font-size: 11px; letter-spacing: 4px; pointer-events: none;
+}
+.scope-label.hidden { display: none; }
+
 /* ════════════════ sequencer ════════════════ */
 .transport-row { align-items: center; }
 .t-pos { margin-left: auto; color: var(--cyan); font-size: 13px; letter-spacing: 2px; font-variant-numeric: tabular-nums; }

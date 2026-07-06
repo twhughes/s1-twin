@@ -799,6 +799,61 @@ async function pollDevice() {
   } catch (_) {}
 }
 
+// ── live oscilloscope (the S-1's actual signal) ───────────
+const SCOPE_MS = 66;  // ~15 fps polling; the endpoint serves the last ~50 ms
+
+function drawScope(points, running) {
+  const cv = $("live-scope");
+  const wrap = cv.parentElement;
+  const w = wrap.clientWidth;
+  if (w && cv.width !== w) cv.width = w;
+  const H = cv.height, W = cv.width;
+  const ctx = cv.getContext("2d");
+  ctx.clearRect(0, 0, W, H);
+  const mid = H / 2;
+
+  // midline
+  ctx.strokeStyle = "#221d40";
+  ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.moveTo(0, mid + 0.5); ctx.lineTo(W, mid + 0.5); ctx.stroke();
+
+  const live = running && points.some((v) => Math.abs(v) > 0.002);
+  $("scope-label").textContent = running ? "" : "NO SIGNAL";
+  $("scope-label").classList.toggle("hidden", running);
+
+  const grad = ctx.createLinearGradient(0, 0, W, 0);
+  grad.addColorStop(0, "#ff2e97");
+  grad.addColorStop(0.5, "#2de2e6");
+  grad.addColorStop(1, "#36f9b3");
+  ctx.strokeStyle = grad;
+  ctx.lineWidth = live ? 2 : 1;
+  ctx.globalAlpha = live ? 1 : 0.25;
+  ctx.shadowColor = "#2de2e6";
+  ctx.shadowBlur = live ? 10 : 0;
+  ctx.beginPath();
+  const n = points.length;
+  for (let i = 0; i < n; i++) {
+    const x = (i / (n - 1)) * W;
+    const y = mid - points[i] * (mid - 4);
+    i ? ctx.lineTo(x, y) : ctx.moveTo(x, y);
+  }
+  ctx.stroke();
+  ctx.shadowBlur = 0;
+  ctx.globalAlpha = 1;
+}
+
+function bindScope() {
+  drawScope(new Array(128).fill(0), false);
+  setInterval(async () => {
+    if (document.hidden) return;
+    if (!$("view-cockpit").classList.contains("active")) return;
+    try {
+      const r = await api("GET", "/api/monitor/scope");
+      drawScope(r.points, r.running);
+    } catch (_) {}
+  }, SCOPE_MS);
+}
+
 // ── load from S-1 (.PRM import — the librarian) ───────────
 function importFlags() {
   return { load_patch: $("imp-patch").checked, load_sequence: $("imp-seq").checked };
@@ -1066,6 +1121,7 @@ async function init() {
   bindTransport();
   bindDevice();
   bindImport();
+  bindScope();
   bindStudio();
   if (APP.studio) connectMatchWS();
 

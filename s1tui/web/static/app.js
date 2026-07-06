@@ -801,6 +801,7 @@ async function pollDevice() {
 
 // ── live oscilloscope (the S-1's actual signal) ───────────
 const SCOPE_MS = 66;  // ~15 fps polling; the endpoint serves the last ~50 ms
+let scopeGain = 1;    // auto-gain (smoothed) — the S-1's volume knob may be low
 
 function drawScope(points, running) {
   const cv = $("live-scope");
@@ -817,9 +818,14 @@ function drawScope(points, running) {
   ctx.lineWidth = 1;
   ctx.beginPath(); ctx.moveTo(0, mid + 0.5); ctx.lineTo(W, mid + 0.5); ctx.stroke();
 
-  const live = running && points.some((v) => Math.abs(v) > 0.002);
+  const maxAbs = points.reduce((m, v) => Math.max(m, Math.abs(v)), 0);
+  const live = running && maxAbs > 0.0001;
   $("scope-label").textContent = running ? "" : "NO SIGNAL";
   $("scope-label").classList.toggle("hidden", running);
+  // Auto-gain: fill ~85% of the strip whatever the hardware volume, smoothed
+  // so the trace breathes instead of jumping.
+  const target = live ? Math.min(0.85 / maxAbs, 2000) : 1;
+  scopeGain += (target - scopeGain) * 0.25;
 
   const grad = ctx.createLinearGradient(0, 0, W, 0);
   grad.addColorStop(0, "#ff2e97");
@@ -834,7 +840,8 @@ function drawScope(points, running) {
   const n = points.length;
   for (let i = 0; i < n; i++) {
     const x = (i / (n - 1)) * W;
-    const y = mid - points[i] * (mid - 4);
+    const v = Math.max(-1, Math.min(1, points[i] * scopeGain));
+    const y = mid - v * (mid - 4);
     i ? ctx.lineTo(x, y) : ctx.moveTo(x, y);
   }
   ctx.stroke();

@@ -345,6 +345,135 @@ class TestExport:
         assert status["mounted"] is True
 
 
+# ── the librarian: .PRM import ───────────────────────────────
+def make_pattern_file(directory, name="S1_PTN1-01.PRM", cutoff=90, bpm=140.0):
+    """A device-plausible pattern: template dump + a tweak + one note."""
+    prm = prm_mod.load_template()
+    prm.set("VCF_CUTOFF", prm_mod.cc_to_prm(74, cutoff))
+    prm.set("TEMPO", round(bpm * 100))
+    step = prm_mod.PrmStep()
+    step.notes[0], step.velocities[0], step.lengths[0] = 60, 101, 24
+    prm.set_step(1, step)
+    directory.mkdir(parents=True, exist_ok=True)
+    return prm.save(directory / name)
+
+
+class TestImport:
+    @pytest.fixture(autouse=True)
+    def dirs(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(prm_mod, "VOLUMES_DIR", tmp_path / "volumes")
+        monkeypatch.setattr(prm_mod, "BACKUPS_DIR", tmp_path / "backups")
+        (tmp_path / "volumes").mkdir()
+        return tmp_path
+
+    def mount_s1(self, tmp_path):
+        vol = tmp_path / "volumes" / "S-1"
+        (vol / "RESTORE").mkdir(parents=True)
+        (vol / "BACKUP").mkdir()
+        return vol
+
+    def test_list_local_backups(self, client, engine, dirs):
+        make_pattern_file(dirs / "backups" / "july")
+        r = client.get("/api/import/prm").json()
+        assert r["device"]["mounted"] is False
+        assert r["backups"] == [
+            {"name": "july/S1_PTN1-01.PRM", "bank": 1, "slot": 1}
+        ]
+
+    def test_list_device_backup(self, client, engine, dirs):
+        vol = self.mount_s1(dirs)
+        make_pattern_file(vol / "BACKUP", name="S1_PTN3-07.PRM")
+        r = client.get("/api/import/prm").json()
+        assert r["device"]["mounted"] is True
+        assert r["device"]["files"] == [
+            {"name": "S1_PTN3-07.PRM", "bank": 3, "slot": 7}
+        ]
+
+    def test_import_applies_patch_and_sequence(self, client, engine, world, dirs):
+        port = connect_s1(engine, world)
+        make_pattern_file(dirs / "backups", cutoff=90, bpm=140.0)
+        sent_before = len(port.sent)
+        r = client.post("/api/import/prm", json={
+            "source": "backups", "name": "S1_PTN1-01.PRM",
+        })
+        assert r.status_code == 200
+        body = r.json()
+        assert body["params"] == len(prm_mod.load_template().to_cc_values())
+        assert body["sequence"]["bpm"] == 140.0
+        assert body["sequence"]["notes"] == 1
+        # live state follows and the hardware heard the pushed CCs
+        assert engine.params.get(74) == 90
+        assert engine.sequencer.sequence.bpm == 140.0
+        note = engine.sequencer.sequence.notes[0]
+        assert (note.step, note.pitch, note.velocity) == (0, 60, 101)
+        assert len(port.sent) > sent_before
+
+    def test_import_patch_only_leaves_sequence(self, client, engine, dirs):
+        make_pattern_file(dirs / "backups", bpm=175.0)
+        before_bpm = engine.sequencer.sequence.bpm
+        r = client.post("/api/import/prm", json={
+            "source": "backups", "name": "S1_PTN1-01.PRM",
+            "load_sequence": False,
+        })
+        assert r.status_code == 200
+        assert "sequence" not in r.json()
+        assert engine.sequencer.sequence.bpm == before_bpm
+        assert engine.params.get(74) == 90
+
+    def test_import_from_device(self, client, engine, dirs):
+        vol = self.mount_s1(dirs)
+        make_pattern_file(vol / "BACKUP", name="S1_PTN2-02.PRM", cutoff=33)
+        r = client.post("/api/import/prm", json={
+            "source": "device", "name": "S1_PTN2-02.PRM",
+        })
+        assert r.status_code == 200
+        assert engine.params.get(74) == 33
+
+    def test_import_device_unmounted_409(self, client, engine, dirs):
+        assert client.post("/api/import/prm", json={
+            "source": "device", "name": "S1_PTN1-01.PRM",
+        }).status_code == 409
+
+    def test_import_traversal_rejected(self, client, engine, dirs):
+        evil = dirs / "evil.PRM"
+        make_pattern_file(dirs, name="evil.PRM")
+        assert evil.exists()
+        r = client.post("/api/import/prm", json={
+            "source": "backups", "name": "../evil.PRM",
+        })
+        assert r.status_code == 400
+
+    def test_import_missing_404(self, client, engine, dirs):
+        (dirs / "backups").mkdir()
+        assert client.post("/api/import/prm", json={
+            "source": "backups", "name": "S1_PTN1-01.PRM",
+        }).status_code == 404
+
+    def test_import_garbage_400(self, client, engine, dirs):
+        backups = dirs / "backups"
+        backups.mkdir()
+        (backups / "junk.PRM").write_text("this is not a pattern")
+        r = client.post("/api/import/prm", json={
+            "source": "backups", "name": "junk.PRM",
+        })
+        assert r.status_code == 400
+
+    def test_upload_prm(self, client, engine, dirs):
+        path = make_pattern_file(dirs, cutoff=71)
+        r = client.post(
+            "/api/import/upload",
+            files={"file": ("S1_PTN1-01.PRM", path.read_bytes())},
+        )
+        assert r.status_code == 200
+        assert engine.params.get(74) == 71
+
+    def test_upload_garbage_400(self, client, engine):
+        r = client.post(
+            "/api/import/upload", files={"file": ("x.PRM", b"\x00\x01nothing")}
+        )
+        assert r.status_code == 400
+
+
 # ── G4: WebSocket state channel ──────────────────────────────
 class TestStateWebSocket:
     def test_hello_carries_full_state(self, client, engine):

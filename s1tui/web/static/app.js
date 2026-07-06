@@ -731,6 +731,63 @@ async function pollDevice() {
   } catch (_) {}
 }
 
+// ── load from S-1 (.PRM import — the librarian) ───────────
+function importFlags() {
+  return { load_patch: $("imp-patch").checked, load_sequence: $("imp-seq").checked };
+}
+
+function importedToast(r) {
+  const bits = [];
+  if (r.params !== undefined) bits.push(`${r.params} params`);
+  if (r.sequence) bits.push(`${r.sequence.notes} notes @ ${r.sequence.bpm} bpm`);
+  toast(`loaded ${r.loaded}${bits.length ? " — " + bits.join(" · ") : ""}`);
+}
+
+async function refreshImports() {
+  try {
+    const r = await api("GET", "/api/import/prm");
+    $("imp-device-status").textContent = r.device.mounted
+      ? "✓ S-1 mounted — its BACKUP/ patterns are listed below"
+      : "S-1 not in disk mode — patterns from ~/.s1tui/backups below";
+    const rows = [];
+    for (const [source, files, tag] of [["device", r.device.files, "S-1"], ["backups", r.backups, "local"]]) {
+      for (const f of files) {
+        rows.push(bankRow(
+          f.bank ? `${f.bank}-${String(f.slot).padStart(2, "0")}  ${f.name}` : f.name,
+          tag,
+          [["LOAD", "", () => api("POST", "/api/import/prm", { source, name: f.name, ...importFlags() })
+            .then(importedToast).catch((e) => toast(e.message, true))]],
+        ));
+      }
+    }
+    const ul = $("imp-list");
+    ul.className = "patch-list" + (rows.length ? "" : " empty");
+    ul.replaceChildren(...rows);
+  } catch (_) {}
+}
+
+function bindImport() {
+  $("imp-upload").onclick = () => $("imp-file").click();
+  $("imp-file").onchange = async () => {
+    const f = $("imp-file").files[0];
+    if (!f) return;
+    const fd = new FormData();
+    fd.append("file", f);
+    const flags = importFlags();
+    try {
+      const r = await api(
+        "POST",
+        `/api/import/upload?load_patch=${flags.load_patch}&load_sequence=${flags.load_sequence}`,
+        fd, true,
+      );
+      importedToast(r);
+    } catch (e) { toast(e.message, true); }
+    $("imp-file").value = "";
+  };
+  refreshImports();
+  setInterval(() => { if (!document.hidden) refreshImports(); }, 5000);
+}
+
 // ── studio (match engine) ─────────────────────────────────
 const MATCH = { running: false, paused: false, hasTarget: false, hasBest: false };
 
@@ -939,6 +996,7 @@ async function init() {
   bindRoll();
   bindTransport();
   bindDevice();
+  bindImport();
   bindStudio();
   if (APP.studio) connectMatchWS();
 

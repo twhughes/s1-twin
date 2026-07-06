@@ -415,6 +415,32 @@ def build_pattern(
 
 VOLUMES_DIR = Path("/Volumes")
 
+# Where users keep device dumps app-side (the test suite also round-trips
+# every file found here against the parser).
+BACKUPS_DIR = Path.home() / ".s1tui" / "backups"
+
+_PATTERN_NAME_RE = re.compile(r"^S1_PTN([1-4])-(\d{1,2})\.PRM$", re.IGNORECASE)
+
+
+def parse_pattern_filename(name: str) -> tuple[int, int] | None:
+    """(bank, slot) from a device filename like S1_PTN2-05.PRM, else None."""
+    m = _PATTERN_NAME_RE.match(name)
+    if m is None:
+        return None
+    bank, slot = int(m.group(1)), int(m.group(2))
+    return (bank, slot) if 1 <= slot <= 16 else None
+
+
+def list_prm_files(root: Path) -> list[Path]:
+    """Every .PRM file under a directory (recursive), sorted by path."""
+    try:
+        return sorted(
+            p for p in root.rglob("*")
+            if p.is_file() and p.suffix.upper() == ".PRM"
+        )
+    except OSError:
+        return []
+
 
 def find_s1_volume(volumes_dir: Path | None = None) -> Path | None:
     """The mounted S-1 disk-mode volume, if the ritual has been performed.

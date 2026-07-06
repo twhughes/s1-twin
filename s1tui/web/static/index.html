@@ -70,6 +70,18 @@
             </ol>
           </details>
         </section>
+        <section class="card" data-accent="gold">
+          <h2>LOAD FROM S-1</h2>
+          <p class="hint">Read the hardware's own patterns back into the app — patch + sequence, live and editable.</p>
+          <div class="row import-flags">
+            <label class="check"><input id="imp-patch" type="checkbox" checked /> patch</label>
+            <label class="check"><input id="imp-seq" type="checkbox" checked /> sequence</label>
+            <button id="imp-upload" class="btn tiny">⭱ .PRM FILE…</button>
+            <input id="imp-file" type="file" accept=".prm,.PRM" hidden />
+          </div>
+          <div id="imp-device-status" class="hint">S-1 not in disk mode — patterns from <code>~/.s1tui/backups</code> below.</div>
+          <ul id="imp-list" class="patch-list"></ul>
+        </section>
         <section class="card" data-accent="muted">
           <details class="guide">
             <summary>PRM-only parameters (disk mode tier)</summary>

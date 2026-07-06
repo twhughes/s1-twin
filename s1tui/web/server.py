@@ -377,6 +377,18 @@ class SequencePayload(BaseModel):
     notes: list[NotePayload] = Field(default_factory=list)
 
 
+def _replace_live_sequence(new) -> None:
+    """Swap the live sequence's contents in place — playback (if running)
+    follows immediately without stopping."""
+    live = eng().sequencer.sequence
+    live.notes[:] = new.notes
+    live.steps = new.steps
+    live.bpm = new.bpm
+    live.step_resolution = new.step_resolution
+    live.dropped_notes = new.dropped_notes
+    eng().publish({"type": "sequence"})
+
+
 def _sequence_response() -> dict:
     seq = eng().sequencer.sequence
     return {
@@ -399,14 +411,7 @@ def put_sequence(req: SequencePayload) -> dict:
     """Replaces notes/length/tempo in place — playback (if running) follows
     immediately without stopping. Device limits are enforced: max 64 steps;
     notes past the end are dropped and reported."""
-    new = seq_bank.sequence_from_dict(req.model_dump())
-    live = eng().sequencer.sequence
-    live.notes[:] = new.notes
-    live.steps = new.steps
-    live.bpm = new.bpm
-    live.step_resolution = new.step_resolution
-    live.dropped_notes = new.dropped_notes
-    eng().publish({"type": "sequence"})
+    _replace_live_sequence(seq_bank.sequence_from_dict(req.model_dump()))
     return _sequence_response()
 
 
@@ -496,14 +501,7 @@ def load_sequence(name: str) -> dict:
         raise HTTPException(400, str(e))
     if not path.exists():
         raise HTTPException(404, "sequence not found")
-    seq = seq_bank.load_sequence(path)
-    live = eng().sequencer.sequence
-    live.notes[:] = seq.notes
-    live.steps = seq.steps
-    live.bpm = seq.bpm
-    live.step_resolution = seq.step_resolution
-    live.dropped_notes = seq.dropped_notes
-    eng().publish({"type": "sequence"})
+    _replace_live_sequence(seq_bank.load_sequence(path))
     return _sequence_response()
 
 
@@ -646,6 +644,110 @@ def _build_current_prm() -> prm_module.PrmFile:
     return prm_module.build_pattern(
         eng().params.snapshot(), eng().sequencer.sequence
     )
+
+
+# ══════════════════════════════════════════════════════════════
+# Load from S-1 (.PRM import — the librarian)
+# ══════════════════════════════════════════════════════════════
+
+def _prm_entry(root: Path, path: Path) -> dict:
+    bank_slot = prm_module.parse_pattern_filename(path.name)
+    return {
+        "name": str(path.relative_to(root)),
+        "bank": bank_slot[0] if bank_slot else None,
+        "slot": bank_slot[1] if bank_slot else None,
+    }
+
+
+@app.get("/api/import/prm", tags=["import"],
+         summary="List importable .PRM patterns")
+def import_sources() -> dict:
+    """Patterns readable back into the app: the mounted S-1's BACKUP/ folder
+    (when the disk-mode ritual has been performed) and any device dumps kept
+    in ~/.s1tui/backups. Load one with POST /api/import/prm."""
+    vol = prm_module.find_s1_volume()
+    device_files = []
+    if vol is not None:
+        backup = vol / "BACKUP"
+        device_files = [_prm_entry(backup, p) for p in prm_module.list_prm_files(backup)]
+    local = [
+        _prm_entry(prm_module.BACKUPS_DIR, p)
+        for p in prm_module.list_prm_files(prm_module.BACKUPS_DIR)
+    ]
+    return {
+        "device": {"mounted": vol is not None, "files": device_files},
+        "backups": local,
+    }
+
+
+class ImportReq(BaseModel):
+    source: Literal["device", "backups"]
+    name: str = Field(description="File name as listed by GET /api/import/prm")
+    load_patch: bool = Field(True, description="Apply the pattern's synth parameters")
+    load_sequence: bool = Field(True, description="Load the pattern's step sequence")
+
+
+def _apply_prm(prm: prm_module.PrmFile, load_patch: bool, load_sequence: bool) -> dict:
+    result: dict = {}
+    if load_patch:
+        values = prm.to_cc_values()
+        eng().load_values(values, source="import")
+        result["params"] = len(values)
+    if load_sequence:
+        seq = prm.to_sequence()
+        _replace_live_sequence(seq)
+        result["sequence"] = {
+            "steps": seq.steps,
+            "bpm": seq.bpm,
+            "notes": len(seq.notes),
+            "resolution": seq.step_resolution,
+        }
+    return result
+
+
+@app.post("/api/import/prm", tags=["import"],
+          summary="Load a listed .PRM pattern into the live state")
+def import_pattern(req: ImportReq) -> dict:
+    """Reads a pattern from the mounted S-1 (or the local backups folder)
+    and makes it live: parameters are applied and pushed to the synth, and
+    the sequence replaces the piano roll — the hardware's own patterns,
+    editable in the app."""
+    if req.source == "device":
+        vol = prm_module.find_s1_volume()
+        if vol is None:
+            raise HTTPException(
+                409, "S-1 not mounted — hold [PLAY] while powering on, wait for the drive"
+            )
+        root = vol / "BACKUP"
+    else:
+        root = prm_module.BACKUPS_DIR
+    root = root.resolve()
+    path = (root / req.name).resolve()
+    if not path.is_relative_to(root) or path.suffix.upper() != ".PRM":
+        raise HTTPException(400, "invalid pattern name")
+    if not path.is_file():
+        raise HTTPException(404, "pattern not found")
+    try:
+        prm = prm_module.PrmFile.load(path)
+    except prm_module.PrmParseError as e:
+        raise HTTPException(400, f"not an S-1 pattern file: {e}")
+    return {"loaded": req.name, **_apply_prm(prm, req.load_patch, req.load_sequence)}
+
+
+@app.post("/api/import/upload", tags=["import"],
+          summary="Upload a .PRM file and load it into the live state")
+async def import_upload(
+    file: UploadFile, load_patch: bool = True, load_sequence: bool = True
+) -> dict:
+    """Same as POST /api/import/prm but for a pattern file from anywhere —
+    drag one out of an old backup and the app plays it."""
+    data = await file.read(prm_module.MAX_FILE_BYTES + 1)
+    try:
+        prm = prm_module.PrmFile.parse(data.decode("ascii", errors="replace"))
+    except prm_module.PrmParseError as e:
+        raise HTTPException(400, f"not an S-1 pattern file: {e}")
+    name = file.filename or "upload.PRM"
+    return {"loaded": name, **_apply_prm(prm, load_patch, load_sequence)}
 
 
 def _require_studio() -> None:

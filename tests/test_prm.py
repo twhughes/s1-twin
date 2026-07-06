@@ -259,3 +259,29 @@ class TestParser:
     def test_set_missing_key_returns_false(self):
         prm = PrmFile.parse("LFO_RATE = 10\n")
         assert prm.set("NOT_THERE", 1) is False
+
+
+# ── the librarian's discovery helpers ────────────────────────
+class TestDiscovery:
+    def test_parse_pattern_filename(self):
+        from s1tui.prm import parse_pattern_filename
+        assert parse_pattern_filename("S1_PTN1-01.PRM") == (1, 1)
+        assert parse_pattern_filename("S1_PTN4-16.PRM") == (4, 16)
+        assert parse_pattern_filename("s1_ptn2-5.prm") == (2, 5)
+        assert parse_pattern_filename("S1_PTN5-01.PRM") is None   # bank > 4
+        assert parse_pattern_filename("S1_PTN1-17.PRM") is None   # slot > 16
+        assert parse_pattern_filename("InitPatch.prm") is None
+        assert parse_pattern_filename("S1_PTN1-01.WAV") is None
+
+    def test_list_prm_files_recursive_sorted(self, tmp_path):
+        from s1tui.prm import list_prm_files
+        (tmp_path / "b").mkdir()
+        (tmp_path / "b" / "S1_PTN1-02.PRM").write_text("LENG = 16\n")
+        (tmp_path / "S1_PTN1-01.prm").write_text("LENG = 16\n")
+        (tmp_path / "notes.txt").write_text("not a pattern")
+        found = list_prm_files(tmp_path)
+        assert [p.name for p in found] == ["S1_PTN1-01.prm", "S1_PTN1-02.PRM"]
+
+    def test_list_prm_files_missing_dir(self, tmp_path):
+        from s1tui.prm import list_prm_files
+        assert list_prm_files(tmp_path / "nope") == []

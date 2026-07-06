@@ -67,7 +67,10 @@ ritual, guided in the UI:
    the file into `RESTORE/` for you; otherwise download and copy manually).
 3. Press **[HOLD]** on the S-1, wait for `dOnE`, power-cycle.
 
-Reading patterns *from* the device (the librarian) is a planned milestone.
+The librarian also works the other way: **LOAD FROM S-1** lists the mounted
+device's `BACKUP/` patterns (plus any dumps in `~/.s1tui/backups/`) and reads
+one back into the app — patch and sequence, live and editable. Any `.PRM`
+file can also be uploaded directly.
 
 ## The agent door
 

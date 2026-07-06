@@ -1,223 +1,108 @@
-# S-1 TUI
+# s1 — the Roland S-1, fully present in software
 
-```
- ____  _   _____ _   _ ___
-/ ___|| | |_   _| | | |_ _|
-\___ \| |   | | | | | || |
- ___) | |   | | | |_| || |
-|____/|_|   |_|  \___/|___|
-```
+Plug the S-1 into the Mac with one USB-C cable. Start one command. A browser
+tab opens showing the whole synth — every panel knob, every menu setting, the
+sequencer — live-synced in both directions. The S-1's audio comes out of the
+Mac speakers with no DAW and no config. An AI agent can drive all of it
+through a documented API.
 
-Terminal synth editor for the Roland S-1. Sliders, patch management, and a
-piano roll sequencer.
+> The package is still named `s1tui` for historical reasons (it began life as
+> a terminal UI, long since retired). The rename is on the roadmap; the `s1`
+> command is the identity that will survive it.
 
-<p align="center">
-  <img src="docs/screenshot.svg" alt="Piano roll sequencer with live playback" width="100%">
-</p>
-
-<p align="center">
-  <img src="docs/panel.svg" alt="Synth panel — live oscilloscope and neon parameter meters" width="100%">
-</p>
-
-## What's in the box
-
-- All 54 CC parameters as sliders/toggles/selectors across three tabs
-- Piano roll with click-to-edit and MIDI file import
-- Real-time playback — the TUI streams notes to the S-1 over MIDI
-- Patches saved as JSON in `~/.s1tui/patches/`
-- Two-way MIDI: tweak a knob on the hardware, watch the slider move
-
-The S-1's built-in sequencer can't be programmed over MIDI (Roland didn't
-expose any SysEx for writing step data — I checked). So this thing _is_ the
-sequencer. It loads `.mid` files, lets you draw notes on a grid, and plays
-them back as MIDI note-on/off messages. The S-1's internal sequencer is
-bypassed entirely.
-
-## Install
+## Quickstart
 
 ```bash
 pip install -e .
 ```
 
-You'll need system MIDI libs — macOS and Windows ship them, Linux wants
-`sudo apt install libasound2-dev`.
+1. Fresh terminal: `s1` → the browser opens to the cockpit.
+2. Plug in the S-1 (its data cable) → the sync chip goes **SYNCED** without
+   touching anything → the S-1's audio is audible from the Mac speakers.
+3. Twist a physical knob → the UI moves. Drag a slider → the hardware changes.
 
-For hacking on s1tui itself (tests + lint):
+That's the whole setup. Plug in a MIDI keyboard and play; or play from the
+computer keyboard (`A`–`K` rows, `Z`/`X` for octave) right in the browser.
+
+## What's in the tab
+
+- **COCKPIT** — every S-1 parameter as a live control, generated straight
+  from the schema and organized exactly like the hardware: the faceplate
+  sections (LFO / OSC / FILTER / AMP / ENV / EFX / CONTROLLER, with ⇧ badges
+  for SHIFT combos), the settings menu in the manual's order, and the
+  MIDI-only performance controls. Patch bank (JSON, `~/.s1tui/patches/`),
+  on-screen keyboard, and **Save to S-1**.
+- **SEQUENCER** — a piano roll driving the S-1 live: click to add notes, drag
+  for length, velocity editing, transport with gate/shuffle/probability, and
+  MIDI clock out so the S-1's delay and LFO tempo-sync follow the app.
+  Patterns live app-side (`~/.s1tui/sequences/`), respecting device limits
+  (64 steps, 4 notes per step). A Program Change control switches the S-1's
+  64 internal patterns live.
+- **STUDIO** — the automated sound-matcher: drop in a target sound and let
+  the optimizer drive the synth until it sounds like the target. Needs the
+  heavy extras: `pip install -e ".[studio]"`.
+
+## How sync works (and why)
+
+The S-1 has **no SysEx** — its state cannot be queried. The only live signals
+are CCs: knobs transmit when moved, and the synth accepts CCs in. So the app
+treats **its own state as the truth**: on every (re)connect it pushes all 54
+CC parameters to the device, then knob twists stream in and win over the UI.
+Unplug and replug freely; the watcher reconnects and re-pushes by itself.
+
+The S-1 **is** class-compliant USB audio over the same cable (a 2-in "S-1"
+device in CoreAudio). The app auto-routes it to the default output — that's
+the no-DAW monitoring path — with a level meter and mute in the header.
+
+## Save to S-1 (patterns into the hardware)
+
+Patterns/patches transfer via USB disk mode, not MIDI. The cockpit's
+**SAVE TO S-1** card builds a device-ready `S1_PTN<bank>-<slot>.PRM` file
+from the live patch + sequence (the format is community-decoded plain text;
+the writer templates off a real device dump so it never invents keys). The
+ritual, guided in the UI:
+
+1. Power the S-1 off; hold **[PLAY]** while powering on.
+2. Wait 1–2 min — a drive named `S-1` mounts (the app notices and can write
+   the file into `RESTORE/` for you; otherwise download and copy manually).
+3. Press **[HOLD]** on the S-1, wait for `dOnE`, power-cycle.
+
+Reading patterns *from* the device (the librarian) is a planned milestone.
+
+## The agent door
+
+Everything a human can do in the UI is a documented endpoint — interactive
+docs at `http://127.0.0.1:8765/docs`. Read/set any parameter, patch and
+sequence CRUD, transport, play notes, select device patterns, export .PRM.
+Live state (including physical knob twists) streams over the `/ws/state`
+WebSocket, which also accepts `param` and `note` messages back.
+
+```bash
+curl -X PUT localhost:8765/api/params/74 -H 'content-type: application/json' -d '{"value": 90}'
+curl -X POST localhost:8765/api/notes -H 'content-type: application/json' -d '{"note": 60, "on": true}'
+```
+
+## Commands
+
+```bash
+s1                 # start the cockpit (opens the browser)
+s1 --no-browser    # just the server
+s1 --list-ports    # what MIDI ports does the Mac see?
+s1tui-web          # alias for s1
+s1tui-match        # the matcher's CLI (needs [studio])
+```
+
+## Development
 
 ```bash
 pip install -e ".[studio,dev]"
-pytest -q && ruff check .
+pytest             # the whole suite runs against fake MIDI/audio — no hardware
+ruff check s1tui tests
 ```
 
-## Usage
-
-```bash
-s1tui                          # auto-connects to S-1 if it sees one
-s1tui --port "S-1" --channel 3 # port + channel (the S-1 defaults to ch 3)
-s1tui --list-ports             # what's plugged in?
-```
-
-It tries to auto-connect to any port with "S-1" in the name. If it doesn't
-find one, you'll see "No MIDI" in the status bar — press `c` to pick a port
-manually. Run `--list-ports` first if you're not sure what yours is called.
-
-The S-1 ships on MIDI channel 3 — if notes aren't going through, try
-`--channel 3`.
-
-### Hearing audio
-
-The S-1 over USB is MIDI only — no audio. You have two options:
-
-1. **Direct**: plug the S-1's headphone or line out into speakers/headphones.
-   This is the simplest setup, the S-1 is its own synth.
-2. **Through a DAW**: open Logic/Ableton/etc, create a track that receives
-   MIDI from the S-1 port, and route it to a software instrument or back to
-   the S-1 as an external instrument. This is what's happening if you can
-   only hear sound with Logic open.
-
-If you're not hearing anything at all, check that the S-1 is on the right
-MIDI channel and that `s1tui --list-ports` shows it.
-
-## Studio — automated sound design
-
-Drop in an audio snippet and let an agent recreate it on the S-1. The engine
-records the synth's *actual* audio, scores how close it is to your target, and
-tunes the CC parameters with a derivative-free optimizer (CMA-ES) until it
-matches — then saves the result to your patch bank.
-
-```bash
-pip install -e ".[studio]"   # adds audio capture, analysis, optimizer, web app
-```
-
-### Hooking up audio capture
-
-The matching engine needs to *hear* the S-1. Since the S-1 is MIDI-only over USB,
-its audio has to reach the Mac as an input device. The clean route with Logic:
-
-1. Install [BlackHole](https://existential.audio/blackhole/) (a virtual audio driver).
-2. In Logic, send the S-1's track output to BlackHole (or use an Aggregate Device).
-3. Point the engine at the BlackHole input — it'll show up in the device list.
-
-Any real audio-interface input the S-1 is plugged into works too.
-
-### Web app
-
-```bash
-s1tui-web        # opens http://127.0.0.1:8765
-```
-
-Pick your MIDI port + audio input, drag-drop a target sound, and hit START. You
-get live target-vs-best spectrograms, a closeness meter, and iteration count.
-**Automated** mode runs to completion; **Interactive** mode pauses each round so
-you can listen to the candidate. Save the winner to the bank, then play-sample,
-overwrite, or delete patches from the same screen.
-
-### CLI
-
-```bash
-s1tui-match target.wav --device "BlackHole" --iters 40 --out my-match
-s1tui-match --list-devices    # audio inputs
-s1tui-match --list-ports      # MIDI ports
-```
-
-Matching is single-note timbre: the engine plays a fixed probe note (C3) for each
-candidate and compares the recorded tone (log-mel + MFCC + amplitude envelope).
-
-## Keys
-
-`Ctrl+C` to quit. Everything else:
-
-| Key | What it does |
-|-----|-------------|
-| `c` | Connect to MIDI port |
-| `s` / `l` | Save / load patch |
-| `r` | Randomize all params (have fun) |
-| `d` | Reset to defaults |
-| `0` | Zero everything |
-| `t` | Test note (C4) |
-| `m` | Load a `.mid` file |
-| `M` | Save the piano roll as a `.mid` file |
-| `!` | Panic — all notes off (CC 123) |
-| `space` | Play / stop |
-| `p` / `x` | Play / stop (alternate) |
-| `j` / `k` | Navigate widgets |
-
-### Param widgets
-
-`left`/`right` adjusts by 1, `Shift` for 10, `Home`/`End` for min/max.
-
-### Piano roll
-
-| Key | What it does |
-|-----|-------------|
-| Arrows | Move cursor |
-| `z` or `Enter` | Toggle note on/off |
-| `+` / `-` | Velocity +/- 10 |
-| `]` / `[` | Duration +/- 1 step |
-| Click | Toggle note at mouse pos |
-
-Tempo is shared between the piano roll and the SEQ Tempo widget — change
-one and the other follows, even mid-playback. The other sequencer cards are
-live too: **Gate** scales how long each note is held, **Shuffle** swings the
-offbeats, **Last Step** truncates the pattern, **Master Prob** randomly drops
-steps, and **Scale** switches the grid resolution.
-
-## The piano roll
-
-```
- C3 ·  ·  ·  ·  ·  ·  ·  ·  ·  ·  ·  ·  ·  ·  ·  ·
- B2 ·  ·  ·  ·  ·  ·  ·  ·  ·  ·  ·  ·  ·  ·  ·  ·
- A2 ·  ·  ██ ·  ·  ·  ·  ·  ·  ·  ██ ·  ·  ·  ·  ·
- G2 ·  ·  ·  ·  ██ ·  ·  ·  ·  ·  ·  ·  ██ ·  ·  ·
- F2 ·  ·  ·  ·  ·  ·  ·  ·  ·  ·  ·  ·  ·  ·  ·  ·
- E2 ██ ·  ·  ·  ·  ·  ██ ·  ██ ·  ·  ·  ·  ·  ██ ·
- D2 ·  ·  ·  ·  ·  ·  ·  ·  ·  ·  ·  ·  ·  ·  ·  ·
- C2 ·  ██ ·  ·  ·  ██ ·  ·  ·  ██ ·  ·  ·  ██ ·  ·
-     1  2  3  4  5  6  7  8  9  10 11 12 13 14 15 16
- 120 BPM | Step 1/16 | C2 | (empty)
-```
-
-Hit `m` to load a MIDI file, or just click around to place notes. Press
-`space` to hear it. `M` (shift+m) exports your edits — next to the file you
-loaded, or into `~/.s1tui/midi/` if you started from scratch. Notes are quantized to the grid on import. The default
-view is centered on C2 since, y'know, bass synth.
-
-## Scripting
-
-The MIDI backend works standalone if you want to do weird things:
-
-```python
-from s1tui.midi_backend import MidiBackend
-import time
-
-midi = MidiBackend()
-midi.connect("S-1")
-
-# filter sweep
-for v in range(128):
-    midi.send_cc(74, v)
-    time.sleep(0.01)
-```
-
-## Project layout
-
-```
-s1tui/
-├── app.py               # main Textual app
-├── midi_backend.py      # MIDI I/O
-├── sequence.py          # Note/Sequence + MIDI file read/write
-├── sequencer_engine.py  # threaded playback
-├── schema.py            # 54 CC + 10 seq param definitions
-├── state.py             # param state store
-├── widgets/             # sliders, toggles, selectors, piano roll
-├── views/               # Panel, Menu, Seq tabs
-├── screens/             # modal dialogs
-├── match/               # sound-matching engine (capture, features, optimizer)
-└── web/                 # FastAPI backend + synthwave web app
-```
-
-## License
-
-MIT — see [LICENSE](LICENSE).
-
-CC mappings from [midi.guide/d/roland/s-1](https://midi.guide/d/roland/s-1/).
+Architecture: `schema.py` (the single source of truth for every parameter,
+audited against the official MIDI chart), `engine.py` (port watcher, sync,
+keyboard forwarding, monitor auto-start), `audio.py` (S-1 USB audio →
+speakers), `sequencer_engine.py` (playback + MIDI clock), `prm.py` (.PRM
+parse/write), `web/` (FastAPI + the generated cockpit UI), `match/` (the
+sound-matching engine).

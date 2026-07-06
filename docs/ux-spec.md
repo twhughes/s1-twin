@@ -1,5 +1,11 @@
 # UX Spec — "a synth plugin that syncs to a real device"
 
+> **SUPERSEDED (2026-07-05)** by `software-domain-spec.md` wherever they
+> overlap: the TUI is gone; the playable keyboard, push-on-connect sync,
+> auto-connect, and the web cockpit shipped in that spec's implementation.
+> Kept for the visual-language notes and ideas not yet absorbed (the full
+> "make it pop" pass is milestone M2).
+
 Goal: the TUI and web app should feel like a great software instrument —
 immediate, playable, visibly in lockstep with the hardware — while staying
 simple. Keep the synthwave-neon identity everywhere; no flat/dead space.

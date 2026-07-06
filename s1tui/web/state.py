@@ -1,6 +1,10 @@
-"""Shared server state — a single-user, single-session app, so a module-level
-singleton is plenty. Holds the MIDI connection, audio device, and the running
-match session/thread.
+"""Match-studio state: the running match session and its target clip.
+
+The cockpit itself (params, sync, monitor, sequencer) lives in
+:mod:`s1tui.engine`; this object only manages sound-match sessions, borrowing
+the engine's MIDI connection and audio monitor so there is exactly one of
+each in the process. The match engine's heavy numerics (scipy, cma) stay
+behind the ``[studio]`` extra — endpoints check :func:`studio_available`.
 """
 
 from __future__ import annotations
@@ -9,12 +13,13 @@ import tempfile
 import threading
 import time
 from pathlib import Path
+from typing import TYPE_CHECKING
 
-from ..audio import AudioMonitor
-from ..match.capture import AudioClip
-from ..match.driver import SynthDriver
-from ..match.session import MatchConfig, MatchSession, Progress
-from ..midi_backend import MidiBackend
+if TYPE_CHECKING:  # heavy studio types, imported lazily at runtime
+    from ..match.capture import AudioClip
+    from ..match.session import MatchConfig, MatchSession, Progress
+
+from ..engine import S1Engine
 
 RECORDING_DIR = Path.home() / ".s1tui" / "recordings"
 
@@ -23,18 +28,19 @@ class MatchAlreadyRunning(RuntimeError):
     """Raised when a second match is started while one is running."""
 
 
-def _db(amp: float) -> float:
-    """Linear amplitude (0-1) to dBFS, floored at -120."""
-    import math
+def studio_available() -> bool:
+    """True when the [studio] extras (scipy, cma) are installed."""
+    try:
+        import cma  # noqa: F401
+        import scipy  # noqa: F401
+    except ImportError:
+        return False
+    return True
 
-    return round(max(20.0 * math.log10(max(amp, 1e-9)), -120.0), 1)
 
-
-class AppState:
-    def __init__(self) -> None:
-        self.midi = MidiBackend()
-        self.device: int | str | None = None
-        self.monitor = AudioMonitor()
+class MatchState:
+    def __init__(self, engine: S1Engine) -> None:
+        self.engine = engine
         self.session: MatchSession | None = None
         self._thread: threading.Thread | None = None
         self._lock = threading.Lock()
@@ -45,127 +51,21 @@ class AppState:
         # their per-match state (target spectrogram, best-loss watermark).
         self.match_id = 0
 
-    # ── connection ───────────────────────────────────────────
-    def connect(self, port: str, channel: int, device: int | str | None) -> None:
-        self.midi.channel = channel - 1
-        self.midi.connect(port)
-        self.device = device
-
-    @property
-    def connected(self) -> bool:
-        return self.midi.connected
-
     @property
     def running(self) -> bool:
         return self._thread is not None and self._thread.is_alive()
 
-    # ── diagnostics / setup ──────────────────────────────────
-    def diagnostics(self) -> dict:
-        """Snapshot of the signal chain for the setup wizard."""
-        from ..match.capture import list_input_devices, list_output_devices
-
-        ports = MidiBackend.list_output_ports()
-        s1 = next((p for p in ports if "s-1" in p.lower() or "s1" in p.lower()), None)
-        inputs = list_input_devices()
-        outputs = list_output_devices()
-        blackhole = next((d for d in inputs if "blackhole" in d["name"].lower()), None)
-        return {
-            "midi": {"found": s1 is not None, "port": s1, "all": ports},
-            "audio": {"blackhole": blackhole, "devices": inputs, "outputs": outputs},
-            "connected": self.connected,
-            "connected_port": self.midi.port_name,
-            "running": self.running,
-            "monitor": self.monitor_status(),
-        }
-
-    def read_level(self, device: int | str) -> dict:
-        """Input level in dBFS for a live meter. Reads the monitor stream if it's
-        running (it owns the input), otherwise takes a short standalone capture."""
-        if self.monitor.running:
-            return {"peak_db": self.monitor.peak_db, "rms_db": self.monitor.rms_db}
-        if self.running:
-            raise RuntimeError("input busy — start the monitor to meter during a match")
-        import numpy as np
-        import sounddevice as sd
-
-        info = sd.query_devices(device, "input")
-        sr = int(info["default_samplerate"])
-        rec = sd.rec(int(0.15 * sr), samplerate=sr, channels=1, device=device, dtype="float32")
-        sd.wait()
-        sig = rec.reshape(-1)
-        peak = float(np.abs(sig).max()) if sig.size else 0.0
-        rms = float(np.sqrt(np.mean(sig ** 2))) if sig.size else 0.0
-        return {"peak_db": _db(peak), "rms_db": _db(rms)}
-
-    def test_signal(self, device: int | str | None = None) -> dict:
-        """Send a probe note and listen: did the S-1's audio actually arrive?"""
-        if not self.connected:
-            raise RuntimeError("connect to the S-1 MIDI port first")
-        if self.running:
-            raise RuntimeError("a match is already running")
-        import numpy as np
-
-        from ..match.capture import find_onset
-
-        if self.monitor.running:
-            self.monitor.begin_capture()
-            self.midi.send_note_on(48)
-            time.sleep(1.0)
-            self.midi.send_note_off(48)
-            clip = self.monitor.end_capture()
-            sig, sr = clip.samples, clip.samplerate
-        else:
-            dev = device if device is not None else self.device
-            if dev is None:
-                raise RuntimeError("choose an audio input device first")
-            import sounddevice as sd
-
-            info = sd.query_devices(dev, "input")
-            sr = int(info["default_samplerate"])
-            rec = sd.rec(int(1.0 * sr), samplerate=sr, channels=1, device=dev, dtype="float32")
-            self.midi.send_note_on(48)
-            sd.wait()
-            self.midi.send_note_off(48)
-            sig = rec.reshape(-1)
-
-        peak = float(np.abs(sig).max()) if sig.size else 0.0
-        detected = peak > 10 ** (-50.0 / 20.0)  # louder than -50 dBFS
-        onset = find_onset(sig, sr) if detected else 0
-        return {
-            "detected": detected,
-            "peak_db": _db(peak),
-            "latency_ms": round(onset / sr * 1000.0, 1) if detected else None,
-        }
-
-    # ── live monitor ─────────────────────────────────────────
-    def start_monitor(self, input_dev: int | str, output_dev: int | str, gain: float = 1.0) -> None:
-        if self.running:
-            raise RuntimeError("stop the match before changing the monitor")
-        self.monitor.start(input_dev, output_dev, gain)
-        self.device = input_dev  # the matcher captures from this input
-
-    def stop_monitor(self) -> None:
-        self.monitor.stop()
-
-    def monitor_status(self) -> dict:
-        return {
-            "running": self.monitor.running,
-            "input": self.monitor.input,
-            "output": self.monitor.output,
-            "recording": self.monitor.recording,
-            "peak_db": self.monitor.peak_db,
-        }
-
+    # ── recording (uses the engine's monitor) ────────────────
     def record_start(self) -> None:
-        if not self.monitor.running:
-            raise RuntimeError("start the monitor before recording")
-        self.monitor.record_start()
+        if not self.engine.monitor.running:
+            raise RuntimeError("the audio monitor isn't running — plug in the S-1")
+        self.engine.monitor.record_start()
 
     def record_stop(self, name: str, as_target: bool) -> dict:
         from ..patches import resolve_in_dir, sanitize_name
 
         name = sanitize_name(name)
-        clip = self.monitor.record_stop()
+        clip = self.engine.monitor.record_stop()
         if clip is None or clip.samples.size == 0:
             raise RuntimeError("nothing was recorded")
         import soundfile as sf
@@ -200,6 +100,9 @@ class AppState:
 
     # ── match lifecycle ──────────────────────────────────────
     def start_match(self, config: MatchConfig, calibrate: bool) -> None:
+        from ..match.driver import SynthDriver
+        from ..match.session import MatchSession
+
         # The check-then-spawn must be atomic: FastAPI runs sync endpoints in
         # a threadpool, so two near-simultaneous starts can both pass an
         # unguarded running check.
@@ -208,10 +111,16 @@ class AppState:
                 raise MatchAlreadyRunning("a match is already running")
             if self.target_clip is None:
                 raise RuntimeError("no target loaded")
-            if not self.connected:
-                raise RuntimeError("not connected to MIDI")
+            if not self.engine.midi.connected:
+                raise RuntimeError("the S-1 isn't connected")
+            if not self.engine.monitor.running:
+                raise RuntimeError("the audio monitor isn't running — plug in the S-1")
 
-            driver = SynthDriver(self.midi, device=self.device, monitor=self.monitor)
+            driver = SynthDriver(
+                self.engine.midi,
+                device=self.engine.monitor.input,
+                monitor=self.engine.monitor,
+            )
             session = MatchSession(driver, config)
             session.set_target_clip(self.target_clip)
             self.session = session
@@ -263,5 +172,14 @@ class AppState:
         p = self.get_latest()
         return p.last_clip if p else None
 
+    def play_patch_preview(self, note: int = 48, hold: float = 1.0) -> None:
+        """Trigger a short note so the current state can be heard."""
+        engine = self.engine
 
-STATE = AppState()
+        def _play() -> None:
+            time.sleep(0.05)
+            engine.note_on(note)
+            time.sleep(hold)
+            engine.note_off(note)
+
+        threading.Thread(target=_play, daemon=True).start()

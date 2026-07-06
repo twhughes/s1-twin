@@ -93,6 +93,11 @@ class MidiBackend:
         """Explicit cleanup — call on app exit instead of relying on GC."""
         self.disconnect()
 
+    def drop_ports(self) -> None:
+        """Close ports without sending anything (the device is already gone)."""
+        with self._lock:
+            self._close_ports_locked()
+
     def _close_ports_locked(self) -> None:
         """Close both ports without sending anything. Caller holds the lock."""
         if self._output:

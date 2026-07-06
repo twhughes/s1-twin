@@ -231,7 +231,7 @@ class S1Engine:
         if self.midi.connected:
             if s1_port is None:
                 # Unplugged. Close without the goodbye CC (port is gone).
-                self.midi._close_ports_locked()
+                self.midi.drop_ports()
                 self._set_sync(DISCONNECTED)
             return
 
@@ -245,7 +245,7 @@ class S1Engine:
             self.midi.connect(s1_port)
             self.push_all()
         except Exception:
-            self.midi._close_ports_locked()
+            self.midi.drop_ports()
             self._set_sync(DISCONNECTED)
             return
         self._set_sync(SYNCED)

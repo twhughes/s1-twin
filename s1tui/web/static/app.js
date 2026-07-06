@@ -550,11 +550,19 @@ function bindRoll() {
 
 function applySequence(seq) {
   if (rollDrag) return;  // don't fight a live edit
+  const sel = APP.selectedNote ? { step: APP.selectedNote.step, pitch: APP.selectedNote.pitch } : null;
   APP.seq.steps = seq.steps;
   APP.seq.bpm = seq.bpm;
   APP.seq.step_resolution = seq.step_resolution;
   APP.seq.notes = seq.notes.map((n) => ({ ...n }));
   APP.polyWarnings = seq.poly_warnings || [];
+  // Re-bind the inspector to the same note in the fresh list (server echoes
+  // replace note objects; a stale reference would silently eat edits).
+  if (sel) {
+    const again = APP.seq.notes.find((n) => n.step === sel.step && n.pitch === sel.pitch);
+    APP.selectedNote = again || null;
+    if (!again) $("note-inspector").classList.add("hidden");
+  }
   $("t-bpm").value = seq.bpm;
   $("t-res").value = seq.step_resolution;
   $("t-steps").value = seq.steps;

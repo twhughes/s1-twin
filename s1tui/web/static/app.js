@@ -266,6 +266,53 @@ function connectStateWS() {
   };
 }
 
+// ── synesthesia note colors ───────────────────────────────
+/* Tyler's note-name → color mapping (candidate hex — tune by ear/eye):
+ * A red · B brown · C white-blue · D blue-white · E neon green ·
+ * F pastel red · G blue; sharps run brighter. "legible" trades fidelity
+ * for distinctness: 12 evenly-spaced hues, octave-invariant, A anchored
+ * red. "off" restores the plain neon roll. Persisted in localStorage. */
+const TRUE_BASE = {
+  A: [224, 16, 16], B: [107, 74, 43], C: [220, 232, 255], D: [169, 199, 255],
+  E: [57, 255, 20], F: [255, 138, 138], G: [43, 91, 255],
+};
+// pitch class (0 = C) -> [letter, sharp?]
+const PC_LETTER = [
+  ["C", 0], ["C", 1], ["D", 0], ["D", 1], ["E", 0], ["F", 0],
+  ["F", 1], ["G", 0], ["G", 1], ["A", 0], ["A", 1], ["B", 0],
+];
+
+function noteColor(pitch, alpha = 1) {
+  const pc = ((pitch % 12) + 12) % 12;
+  if (APP.noteColors === "legible") {
+    const hue = ((pc - 9 + 12) % 12) * 30;  // A = 0° = red
+    return `hsla(${hue}, 92%, 58%, ${alpha})`;
+  }
+  if (APP.noteColors === "true") {
+    const [letter, sharp] = PC_LETTER[pc];
+    let [r, g, b] = TRUE_BASE[letter];
+    if (sharp) {  // sharps a bit brighter
+      r = Math.round(r + (255 - r) * 0.35);
+      g = Math.round(g + (255 - g) * 0.35);
+      b = Math.round(b + (255 - b) * 0.35);
+    }
+    return `rgba(${r},${g},${b},${alpha})`;
+  }
+  return null;  // off
+}
+
+function bindNoteColors() {
+  APP.noteColors = localStorage.getItem("s1.noteColors") || "true";
+  const sel = $("note-colors");
+  sel.value = APP.noteColors;
+  sel.onchange = () => {
+    APP.noteColors = sel.value;
+    localStorage.setItem("s1.noteColors", sel.value);
+    renderKeyboard();
+    drawRoll();
+  };
+}
+
 // ── QWERTY + on-screen keyboard ───────────────────────────
 // Key row -> semitone offset from the base octave's C.
 const KEYMAP = { KeyA: 0, KeyW: 1, KeyS: 2, KeyE: 3, KeyD: 4, KeyF: 5, KeyT: 6,
@@ -314,6 +361,14 @@ function renderKeyboard() {
     label.textContent = i < KEY_LABELS.length ? KEY_LABELS[i] :
       (semitone === 0 ? "C" + (Math.floor(note / 12) - 1) : "");
     key.appendChild(label);
+    const c = noteColor(note, 1);
+    if (c) {
+      const band = document.createElement("i");
+      band.className = "kband";
+      band.style.background = c;
+      band.style.boxShadow = `0 0 6px ${c}`;
+      key.appendChild(band);
+    }
     key.onpointerdown = (e) => { e.preventDefault(); key.setPointerCapture(e.pointerId); noteMsg(note, true); };
     key.onpointerup = () => noteMsg(note, false);
     key.onpointercancel = () => noteMsg(note, false);
@@ -420,12 +475,24 @@ function drawRoll() {
     const h = ROLL.cellH - 2;
     const alpha = 0.45 + (n.velocity / 127) * 0.55;
     const selected = APP.selectedNote === n;
-    ctx.fillStyle = selected ? `rgba(54,249,179,${alpha})` : `rgba(255,46,151,${alpha})`;
-    ctx.shadowColor = selected ? "#36f9b3" : "#ff2e97";
-    ctx.shadowBlur = 8;
+    const colored = noteColor(n.pitch, alpha);
+    const glow = noteColor(n.pitch, 1);
+    if (colored) {
+      ctx.fillStyle = colored;
+      ctx.shadowColor = selected ? "#36f9b3" : glow;
+    } else {
+      ctx.fillStyle = selected ? `rgba(54,249,179,${alpha})` : `rgba(255,46,151,${alpha})`;
+      ctx.shadowColor = selected ? "#36f9b3" : "#ff2e97";
+    }
+    ctx.shadowBlur = selected ? 12 : 8;
     ctx.beginPath();
     ctx.roundRect(x, y, w, h, 4);
     ctx.fill();
+    if (colored && selected) {
+      ctx.strokeStyle = "#36f9b3";
+      ctx.lineWidth = 2;
+      ctx.stroke();
+    }
     ctx.shadowBlur = 0;
     // velocity notch
     ctx.fillStyle = "rgba(255,255,255,0.65)";
@@ -482,6 +549,7 @@ function selectNote(n) {
   if (!n) { ins.classList.add("hidden"); drawRoll(); return; }
   ins.classList.remove("hidden");
   $("ni-label").textContent = `${NOTE_NAMES[n.pitch % 12]}${Math.floor(n.pitch / 12) - 1} @ step ${n.step + 1}`;
+  $("ni-label").style.color = noteColor(n.pitch, 1) || "";
   $("ni-vel").value = n.velocity;
   $("ni-len").value = n.duration;
   drawRoll();
@@ -991,6 +1059,7 @@ async function init() {
   $("studio-unavailable").classList.toggle("hidden", APP.studio);
 
   connectStateWS();
+  bindNoteColors();
   renderKeyboard();
   bindQwerty();
   bindRoll();

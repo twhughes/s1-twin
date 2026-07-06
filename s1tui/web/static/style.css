@@ -335,6 +335,10 @@ figure .btn { margin-top: 8px; }
 .key.held.black { background: linear-gradient(var(--magenta), #8f1a56); box-shadow: 0 0 18px var(--magenta); }
 .key .klabel { position: absolute; bottom: 4px; left: 50%; transform: translateX(-50%); font-size: 9px; color: #55506e; }
 .key.black .klabel { color: #8f89b0; }
+/* synesthesia band: note-name color at the top of every key */
+.key .kband { position: absolute; top: 2px; left: 2px; right: 2px; height: 5px; border-radius: 2px; pointer-events: none; }
+.key.held .kband { opacity: 0.35; }
+.colors-ctl { min-width: 120px; }
 
 /* ════════════════ sequencer ════════════════ */
 .transport-row { align-items: center; }

@@ -48,8 +48,8 @@ friction.**
    `textual` dependency. The UI-agnostic core survives: `schema.py`, `state.py`,
    `midi_backend.py`, `sequence.py`, `sequencer_engine.py`, `patches.py`,
    `match/`, `web/`. Git history is the archive.
-2. **Rename is a milestone, not today** (M4). Keep the `s1tui` package name; add a
-   `s1` console command as the primary launcher (keep `s1tui-web` as an alias).
+2. **Rename is a milestone, not today** (M4). Keep the package name (then `s1tui`, since renamed `synth`); add a
+   `s1` console command as the primary launcher (the `s1tui-web` alias — historical; package renamed `synth` 2026-07-06).
 3. **Sync model: push-on-connect.** App state is truth at the connect moment (this
    overwrites what's dialed on the hardware — accepted). Knob moves stream in
    afterward and win over stale UI.

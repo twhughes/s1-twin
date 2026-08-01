@@ -1,4 +1,4 @@
-# s1tui Improvement Spec
+# synth (formerly s1tui) Improvement Spec
 
 Implementation spec derived from a full-codebase analysis (2026-07-01). Work through
 phases in order — Phase 1 items are bugs that corrupt data or crash; later phases are

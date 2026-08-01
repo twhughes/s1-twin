@@ -7,8 +7,16 @@ routes it to the default output.
 Runs two independent PortAudio streams (input from the S-1, output to your
 speakers/headphones) bridged by a lock-protected numpy ring buffer. Two streams
 rather than one duplex stream because CoreAudio can't open a single duplex stream
-across mismatched devices (AUHAL error -10851). A startup cushion + bounded ring
-keep the passthrough glitch-free despite the two devices running on separate clocks.
+across mismatched devices (AUHAL error -10851).
+
+The two devices run on separate sample clocks that disagree by ~0.5-1% in
+practice, so the output side reads through the ring at a continuously servo'd
+ratio (P + slow integrator on ring depth) with linear interpolation — the
+drift becomes an inaudible constant pitch offset instead of a glitch train of
+dropped blocks / zero-padded gaps (audible as ~20 Hz grinding on every note;
+debugged live 2026-07-28 on the practice rig, music/tools/s1_rig.py). On
+underrun the output emits silence and HOLDS the read position — never loop
+stale samples (a repeating block rings at SR/block Hz: the "F4 ghost note").
 
 The same input stream feeds clean frames to the recorder and to the matcher's
 single-note probes, so there's no device contention — and you hear every candidate
@@ -27,8 +35,11 @@ from .match import WORKING_SR
 from .match.capture import AudioClip
 
 BLOCKSIZE = 512
-RING_SECONDS = 0.5      # bounded buffer -> bounded latency
-PREFILL_SECONDS = 0.15  # cushion so the output never starves at startup
+RING_SECONDS = 0.5      # ring capacity (not latency — the servo holds TARGET)
+PREFILL_SECONDS = 0.05  # cushion so the output never starves at startup
+TARGET_SECONDS = 0.023  # steady ring depth the drift servo holds (~2 blocks)
+RATIO_MAX = 0.03        # servo authority: +/-3% resampling
+LATENCY = 0.012         # device-side buffer per stream (rides out ~10ms stalls)
 SCOPE_BLOCKS = 4        # last ~46 ms (at 44.1k/512) feed the UI oscilloscope
 
 # Substrings that identify the S-1's USB audio device in CoreAudio.
@@ -163,7 +174,15 @@ class AudioMonitor:
         self.peak: float = 0.0
         self.rms: float = 0.0
 
-        self._ring: _Ring | None = None
+        self.underruns: int = 0
+        # servo bridge state (guarded by _block): a plain ring + fractional
+        # read head. _Ring below is no longer the bridge (it can't read at a
+        # fractional rate) but keeps its class and tests.
+        self._buf: np.ndarray | None = None
+        self._w = 0            # total samples written
+        self._rf = 0.0         # fractional read position
+        self._integ = 0.0      # learned clock drift
+        self._block = threading.Lock()
         # deque append/iteration is GIL-atomic — safe across the audio thread
         self._scope: collections.deque = collections.deque(maxlen=SCOPE_BLOCKS)
         self._capturing = False
@@ -185,13 +204,33 @@ class AudioMonitor:
         sr = int(in_info["default_samplerate"])
         out_ch = min(2, int(out_info["max_output_channels"])) or 1
         self.samplerate, self.input, self.output, self.gain = sr, input_dev, output_dev, gain
-        self._ring = _Ring(int(RING_SECONDS * sr))
+        cap = int(RING_SECONDS * sr)
+        target = int(TARGET_SECONDS * sr)
+        with self._block:
+            self._buf = np.zeros(cap, dtype=np.float32)
+            self._w = 0
+            self._rf = 0.0
+            self._integ = 0.0
+        self.underruns = 0
 
         def in_cb(indata, frames, t, status):  # noqa: ANN001
             x = indata[:, 0].copy()
             self.peak = float(np.abs(x).max()) if x.size else 0.0
             self.rms = float(np.sqrt(np.mean(x**2))) if x.size else 0.0
-            self._ring.write(x)
+            n = len(x)
+            with self._block:
+                w = self._w
+                idx = w % cap
+                end = idx + n
+                if end <= cap:
+                    self._buf[idx:end] = x
+                else:
+                    k = cap - idx
+                    self._buf[idx:] = x[:k]
+                    self._buf[:end - cap] = x[k:]
+                self._w = w + n
+                if self._w - self._rf > cap - 2 * BLOCKSIZE:  # overran the reader
+                    self._rf = float(self._w - target)
             self._scope.append(x)
             if self._capturing:
                 self._cap.append(x)
@@ -199,19 +238,42 @@ class AudioMonitor:
                 self._rec.append(x)
 
         def out_cb(outdata, frames, t, status):  # noqa: ANN001
-            buf = self._ring.read(frames) * (0.0 if self.muted else self.gain)
+            with self._block:
+                depth = self._w - self._rf
+                err = depth - target
+                self._integ = float(np.clip(self._integ + err * 2e-7,
+                                            -RATIO_MAX, RATIO_MAX))
+                ratio = float(np.clip(1.0 + self._integ + err / (sr * 0.5),
+                                      1 - RATIO_MAX, 1 + RATIO_MAX))
+                if depth < frames * ratio + 2:
+                    # Underrun: silence, and HOLD the read position — when the
+                    # delayed burst lands we resume where we left off. Never
+                    # replay old samples (a looped block is an audible tone).
+                    self.underruns += 1
+                    outdata[:] = 0.0
+                    return
+                pos = self._rf + np.arange(frames, dtype=np.float64) * ratio
+                base = pos.astype(np.int64)
+                frac = (pos - base).astype(np.float32)
+                i0 = base % cap
+                i1 = (base + 1) % cap
+                buf = self._buf[i0] * (1 - frac) + self._buf[i1] * frac
+                self._rf = float(pos[-1] + ratio)
+            buf *= 0.0 if self.muted else self.gain
             np.clip(buf, -1.0, 1.0, out=buf)
             outdata[:] = buf[:, None]
 
         self._in = sd.InputStream(samplerate=sr, blocksize=BLOCKSIZE, dtype="float32",
-                                  channels=1, device=input_dev, callback=in_cb)
+                                  channels=1, device=input_dev, callback=in_cb,
+                                  latency=LATENCY)
         self._out = sd.OutputStream(samplerate=sr, blocksize=BLOCKSIZE, dtype="float32",
-                                    channels=out_ch, device=output_dev, callback=out_cb)
+                                    channels=out_ch, device=output_dev, callback=out_cb,
+                                    latency=LATENCY)
         self._in.start()
         # Build a cushion before opening the output so it never starves on frame 1.
         prefill = int(PREFILL_SECONDS * sr)
         deadline = time.monotonic() + 0.5
-        while self._ring.filled < prefill and time.monotonic() < deadline:
+        while self._w < prefill and time.monotonic() < deadline:
             time.sleep(0.005)
         self._out.start()
 
@@ -224,7 +286,11 @@ class AudioMonitor:
                 except Exception:
                     pass
         self._in = self._out = None
-        self._ring = None
+        with self._block:
+            self._buf = None
+            self._w = 0
+            self._rf = 0.0
+            self._integ = 0.0
         self._scope.clear()
         self.peak = 0.0
         self.rms = 0.0

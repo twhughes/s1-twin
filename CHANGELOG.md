@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.2.x — 2026-07-28 (glitch-free monitor)
+
+- **Drift-servo audio monitor**: the S-1→output bridge now resamples through
+  the ring at a servo'd ratio (P + slow integrator on ring depth) instead of
+  dropping/zero-padding whole blocks when the two devices' clocks drift
+  (~0.5-1% measured). Kills the ~20 Hz grinding on held notes. Underruns emit
+  silence and hold the read position — never replay stale samples (a looped
+  block rings at SR/block Hz, an audible ghost tone). Streams open with 12 ms
+  device-side buffers; steady latency ≈ 35 ms (was ~150 ms prefill + creep).
+  Debugged live on the practice rig — standalone twin: `music/tools/s1_rig.py`.
+
 ## 0.2.x — 2026-07-06 (autonomous polish run)
 
 - **The librarian**: patterns read back *from* the S-1. `LOAD FROM S-1` card

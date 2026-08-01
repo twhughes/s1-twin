@@ -95,14 +95,14 @@ expect 400 and assert no file was created outside the bank dir.
 
 **Problem:** (a) `refreshPatches` interpolates `p.name` into `innerHTML` and into
 `data-*` attributes unescaped — stored XSS. (b) No CORS/origin policy: any web page
-can drive `localhost:8765` (DNS rebinding / CSRF). (c) `/api/target` reads the whole
+can drive `localhost:8766` (DNS rebinding / CSRF). (c) `/api/target` reads the whole
 upload into memory with no size cap (`server.py:201-208`).
 
 **Fix:**
 - Build patch rows with `document.createElement` + `textContent` (no innerHTML for
   user data).
 - Add middleware rejecting requests whose `Host`/`Origin` isn't
-  `127.0.0.1:8765`/`localhost:8765` (allow missing Origin for same-origin GETs).
+  `127.0.0.1:8766`/`localhost:8766` (allow missing Origin for same-origin GETs).
 - Reject uploads over ~50 MB (check `Content-Length` and/or read in chunks).
 
 **Verify:** test that a request with `Origin: https://evil.example` gets 403; test

@@ -23,7 +23,7 @@ from synth.prm import PrmFile
 from synth.web.server import app
 from tests.fakes import FakeMidiWorld
 
-BASE_URL = "http://127.0.0.1:8765"
+BASE_URL = "http://127.0.0.1:8766"
 
 
 @pytest.fixture

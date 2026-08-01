@@ -46,7 +46,7 @@ from ..schema import (
 from ..sequence import MAX_STEPS
 from .state import MatchAlreadyRunning, MatchState, studio_available
 
-HOST, PORT = "127.0.0.1", 8765
+HOST, PORT = "127.0.0.1", 8766
 MAX_UPLOAD_BYTES = 50 * 1024 * 1024
 
 CLIENT_ERRORS: tuple[type[Exception], ...] = (RuntimeError, ValueError)
@@ -104,7 +104,7 @@ async def _origin_guard(request: Request, call_next):
     """Reject cross-origin/DNS-rebinding requests.
 
     The server drives MIDI hardware and writes files; any web page the user
-    visits can otherwise fire requests at localhost:8765.
+    visits can otherwise fire requests at localhost:8766.
     """
     host = request.headers.get("host", "")
     origin = request.headers.get("origin")

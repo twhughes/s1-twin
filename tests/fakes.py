@@ -17,7 +17,8 @@ class FakeStream:
     """
 
     def __init__(self, samplerate=None, blocksize=None, dtype=None,
-                 channels=1, device=None, callback=None):
+                 channels=1, device=None, callback=None, latency=None):
+        self.latency = latency
         self.samplerate = samplerate
         self.blocksize = blocksize
         self.channels = channels

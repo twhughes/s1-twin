@@ -267,14 +267,16 @@ function connectStateWS() {
 }
 
 // ── synesthesia note colors ───────────────────────────────
-/* Tyler's note-name → color mapping (candidate hex — tune by ear/eye):
- * A red · B brown · C white-blue · D blue-white · E neon green ·
- * F pastel red · G blue; sharps run brighter. "legible" trades fidelity
+/* Tyler's note-name → color mapping (stated 2026-07-28, no longer a guess):
+ * A lighter red · B light brown · C white/light grey · D light grey, blue
+ * side · E almost neon green · F darker red · G darker blue. A sharp
+ * brightens the color, a flat darkens it — a 12-pc grid can't spell both,
+ * so black keys render as sharps (brightened). "legible" trades fidelity
  * for distinctness: 12 evenly-spaced hues, octave-invariant, A anchored
  * red. "off" restores the plain neon roll. Persisted in localStorage. */
 const TRUE_BASE = {
-  A: [224, 16, 16], B: [107, 74, 43], C: [220, 232, 255], D: [169, 199, 255],
-  E: [57, 255, 20], F: [255, 138, 138], G: [43, 91, 255],
+  A: [235, 92, 92], B: [181, 141, 102], C: [236, 236, 238], D: [178, 192, 216],
+  E: [57, 255, 20], F: [168, 24, 30], G: [36, 66, 168],
 };
 // pitch class (0 = C) -> [letter, sharp?]
 const PC_LETTER = [

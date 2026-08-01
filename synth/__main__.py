@@ -24,7 +24,7 @@ def main() -> None:
         "--host", default=None, help="Bind address (default: 127.0.0.1)",
     )
     parser.add_argument(
-        "--port", type=int, default=None, help="HTTP port (default: 8765)",
+        "--port", type=int, default=None, help="HTTP port (default: 8766)",
     )
     parser.add_argument(
         "--no-browser", action="store_true",

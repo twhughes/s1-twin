@@ -17,7 +17,7 @@ from synth.schema import S1_PARAMS
 from synth.web.server import app
 from tests.fakes import FakeMidiWorld
 
-BASE_URL = "http://127.0.0.1:8765"
+BASE_URL = "http://127.0.0.1:8766"
 
 
 @pytest.fixture
@@ -542,7 +542,7 @@ class TestSecurity:
         assert r.status_code == 403
 
     def test_allowed_origin_ok(self, client):
-        r = client.get("/api/status", headers={"origin": "http://127.0.0.1:8765"})
+        r = client.get("/api/status", headers={"origin": "http://127.0.0.1:8766"})
         assert r.status_code == 200
 
 

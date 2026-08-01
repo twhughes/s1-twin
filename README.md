@@ -75,14 +75,14 @@ file can also be uploaded directly.
 ## The agent door
 
 Everything a human can do in the UI is a documented endpoint — interactive
-docs at `http://127.0.0.1:8765/docs`. Read/set any parameter, patch and
+docs at `http://127.0.0.1:8766/docs`. Read/set any parameter, patch and
 sequence CRUD, transport, play notes, select device patterns, export .PRM.
 Live state (including physical knob twists) streams over the `/ws/state`
 WebSocket, which also accepts `param` and `note` messages back.
 
 ```bash
-curl -X PUT localhost:8765/api/params/74 -H 'content-type: application/json' -d '{"value": 90}'
-curl -X POST localhost:8765/api/notes -H 'content-type: application/json' -d '{"note": 60, "on": true}'
+curl -X PUT localhost:8766/api/params/74 -H 'content-type: application/json' -d '{"value": 90}'
+curl -X POST localhost:8766/api/notes -H 'content-type: application/json' -d '{"note": 60, "on": true}'
 ```
 
 ## Commands

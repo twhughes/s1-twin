@@ -2,10 +2,15 @@
 
 Owns app state and all hardware I/O, and brokers every live event:
 
-- Watches MIDI ports continuously. When an S-1 appears it connects, pushes
-  the full app state (the S-1 has no SysEx and cannot be queried — app state
-  is truth at connect time), and marks the session SYNCED. Unplug/replug is
-  handled without a restart.
+- Watches MIDI ports continuously. When an S-1 appears it connects
+  **listen-only** and marks the session LISTENING — it does *not* push app
+  state at the hardware. The S-1 has no SysEx and cannot be queried, so an
+  auto-push stomps the device's live patch with app state on every reconnect
+  or power cycle (audible wobble/chop — found live 2026-07-28). Sending the
+  full state is an explicit act: :meth:`S1Engine.push_all`, reached from
+  POST /api/push-all or the cockpit's "Push to S-1" button, which is what
+  marks the session SYNCED. Until then app state adopts the hardware via knob
+  twists. Unplug/replug is handled without a restart.
 - Streams incoming CCs (physical knob twists) into :class:`ParamState` and
   out to every subscriber (WebSocket clients).
 - Auto-detects non-S-1 MIDI input devices and forwards their notes to the
@@ -32,7 +37,8 @@ from .state import ParamState
 # Sync chip states.
 DISCONNECTED = "disconnected"
 CONNECTING = "connecting"
-SYNCED = "synced"
+LISTENING = "listening"   # connected, hardware untouched — app state not pushed
+SYNCED = "synced"         # push_all has run; app state and device agree
 
 S1_PORT_MARKER = "s-1"
 
@@ -125,9 +131,15 @@ class S1Engine:
                 self.set_param(cc, value, source=source)
 
     def push_all(self) -> None:
-        """Send the entire app state to the device (sync-on-connect)."""
+        """Send the entire app state to the device, one CC each.
+
+        EXPLICIT only — never called on connect: it overwrites whatever patch
+        the hardware is currently holding. Marks the session SYNCED.
+        """
         for cc, value in self.params.snapshot().items():
             self.midi.send_cc(cc, value)
+        if self.midi.connected:
+            self._set_sync(SYNCED)
 
     # ── notes / patterns ─────────────────────────────────────
     def note_on(self, note: int, velocity: int = 100) -> bool:
@@ -239,16 +251,18 @@ class S1Engine:
             self._set_sync(DISCONNECTED)
             return
 
-        # An S-1 appeared: connect and push the whole app state.
+        # An S-1 appeared: connect LISTEN-ONLY. No CC is sent — auto-pushing
+        # app state stomped the hardware's live patch on every reconnect and
+        # power cycle. Pushing is explicit (POST /api/push-all / cockpit
+        # button); until then app state adopts the hardware's knob twists.
         self._set_sync(CONNECTING)
         try:
             self.midi.connect(s1_port)
-            self.push_all()
         except Exception:
             self.midi.drop_ports()
             self._set_sync(DISCONNECTED)
             return
-        self._set_sync(SYNCED)
+        self._set_sync(LISTENING)
 
     def _tick_incoming_cc(self) -> None:
         if not self.midi.connected:

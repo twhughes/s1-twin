@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import os
 import threading
 from pathlib import Path
 from typing import Literal
@@ -46,7 +47,8 @@ from ..schema import (
 from ..sequence import MAX_STEPS
 from .state import MatchAlreadyRunning, MatchState, studio_available
 
-HOST, PORT = "127.0.0.1", 8766
+HOST = "127.0.0.1"
+PORT = int(os.environ.get("SYNTH_PORT", "8766"))   # PORTS.md; SYNTH_PORT overrides
 MAX_UPLOAD_BYTES = 50 * 1024 * 1024
 
 CLIENT_ERRORS: tuple[type[Exception], ...] = (RuntimeError, ValueError)
@@ -188,9 +190,22 @@ def get_state() -> dict:
 
 @app.get("/api/status", tags=["state"], summary="Connection and service status")
 def get_status() -> dict:
-    """Sync chip state (disconnected/connecting/synced), S-1 port, detected
-    keyboards, monitor and transport status, and studio availability."""
+    """Sync chip state (disconnected/connecting/listening/synced), S-1 port,
+    detected keyboards, monitor and transport status, and studio availability."""
     return {**eng().status(), "studio": studio_available()}
+
+
+@app.post("/api/push-all", tags=["state"], summary="Push the whole app state to the S-1")
+def push_all() -> dict:
+    """Send every CC in app state to the hardware and mark the session SYNCED.
+
+    Deliberately explicit: connecting is listen-only, because auto-pushing
+    overwrites whatever patch the S-1 is currently holding. Call this (or hit
+    the cockpit's "Push to S-1" button) when you want the app to win.
+    """
+    engine = eng()
+    engine.push_all()
+    return {"pushed": len(engine.params.snapshot()), "sync": engine.sync_state}
 
 
 class ParamValue(BaseModel):

@@ -7,7 +7,7 @@ import sys
 import mido
 import pytest
 
-from synth.engine import CONNECTING, DISCONNECTED, SYNCED, S1Engine
+from synth.engine import CONNECTING, DISCONNECTED, LISTENING, SYNCED, S1Engine
 from synth.schema import S1_PARAMS
 from tests.fakes import FakeMidiWorld, FakeSounddevice
 
@@ -36,14 +36,28 @@ def plug_s1(world):
     return world.outputs["S-1 MIDI IN"], world.inputs["S-1 MIDI OUT"]
 
 
-# ── G4: connect → push-all ───────────────────────────────────
+# ── G4: connect → LISTEN-ONLY (never push) ───────────────────
 class TestAutoConnect:
     def test_starts_disconnected(self, engine):
         assert engine.sync_state == DISCONNECTED
 
-    def test_connects_and_pushes_all_when_s1_appears(self, engine, world, events):
+    def test_connects_listen_only_when_s1_appears(self, engine, world, events):
+        """Connect must not touch the hardware.
+
+        The inverse of the old push-on-connect policy: auto-pushing app state
+        stomped whatever patch the S-1 was holding on every reconnect and
+        power cycle (audible wobble/chop, found live 2026-07-28).
+        """
         out, _ = plug_s1(world)
         engine._tick()
+        assert engine.sync_state == LISTENING
+        assert engine.midi.connected
+        assert [m for m in out.sent if m.type == "control_change"] == []
+
+    def test_explicit_push_all_sends_every_cc(self, engine, world):
+        out, _ = plug_s1(world)
+        engine._tick()
+        engine.push_all()
         assert engine.sync_state == SYNCED
         ccs_sent = [m for m in out.sent if m.type == "control_change"]
         assert {m.control for m in ccs_sent} == {p.cc for p in S1_PARAMS}
@@ -55,7 +69,14 @@ class TestAutoConnect:
         plug_s1(world)
         engine._tick()
         states = [e["state"] for e in events if e["type"] == "sync"]
-        assert states == [CONNECTING, SYNCED]
+        assert states == [CONNECTING, LISTENING]
+
+    def test_push_all_publishes_synced(self, engine, world, events):
+        plug_s1(world)
+        engine._tick()
+        events.clear()
+        engine.push_all()
+        assert [e["state"] for e in events if e["type"] == "sync"] == [SYNCED]
 
     def test_no_s1_no_connect(self, engine, world):
         world.add_device(out_name="KeyStep 32", in_name="KeyStep 32")
@@ -66,6 +87,7 @@ class TestAutoConnect:
     def test_push_uses_synth_channel_3(self, engine, world):
         out, _ = plug_s1(world)
         engine._tick()
+        engine.push_all()
         assert all(m.channel == 2 for m in out.sent if m.type == "control_change")
 
 
@@ -113,7 +135,8 @@ class TestReconnect:
         assert engine.sync_state == DISCONNECTED
         assert not engine.midi.connected
 
-    def test_replug_reconnects_and_repushes(self, engine, world):
+    def test_replug_reconnects_without_repushing(self, engine, world):
+        """Replug is the case that made auto-push audible — it stays silent."""
         out, _ = plug_s1(world)
         engine._tick()
         world.remove_device("S-1 MIDI IN", "S-1 MIDI OUT")
@@ -121,7 +144,10 @@ class TestReconnect:
 
         out2, _ = plug_s1(world)
         engine._tick()
-        assert engine.sync_state == SYNCED
+        assert engine.sync_state == LISTENING
+        assert [m for m in out2.sent if m.type == "control_change"] == []
+        # ...and an explicit push still reaches the fresh port.
+        engine.push_all()
         assert {m.control for m in out2.sent if m.type == "control_change"} == {
             p.cc for p in S1_PARAMS
         }
@@ -135,6 +161,11 @@ class TestReconnect:
         assert engine.params.get(74) == 10
 
     def test_state_survives_reconnect(self, engine, world):
+        """App state survives a reconnect — but is no longer *sent* on one.
+
+        Inverted from the old push-on-connect policy: the value is still held
+        and reaches the device the moment a push is asked for.
+        """
         plug_s1(world)
         engine._tick()
         engine.set_param(74, 33)
@@ -142,8 +173,12 @@ class TestReconnect:
         engine._tick()
         out2, _ = plug_s1(world)
         engine._tick()
+        assert engine.params.get(74) == 33
+        assert [m for m in out2.sent if m.type == "control_change"] == []
+
+        engine.push_all()
         cutoff = [m for m in out2.sent if m.type == "control_change" and m.control == 74]
-        assert cutoff[-1].value == 33  # app state is truth on reconnect
+        assert cutoff[-1].value == 33
 
 
 # ── param setting (UI / agent side) ──────────────────────────
@@ -330,9 +365,9 @@ class TestWatcherThread:
         e.start()
         plug_s1(world)
         deadline = time.monotonic() + 2.0
-        while e.sync_state != SYNCED and time.monotonic() < deadline:
+        while e.sync_state != LISTENING and time.monotonic() < deadline:
             time.sleep(0.01)
-        assert e.sync_state == SYNCED
+        assert e.sync_state == LISTENING
         e.stop()
         assert e._thread is None
 

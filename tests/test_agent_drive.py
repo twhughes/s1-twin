@@ -143,8 +143,10 @@ class TestAgentSession:
         agent.put("/api/params/73", json={"value": 96})
         assert agent.get("/api/params/73").json()["value"] == 96
         assert agent.get("/api/state").json()["params"]["73"] == 96
-        status = agent.get("/api/status").json()
-        assert status["sync"] == "synced"
+        # Connect is listen-only; the agent syncs when it decides to.
+        assert agent.get("/api/status").json()["sync"] == "listening"
+        agent.post("/api/push-all")
+        assert agent.get("/api/status").json()["sync"] == "synced"
 
     def test_agent_hears_knob_twists_over_ws(self, agent, engine, world):
         """Two-way: the agent subscribes and sees a physical knob move."""

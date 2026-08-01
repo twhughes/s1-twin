@@ -15,12 +15,20 @@ Mirrors the device 1:1, organized exactly as the hardware:
 - PRM-only parameters (no CC equivalent; reachable only through .PRM pattern
   files) form a third tier: :data:`PRM_PARAMS`. The set below is what the
   community has decoded so far; completing it is the M3 librarian milestone.
+
+The 54 CC parameters themselves live in ``data/s1.json`` — the canonical
+device file, shared with the music project (which vendors a copy at
+``music/music/instrument/backends/s1.json``; a drift test on each side keeps
+them honest). Edit the JSON, never a Python literal. The PRM tier below stays
+in Python: it has no CC and no second consumer.
 """
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass, field
 from enum import Enum
+from pathlib import Path
 
 
 class AccessLevel(Enum):
@@ -74,192 +82,52 @@ class S1Param:
         return _label_for_value(self.value_labels, value)
 
 
-_ON_OFF = {0: "Off", 127: "On"}
-
 # ──────────────────────────────────────────────────────────────
-# All 54 CC parameters, grouped by faceplate section.
-# Defaults: factory init patch (InitPatch.prm), PRM→CC scaled.
+# All 54 CC parameters, loaded from the canonical device file.
+#
+# ``data/s1.json`` is the single source of truth for the CC table and is
+# shared with the music project (vendored copy + drift test). Everything the
+# two projects need lives there: the CC map, ranges, factory-init defaults
+# (chord-voice key shifts centered), value labels, access level, menu code,
+# control type and the k/s kind tag.
 # ──────────────────────────────────────────────────────────────
 
-S1_PARAMS: tuple[S1Param, ...] = (
-    # ── LFO ── [RATE] and [WAVE FORM] knobs; MODE/SYNC on shift.
-    S1Param("Rate", 3, "LFO", AccessLevel.PANEL, default=60,
-            description="LFO/random speed. With LFO Sync on, selects a note length instead."),
-    S1Param("Waveform", 12, "LFO", AccessLevel.PANEL, ControlType.DISCRETE,
-            max_val=5, default=2,
-            value_labels={0: "Saw", 1: "Inv Saw", 2: "Triangle", 3: "Square",
-                          4: "Random", 5: "Noise"},
-            description="Modulator output signal (LFO shapes, random, or noise)."),
-    S1Param("Mode", 79, "LFO", AccessLevel.SHIFT, ControlType.DISCRETE,
-            max_val=1, default=0, menu_item="LFO.N",
-            value_labels={0: "Normal", 1: "Fast"},
-            description="LFO speed range; Fast raises the cycle to extremes. "
-                        "Disabled while LFO Sync is on. SHIFT + [RATE]."),
-    S1Param("Sync", 106, "LFO", AccessLevel.SHIFT, ControlType.DISCRETE,
-            max_val=1, default=0, menu_item="LFO.S",
-            value_labels={0: "Off", 1: "On"},
-            description="Sync the LFO cycle to the tempo (v1.02+). SHIFT + [WAVE FORM]."),
-    S1Param("Key Trigger", 105, "LFO", AccessLevel.MENU, ControlType.DISCRETE,
-            max_val=1, default=0, menu_item="LFO.K",
-            value_labels={0: "Off", 1: "On"},
-            description="Reset the LFO whenever a note sounds."),
+S1_JSON_PATH = Path(__file__).parent / "data" / "s1.json"
 
-    # ── OSC ── source mixer knobs + RANGE/LFO; draw/chop and switches on shift.
-    S1Param("Range", 14, "OSC", AccessLevel.PANEL, ControlType.DISCRETE,
-            max_val=5, default=2,
-            value_labels={0: "64'", 1: "32'", 2: "16'", 3: "8'", 4: "4'", 5: "2'"},
-            description="Oscillator frequency range in octaves (footage)."),
-    S1Param("LFO Depth", 13, "OSC", AccessLevel.PANEL, default=0,
-            description="Pitch modulation intensity from the LFO section."),
-    S1Param("Square Level", 19, "OSC", AccessLevel.PANEL, default=127,
-            description="Level of the square wave (or the OSC DRAW waveform)."),
-    S1Param("Saw Level", 20, "OSC", AccessLevel.PANEL, default=0,
-            description="Level of the sawtooth wave."),
-    S1Param("Sub Level", 21, "OSC", AccessLevel.PANEL, default=0,
-            description="Level of the sub oscillator."),
-    S1Param("Noise Level", 23, "OSC", AccessLevel.PANEL, default=0,
-            description="Level of the noise source (riser control when Riser Mode is on)."),
-    S1Param("Pulse Width", 15, "OSC", AccessLevel.SHIFT, default=0,
-            description="Square pulse width value, or PWM depth when the source "
-                        "is LFO/Envelope. SHIFT + [PWM DEPTH] pad."),
-    S1Param("PWM Source", 16, "OSC", AccessLevel.SHIFT, ControlType.DISCRETE,
-            max_val=2, default=2,
-            value_labels={0: "Envelope", 1: "Manual", 2: "LFO"},
-            description="Pulse-width control source. SHIFT + [PWM SRC] pad."),
-    S1Param("Fine Tune", 76, "OSC", AccessLevel.SHIFT, default=64,
-            display_format="signed64",
-            description="Pitch within ±1 octave. SHIFT + [RANGE]."),
-    S1Param("Sub Oct Type", 22, "OSC", AccessLevel.SHIFT, ControlType.DISCRETE,
-            max_val=2, default=2,
-            value_labels={0: "-2 Oct Asym", 1: "-2 Oct", 2: "-1 Oct"},
-            description="Sub-oscillator output waveform. SHIFT + [SUB OCT] pad."),
-    S1Param("Noise Mode", 78, "OSC", AccessLevel.SHIFT, ControlType.DISCRETE,
-            max_val=1, default=0, menu_item="nS.Nd",
-            value_labels={0: "Pink", 1: "White"},
-            description="Noise output type. SHIFT + [NOISE] (or menu nS.Nd)."),
-    S1Param("Draw Switch", 107, "OSC", AccessLevel.SHIFT, ControlType.DISCRETE,
-            max_val=2, default=0,
-            value_labels={0: "Off", 1: "Step", 2: "Slope"},
-            description="OSC DRAW original-waveform mode. SHIFT + saw [LEVEL] knob."),
-    S1Param("Draw Multiply", 102, "OSC", AccessLevel.PANEL,
-            min_val=3, default=3, display_format="mult",
-            description="OSC DRAW frequency multiplier ×1.0-×32.0 (pulse-width "
-                        "knob while Draw Switch is Step/Slope)."),
-    S1Param("Chop Overtone", 103, "OSC", AccessLevel.SHIFT,
-            default=50, display_format="chop200",
-            description="OSC CHOP overtone amount (0-200 display). SHIFT + [LFO]. "
-                        "Audible only when a chop grid mask is engaged."),
-    S1Param("Chop Comb", 104, "OSC", AccessLevel.SHIFT,
-            min_val=3, default=3, display_format="mult",
-            description="OSC CHOP comb frequency ×1.0-×32.0. SHIFT + [SUB]."),
 
-    # ── FILTER ── FREQ/RESO/LFO/ENV knobs; key follow on shift.
-    S1Param("Frequency", 74, "FILTER", AccessLevel.PANEL, default=127,
-            description="Low-pass filter cutoff point."),
-    S1Param("Resonance", 71, "FILTER", AccessLevel.PANEL, default=0,
-            description="Emphasis around the cutoff point; maximum self-oscillates."),
-    S1Param("LFO Depth", 25, "FILTER", AccessLevel.PANEL, default=0,
-            description="Cutoff modulation intensity from the LFO section."),
-    S1Param("Env Depth", 24, "FILTER", AccessLevel.PANEL, default=0,
-            description="Cutoff modulation intensity from the envelope."),
-    S1Param("Key Follow", 26, "FILTER", AccessLevel.SHIFT, default=0,
-            description="Cutoff tracks keyboard pitch (255 display = perfect "
-                        "follow). SHIFT + pad 7 (FILTER KYBD)."),
+def load_device_file(path: Path | str | None = None) -> dict:
+    """Read the canonical S-1 device file (the raw JSON document)."""
+    with open(path or S1_JSON_PATH, encoding="utf-8") as fh:
+        return json.load(fh)
 
-    # ── AMP ── level control source.
-    S1Param("Env Mode", 28, "AMP", AccessLevel.SHIFT, ControlType.DISCRETE,
-            max_val=1, default=1,
-            value_labels={0: "Gate", 1: "Envelope"},
-            description="Control the amp with the gate signal or the envelope. "
-                        "SHIFT + [AMP] pad."),
 
-    # ── ENV ── ADSR knobs; trigger mode on shift.
-    S1Param("Attack", 73, "ENV", AccessLevel.PANEL, default=0,
-            description="Time to reach peak level after note-on."),
-    S1Param("Decay", 75, "ENV", AccessLevel.PANEL, default=42,
-            description="Time from peak down to the sustain level."),
-    S1Param("Sustain", 30, "ENV", AccessLevel.PANEL, default=25,
-            description="Held level while the key stays down."),
-    S1Param("Release", 72, "ENV", AccessLevel.PANEL, default=21,
-            description="Time to silence after note-off."),
-    S1Param("Trigger Mode", 29, "ENV", AccessLevel.SHIFT, ControlType.DISCRETE,
-            max_val=2, default=2,
-            value_labels={0: "LFO", 1: "Gate", 2: "Gate+Trig"},
-            description="Which signal (re)triggers the envelope. SHIFT + [ENV TRG] pad."),
+def _param_from_json(entry: dict) -> S1Param:
+    """One JSON entry -> the S1Param the rest of the app already expects."""
+    labels = {int(k): v for k, v in (entry.get("value_labels") or {}).items()}
+    return S1Param(
+        name=entry["name"],
+        cc=entry["cc"],
+        section=entry["section"],
+        access=AccessLevel(entry["access"]),
+        control_type=ControlType(entry["control_type"]),
+        min_val=entry["min"],
+        max_val=entry["max"],
+        default=entry["default"],
+        description=entry.get("description", ""),
+        value_labels=labels,
+        display_format=entry.get("format") or "",
+        menu_item=entry.get("menu_item") or "",
+    )
 
-    # ── EFX ── DELAY/REVERB knobs (level normal, time on shift); chorus in menu.
-    S1Param("Delay Level", 92, "EFX", AccessLevel.PANEL, default=0,
-            description="Delay send volume ([DELAY] knob)."),
-    S1Param("Delay Time", 90, "EFX", AccessLevel.SHIFT, default=87,
-            description="Delay time (1-740 ms, or a note value when Delay Sync "
-                        "is on). SHIFT + [DELAY]."),
-    S1Param("Reverb Level", 91, "EFX", AccessLevel.PANEL, default=0,
-            description="Reverb volume ([REVERB] knob)."),
-    S1Param("Reverb Time", 89, "EFX", AccessLevel.SHIFT, default=100,
-            description="Reverberation length. SHIFT + [REVERB]."),
-    S1Param("Chorus", 93, "EFX", AccessLevel.MENU, ControlType.DISCRETE,
-            max_val=4, default=0, menu_item="Cho",
-            value_labels={0: "Off", 1: "Type 1", 2: "Type 2", 3: "Type 3", 4: "Type 4"},
-            description="Chorus type: 1 standard, 2 faster, 3 rotary-like, 4 relaxed."),
 
-    # ── CONTROLLER ── POLY / chord / portamento / transpose pads; bend & mod in menu.
-    S1Param("Polyphony", 80, "CONTROLLER", AccessLevel.SHIFT, ControlType.DISCRETE,
-            max_val=3, default=2,
-            value_labels={0: "Mono", 1: "Unison", 2: "Poly", 3: "Chord"},
-            description="How the sound source is triggered. SHIFT + [POLY] pad."),
-    S1Param("Voice 2 Switch", 81, "CONTROLLER", AccessLevel.SHIFT, ControlType.SWITCH,
-            default=127, value_labels=_ON_OFF,
-            description="Chord mode: voice 2 on/off."),
-    S1Param("Voice 3 Switch", 82, "CONTROLLER", AccessLevel.SHIFT, ControlType.SWITCH,
-            default=127, value_labels=_ON_OFF,
-            description="Chord mode: voice 3 on/off."),
-    S1Param("Voice 4 Switch", 83, "CONTROLLER", AccessLevel.SHIFT, ControlType.SWITCH,
-            default=127, value_labels=_ON_OFF,
-            description="Chord mode: voice 4 on/off."),
-    S1Param("Voice 2 Key Shift", 85, "CONTROLLER", AccessLevel.SHIFT,
-            default=76, display_format="signed64",
-            description="Chord mode: voice 2 transpose (hardware range ±12 semitones)."),
-    S1Param("Voice 3 Key Shift", 86, "CONTROLLER", AccessLevel.SHIFT,
-            default=71, display_format="signed64",
-            description="Chord mode: voice 3 transpose (hardware range ±12 semitones)."),
-    S1Param("Voice 4 Key Shift", 87, "CONTROLLER", AccessLevel.SHIFT,
-            default=69, display_format="signed64",
-            description="Chord mode: voice 4 transpose (hardware range ±12 semitones)."),
-    S1Param("Portamento", 65, "CONTROLLER", AccessLevel.SHIFT, ControlType.SWITCH,
-            default=0, value_labels=_ON_OFF,
-            description="Standard MIDI portamento switch."),
-    S1Param("Portamento Mode", 31, "CONTROLLER", AccessLevel.SHIFT, ControlType.DISCRETE,
-            max_val=2, default=0,
-            value_labels={0: "Off", 1: "Auto", 2: "On"},
-            description="Off / Auto (legato only) / On. SHIFT + [PORTA ON] pad."),
-    S1Param("Portamento Time", 5, "CONTROLLER", AccessLevel.SHIFT, default=15,
-            description="Glide time between pitches. SHIFT + [PORTA TIME] pad."),
-    S1Param("Transpose", 77, "CONTROLLER", AccessLevel.SHIFT, default=64,
-            display_format="signed64",
-            description="Tonal range ±60 half steps. SHIFT + [STEP]. Menu trAn.",
-            menu_item="trAn"),
-    S1Param("LFO Mod Depth", 17, "CONTROLLER", AccessLevel.MENU, default=15,
-            menu_item="Nod.d",
-            description="Vibrato/growl depth applied from the LFO when "
-                        "modulation (mod wheel / D-MOTION) is used."),
-    S1Param("Osc Bend Sens", 18, "CONTROLLER", AccessLevel.MENU, default=20,
-            menu_item="bnd.o",
-            description="Pitch-bend range for the OSC (display 0-240; 120 = ±1 oct)."),
-    S1Param("Filter Bend Sens", 27, "CONTROLLER", AccessLevel.MENU, default=0,
-            menu_item="bnd.F",
-            description="Pitch-bend range for the filter cutoff."),
+_DEVICE = load_device_file()
 
-    # ── MIDI ── performance controls with no physical control on the S-1.
-    S1Param("Mod Wheel", 1, "MIDI", AccessLevel.EXTERNAL, default=0,
-            description="Modulation input (depth set by LFO Mod Depth)."),
-    S1Param("Pan", 10, "MIDI", AccessLevel.EXTERNAL, default=64,
-            display_format="signed64",
-            description="Stereo pan (also a D-MOTION destination)."),
-    S1Param("Expression", 11, "MIDI", AccessLevel.EXTERNAL, default=127,
-            description="Expression pedal volume."),
-    S1Param("Damper Pedal", 64, "MIDI", AccessLevel.EXTERNAL, ControlType.SWITCH,
-            default=0, value_labels=_ON_OFF,
-            description="Hold pedal."),
+#: The k/s tag per CC (CONTRACTS.md §6 in the music project) — carried in the
+#: device file so both projects read one table; unused by this app's UI.
+PARAM_KINDS: dict[int, str] = {e["cc"]: e["kind"] for e in _DEVICE["params"]}
+
+S1_PARAMS: tuple[S1Param, ...] = tuple(
+    _param_from_json(entry) for entry in _DEVICE["params"]
 )
 
 

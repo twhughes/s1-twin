@@ -59,10 +59,27 @@ class TestRealBackupRoundTrip:
         assert prm.get_int("TEMPO") == 10000  # 100.00 BPM, device-authored
         assert prm.step(64) is not None       # all 64 step lines present
 
+    #: CCs where the schema deliberately departs from the factory dump.
+    #: The chord-voice key shifts ship at 76/71/69 (+12/+7/+5); centered at 64
+    #: instead, because in chord mode the factory values overlay a transposed
+    #: copy on every note played (found live 2026-07-28).
+    DEPARTS_FROM_FACTORY = {85: 64, 86: 64, 87: 64}
+
     def test_template_matches_schema_defaults(self):
-        """G2's defaults came from this device dump — they must agree."""
+        """G2's defaults came from this device dump — they must agree,
+        except where the schema knowingly overrides it."""
         for cc, value in load_template().to_cc_values().items():
-            assert value == param_by_cc(cc).default, f"CC {cc}"
+            expected = self.DEPARTS_FROM_FACTORY.get(cc, value)
+            assert expected == param_by_cc(cc).default, f"CC {cc}"
+
+    def test_key_shift_override_is_the_only_departure(self):
+        """Pin the exception list: nothing else may drift from the dump."""
+        departures = {
+            cc: param_by_cc(cc).default
+            for cc, value in load_template().to_cc_values().items()
+            if param_by_cc(cc).default != value
+        }
+        assert departures == self.DEPARTS_FROM_FACTORY
 
 
 # ── scaling ──────────────────────────────────────────────────

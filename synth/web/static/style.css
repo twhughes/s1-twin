@@ -302,6 +302,8 @@ figure .btn { margin-top: 8px; }
 .chip.sync.off { color: var(--red); border-color: rgba(255,83,112,0.5); }
 .chip.sync.connecting .dot { background: var(--gold); box-shadow: 0 0 8px var(--gold); animation: pulse 0.8s infinite; }
 .chip.sync.connecting { color: var(--gold); border-color: rgba(255,184,108,0.5); }
+.chip.sync.listening .dot { background: var(--cyan); box-shadow: 0 0 8px var(--cyan); }
+.chip.sync.listening { color: var(--cyan); border-color: rgba(45,226,230,0.5); }
 .chip.sync.on .dot { background: var(--lime); box-shadow: 0 0 10px var(--lime); }
 .chip.sync.on { color: var(--lime); border-color: rgba(54,249,179,0.5); box-shadow: 0 0 14px rgba(54,249,179,0.25); }
 @keyframes pulse { 50% { opacity: 0.4; } }

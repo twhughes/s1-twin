@@ -192,9 +192,32 @@ function renderCockpit() {
 // ── header chips ──────────────────────────────────────────
 function setSyncChip(state, port) {
   const chip = $("sync-chip");
-  chip.className = "chip sync " + (state === "synced" ? "on" : state === "connecting" ? "connecting" : "off");
+  const cls = state === "synced" ? "on"
+    : state === "listening" ? "listening"
+    : state === "connecting" ? "connecting" : "off";
+  chip.className = "chip sync " + cls;
   $("sync-label").textContent = state.toUpperCase();
-  chip.title = port || "no S-1 MIDI port";
+  chip.title = state === "listening"
+    ? `${port || "S-1"} — listening; the app has not touched the device`
+    : (port || "no S-1 MIDI port");
+  // Pushing only makes sense once a port is actually open.
+  const btn = $("push-all");
+  if (btn) btn.disabled = !(state === "listening" || state === "synced");
+}
+
+// Explicit sync: connect is listen-only so the hardware's live patch survives
+// a reconnect; this is how the app deliberately wins.
+async function pushAllToS1() {
+  const btn = $("push-all");
+  if (btn) btn.disabled = true;
+  try {
+    const r = await api("POST", "/api/push-all");
+    toast(`pushed ${r.pushed} params to the S-1`);
+  } catch (e) {
+    toast(e.message, true);
+  } finally {
+    if (btn) btn.disabled = false;
+  }
 }
 
 function setAudioChip(mon) {
@@ -1133,6 +1156,8 @@ async function init() {
   bindScope();
   bindStudio();
   if (APP.studio) connectMatchWS();
+
+  $("push-all").onclick = pushAllToS1;
 
   $("mute").onclick = () =>
     api("POST", "/api/monitor/mute", { muted: !(APP.status?.monitor?.muted) })

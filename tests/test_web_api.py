@@ -139,6 +139,23 @@ class TestParams:
     def test_status_includes_studio_flag(self, client):
         assert "studio" in client.get("/api/status").json()
 
+    def test_push_all_route_is_the_explicit_sync(self, client, engine, world):
+        """POST /api/push-all is the only thing that pushes state at the S-1.
+
+        Connect leaves the device untouched (listen-only); this route is how
+        the cockpit's "Push to S-1" button makes the app win.
+        """
+        out = connect_s1(engine, world)
+        assert client.get("/api/status").json()["sync"] == "listening"
+        assert [m for m in out.sent if m.type == "control_change"] == []
+
+        body = client.post("/api/push-all").json()
+        assert body["pushed"] == len(S1_PARAMS)
+        assert body["sync"] == "synced"
+        sent = {m.control for m in out.sent if m.type == "control_change"}
+        assert sent == {p.cc for p in S1_PARAMS}
+        assert client.get("/api/status").json()["sync"] == "synced"
+
 
 # ── G3: patch bank round-trip through the browser API ───────
 class TestPatchBank:
@@ -524,11 +541,12 @@ class TestStateWebSocket:
         assert [(m.type, m.note) for m in notes] == [("note_on", 64), ("note_off", 64)]
 
     def test_sync_event_on_connect(self, client, engine, world):
+        """Connect is listen-only: the chip stops at 'listening', not 'synced'."""
         with client.websocket_connect("/ws/state") as ws:
             ws.receive_json()
             connect_s1(engine, world)
             states = [ws.receive_json()["state"] for _ in range(2)]
-            assert states == ["connecting", "synced"]
+            assert states == ["connecting", "listening"]
 
 
 # ── security ─────────────────────────────────────────────────

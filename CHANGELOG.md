@@ -1,5 +1,28 @@
 # Changelog
 
+## 0.3.x — 2026-08-01 (the table is data; connect is quiet)
+
+- **Canonical device file** `synth/data/s1.json`: the 54 CC parameters moved out
+  of a Python literal into JSON — CC, range, default, value labels, access
+  level, menu code, control type, and the k/s tag the music project consumes.
+  `schema.py` loads it at import and rebuilds the same `S1_PARAMS` (public API
+  unchanged). The music project vendors a copy of the `params` array; a drift
+  test on each side compares them. Edit the JSON, never a literal. The PRM-only
+  tier stays in Python — it has no CC and no second consumer.
+- **Chord-voice key shifts centered.** CC 85/86/87 now default to 64 instead of
+  the factory init patch's 76/71/69 (+12/+7/+5). In chord mode those overlay a
+  transposed copy on every note played — a synth that starts by transposing
+  itself is broken (found live 2026-07-28). It is the only sanctioned departure
+  from the device dump, and `test_prm.py` pins the exception list.
+- **Listen-only connect.** An S-1 appearing no longer triggers a push of app
+  state at the hardware: that stomped whatever patch the device was holding on
+  every reconnect and power cycle (audible wobble/chop). New sync state
+  `listening` (cyan chip) between `connecting` and `synced`; app state adopts
+  the hardware via knob twists until you say otherwise. Pushing is explicit —
+  `POST /api/push-all` or the cockpit's **PUSH TO S-1** button — and that is
+  what marks the session `synced`. Matches the music project's policy.
+- `SYNTH_PORT` env var overrides the 8766 bind; `--port` still wins over both.
+
 ## 0.2.x — 2026-07-28 (glitch-free monitor)
 
 - **Drift-servo audio monitor**: the S-1→output bridge now resamples through

@@ -5,6 +5,7 @@ chart v1.02 ("Knob assignments" manual page + midi.guide/d/roland/s-1).
 """
 
 from synth.schema import (
+    PARAM_KINDS,
     PRM_PARAMS,
     S1_PARAMS,
     SEQ_PARAMS,
@@ -13,6 +14,7 @@ from synth.schema import (
     ControlType,
     all_sections,
     all_seq_sections,
+    load_device_file,
     menu_params,
     panel_params,
     param_by_cc,
@@ -291,9 +293,11 @@ class TestDefaults:
         assert param_by_cc(76).default == 64    # fine tune centered
         assert param_by_cc(77).default == 64    # transpose 0
         assert param_by_cc(10).default == 64    # pan centered
-        assert param_by_cc(85).default == 76    # chord +12
-        assert param_by_cc(86).default == 71    # chord +7
-        assert param_by_cc(87).default == 69    # chord +5
+        # The chord-voice key shifts deliberately depart from the factory
+        # patch (76/71/69 = +12/+7/+5): see TestCanonicalDeviceFile.
+        assert param_by_cc(85).default == 64    # chord voice 2 centered
+        assert param_by_cc(86).default == 64    # chord voice 3 centered
+        assert param_by_cc(87).default == 64    # chord voice 4 centered
 
 
 class TestLabelForValue:
@@ -393,3 +397,54 @@ class TestSeqParams:
     def test_default_within_range(self):
         for p in SEQ_PARAMS:
             assert p.min_val <= p.default <= p.max_val, p.key
+
+
+# ──────────────────────────────────────────────────────────────
+# The canonical device file (data/s1.json) — drift guard.
+# ──────────────────────────────────────────────────────────────
+
+class TestCanonicalDeviceFile:
+    """The CC table is data now: ``synth/data/s1.json``.
+
+    The music project vendors a copy of this file; its own test compares the
+    two. This side pins the facts that made the file necessary.
+    """
+
+    def test_device_file_has_all_54_params(self):
+        doc = load_device_file()
+        assert len(doc["params"]) == 54
+        assert len(S1_PARAMS) == 54
+
+    def test_chord_voice_key_shifts_are_centered(self):
+        """CC 85/86/87 default to 64 — the fix, not the factory value.
+
+        The factory init patch ships 76/71/69 (+12/+7/+5 semitones). In chord
+        mode those overlay a transposed copy of every note played; a synth
+        that starts by transposing itself is broken (found live 2026-07-28).
+        """
+        for cc in (85, 86, 87):
+            param = param_by_cc(cc)
+            assert param is not None, cc
+            assert param.default == 64, f"CC {cc} key shift must be centered"
+
+    def test_loaded_table_matches_the_file(self):
+        entries = {e["cc"]: e for e in load_device_file()["params"]}
+        assert len(entries) == len(S1_PARAMS)
+        for param in S1_PARAMS:
+            entry = entries[param.cc]
+            assert param.name == entry["name"]
+            assert param.section == entry["section"]
+            assert param.min_val == entry["min"]
+            assert param.max_val == entry["max"]
+            assert param.default == entry["default"]
+            assert param.access.value == entry["access"]
+            assert param.control_type.value == entry["control_type"]
+
+    def test_every_param_carries_a_ks_kind(self):
+        """The k/s tag exists for the music project; it must stay complete."""
+        assert set(PARAM_KINDS) == {p.cc for p in S1_PARAMS}
+        assert set(PARAM_KINDS.values()) <= {"k", "s"}
+
+    def test_defaults_within_range(self):
+        for p in S1_PARAMS:
+            assert p.min_val <= p.default <= p.max_val, p.name

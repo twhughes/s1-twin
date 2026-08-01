@@ -143,7 +143,7 @@ delay + PC switching real slots.
 
 ### G8 — "Save to S-1": PRM export
 
-A Python PRM writer (`s1tui/prm.py`): serialize a patch + sequence into a valid
+A Python PRM writer (`synth/prm.py`): serialize a patch + sequence into a valid
 `S1_PTN<bank>-<num>.PRM` file. In the UI: a "Save to S-1" button → pick bank/slot →
 download/write the file → a guided walkthrough of the disk-mode ritual (hold PLAY
 on power-up, copy into `RESTORE/`, press HOLD, wait "dOnE"), ideally detecting the

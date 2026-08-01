@@ -13,7 +13,7 @@ after every item. Add the new tests called out in each item as you go, not at th
 
 ### 1.1 Make `MidiBackend` thread-safe and error-tolerant
 
-**Files:** `s1tui/midi_backend.py`, `s1tui/sequencer_engine.py`, `s1tui/app.py`
+**Files:** `synth/midi_backend.py`, `synth/sequencer_engine.py`, `synth/app.py`
 
 **Problem:** Three threads call `_output.send()` concurrently with no lock: the UI
 thread (`send_cc` via `_on_param_changed`, `app.py:247`), the sequencer thread
@@ -40,7 +40,7 @@ and clears `_playing` without an unhandled exception.
 
 ### 1.2 Guard shared sequence state during playback
 
-**Files:** `s1tui/sequencer_engine.py`, `s1tui/widgets/piano_roll.py`
+**Files:** `synth/sequencer_engine.py`, `synth/widgets/piano_roll.py`
 
 **Problem:** The engine thread iterates `seq.notes` (`sequencer_engine.py:120,145,102`)
 while the UI thread mutates the same list via piano-roll edits
@@ -59,7 +59,7 @@ note-off after stop).
 
 ### 1.3 CMA-ES crash on mid-generation stop
 
-**Files:** `s1tui/match/session.py:146-163`
+**Files:** `synth/match/session.py:146-163`
 
 **Problem:** The generation loop breaks early on `self._stop`, then calls
 `opt.tell(solutions[:len(losses)], losses)` with a partial population.
@@ -74,8 +74,8 @@ driver) calls `stop()` mid-generation, and asserts `run()` returns cleanly.
 
 ### 1.4 Path traversal in web patch/recording names
 
-**Files:** `s1tui/web/server.py:266-276`, `s1tui/web/state.py:156-164`,
-`s1tui/patches.py`
+**Files:** `synth/web/server.py:266-276`, `synth/web/state.py:156-164`,
+`synth/patches.py`
 
 **Problem:** Request-body `name` flows directly into `PATCH_DIR / f"{name}.json"` and
 `RECORDING_DIR / f"{name}.wav"`. `{"name": "../../../.zshrc", "overwrite": true}`
@@ -91,7 +91,7 @@ expect 400 and assert no file was created outside the bank dir.
 
 ### 1.5 Web: escape patch names, add origin check, cap upload size
 
-**Files:** `s1tui/web/static/app.js:341-346`, `s1tui/web/server.py`
+**Files:** `synth/web/static/app.js:341-346`, `synth/web/server.py`
 
 **Problem:** (a) `refreshPatches` interpolates `p.name` into `innerHTML` and into
 `data-*` attributes unescaped — stored XSS. (b) No CORS/origin policy: any web page
@@ -110,8 +110,8 @@ that an oversized upload gets 413.
 
 ### 1.6 Propagate match-thread errors; validate start params
 
-**Files:** `s1tui/web/state.py:191-211`, `s1tui/web/server.py:60-68,213-227`,
-`s1tui/web/static/app.js`
+**Files:** `synth/web/state.py:191-211`, `synth/web/server.py:60-68,213-227`,
+`synth/web/static/app.js`
 
 **Problem:** `_run` executes calibrate/run on a thread with no try/except and no error
 channel — any exception (including an invalid `optimizer` string, which is never
@@ -138,7 +138,7 @@ concurrent starts yield one 200 and one 409.
 
 ### 2.1 Live tempo + drift-free scheduling
 
-**Files:** `s1tui/sequencer_engine.py:99-140`
+**Files:** `synth/sequencer_engine.py:99-140`
 
 **Problem:** `step_duration` is computed once before the loop, so BPM changes during
 playback do nothing; and the loop sleeps a fixed interval *after* doing per-step work,
@@ -154,7 +154,7 @@ an absolute clock: `next_tick += step_duration; self._stop_event.wait(max(0, nex
 
 ### 2.2 Fix same-pitch overlap note-off handling
 
-**Files:** `s1tui/sequencer_engine.py:23,122,142-156`
+**Files:** `synth/sequencer_engine.py:23,122,142-156`
 
 **Problem:** `_active_notes` is a set of bare pitches, so overlapping same-pitch notes
 kill each other early; `_process_note_offs` rescans all notes every step with fragile
@@ -169,7 +169,7 @@ note-off; the sustaining note must not be cut.
 
 ### 2.3 Wire up (or remove) the dead sequencer params
 
-**Files:** `s1tui/schema.py:177-215`, `s1tui/sequencer_engine.py`, `s1tui/app.py:261-269`
+**Files:** `synth/schema.py:177-215`, `synth/sequencer_engine.py`, `synth/app.py:261-269`
 
 **Problem:** `last_step`, `seq_gate`, `seq_shuffle`, `master_prob`, `seq_scale`, and
 both ARP params render as cards but the engine reads none of them — only tempo is
@@ -186,7 +186,7 @@ wired.
 
 ### 2.4 Panic key + clean disconnect
 
-**Files:** `s1tui/midi_backend.py`, `s1tui/app.py`
+**Files:** `synth/midi_backend.py`, `synth/app.py`
 
 **Fix:** Add `MidiBackend.all_notes_off()` (CC 123 on the active channel, plus
 explicit note-offs for engine `_active_notes`). Bind it to a key (suggest `!` or
@@ -196,7 +196,7 @@ explicit note-offs for engine `_active_notes`). Bind it to a key (suggest `!` or
 
 ### 2.5 Save piano-roll edits to MIDI
 
-**Files:** `s1tui/app.py`, `s1tui/sequence.py:117`, `s1tui/screens/`
+**Files:** `synth/app.py`, `synth/sequence.py:117`, `synth/screens/`
 
 **Problem:** `save_midi` exists and is imported but nothing calls it — edits are lost.
 
@@ -212,7 +212,7 @@ writing via `save_midi`. Update README key table.
 
 ### 3.1 Silence penalty
 
-**Files:** `s1tui/match/capture.py:150-153`, `s1tui/match/session.py`
+**Files:** `synth/match/capture.py:150-153`, `synth/match/session.py`
 
 **Problem:** A silent candidate (closed VCA — common early in a search) yields all-zero
 features that can score a *low* loss against quiet targets, rewarding silence.
@@ -224,7 +224,7 @@ features that can score a *low* loss against quiet targets, rewarding silence.
 
 ### 3.2 Calibrate with a known-bright patch
 
-**Files:** `s1tui/match/driver.py:98-115`
+**Files:** `synth/match/driver.py:98-115`
 
 **Problem:** `calibrate()` measures latency using whatever patch is on the synth; a
 slow-attack patch mis-measures latency and misaligns every subsequent probe.
@@ -237,7 +237,7 @@ candidate apply overwrites anyway).
 
 ### 3.3 Evaluation cache
 
-**Files:** `s1tui/match/session.py:143-160`, `s1tui/match/space.py`
+**Files:** `synth/match/session.py:143-160`, `synth/match/space.py`
 
 **Problem:** Discrete snapping in `space.decode` means CMA repeatedly samples vectors
 that decode to already-probed CC dicts; each redundant probe costs ~2 s of hardware
@@ -251,8 +251,8 @@ probe once.
 
 ### 3.4 Probe robustness (device errors, empty best)
 
-**Files:** `s1tui/match/capture.py:102-115`, `s1tui/match/session.py:106-113`,
-`s1tui/match/cli.py:117-128`
+**Files:** `synth/match/capture.py:102-115`, `synth/match/session.py:106-113`,
+`synth/match/cli.py:117-128`
 
 **Fix:**
 - Wrap per-probe record/wait in try/except: retry once, then assign the penalty loss
@@ -266,7 +266,7 @@ empty-best run exits nonzero and writes no patch file.
 
 ### 3.5 Normalize distance terms
 
-**Files:** `s1tui/match/distance.py:42-59`
+**Files:** `synth/match/distance.py:42-59`
 
 **Problem:** Terms mix L1 mean, RMS, and an arbitrary `/4.0` MFCC divisor, so the
 `Weights` don't express real relative importance.
@@ -293,7 +293,7 @@ weighting roughly equivalent (re-tune weights once, note values in a comment).
 
 ### 4.1 Per-match WebSocket state reset
 
-**Files:** `s1tui/web/server.py:313-327`, `s1tui/web/state.py`
+**Files:** `synth/web/server.py:313-327`, `synth/web/state.py`
 
 **Problem:** `sent_target` / `last_best_loss` are per-connection, but the client keeps
 one WS across matches — second match never re-renders the target spectrogram and
@@ -308,7 +308,7 @@ matches over one connection; assert the target spec is sent again for the second
 
 ### 4.2 Misc server fixes
 
-**Files:** `s1tui/web/server.py`, `s1tui/web/state.py`
+**Files:** `synth/web/server.py`, `synth/web/state.py`
 
 - `read_level` (`state.py:77`) returns peak as `rms_db` — return actual RMS from the
   monitor.
@@ -321,7 +321,7 @@ matches over one connection; assert the target spec is sent again for the second
 
 ### 4.3 Frontend polish
 
-**Files:** `s1tui/web/static/app.js`
+**Files:** `synth/web/static/app.js`
 
 - Show a visible "connection lost" state when the WS drops (and cap/backoff the 1 s
   reconnect loop).

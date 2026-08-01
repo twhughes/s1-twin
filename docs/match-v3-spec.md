@@ -5,7 +5,7 @@ is folded in here as Phase B). Execute with `/goal implement @docs/match-v3-spec
 
 ## Why
 
-The current matcher (`s1tui/match/`) blind-searches CC values with CMA-ES, probing the
+The current matcher (`synth/match/`) blind-searches CC values with CMA-ES, probing the
 real S-1 hundreds of times at ~2.3s each — 15-20 minutes per match, often not close.
 Two root causes:
 
@@ -50,13 +50,13 @@ closeness so improvement is measured, not asserted.
 You cannot tune what you can't measure, and you can't run the S-1 in CI. Build the
 scaffolding that lets every later phase report a number.
 
-**Files:** new `s1tui/match/corpus.py`, new `tests/test_match_corpus.py`, new
+**Files:** new `synth/match/corpus.py`, new `tests/test_match_corpus.py`, new
 `docs/match-benchmarks.md` (results log).
 
 **Changes:**
 - A `Target` record: audio clip + true f0 + (optional) ground-truth CC vector.
 - A **synthetic corpus generator**: for a set of known CC vectors, render/capture the
-  S-1's output once and cache the clips under `~/.s1tui/corpus/` so later runs score
+  S-1's output once and cache the clips under `~/.synth/corpus/` so later runs score
   against fixed audio with *no* hardware. Ship a small committed corpus of
   feature-only fixtures (no large WAVs in git) so CI can run the scoring math.
 - A `benchmark(matcher, corpus) -> {median_seconds, mean_closeness, probe_count,
@@ -70,7 +70,7 @@ numbers in `docs/match-benchmarks.md` as the baseline to beat.
 
 ## Phase A — pitch-aware probing + segmentation (biggest single accuracy win)
 
-**Files:** new `s1tui/match/analyze.py` (start it here), `match/driver.py`,
+**Files:** new `synth/match/analyze.py` (start it here), `match/driver.py`,
 `match/session.py`, `tests/test_match_engine.py`.
 
 **Changes:**
@@ -92,7 +92,7 @@ G4, not C3.
 Derive a full CC guess from the target audio alone, before touching the hardware. This
 is the old v2 spec, made concrete.
 
-**Files:** `s1tui/match/analyze.py` (extend), new `s1tui/match/estimate.py`,
+**Files:** `synth/match/analyze.py` (extend), new `synth/match/estimate.py`,
 `tests/test_estimate.py`.
 
 **Changes — analyze the target:**
@@ -125,7 +125,7 @@ and the ADSR/filter mappings on synthetic inputs.
 A cheap forward model `twin(cc_vector, note) -> features` calibrated to the real S-1, so
 the optimizer searches the *model* instead of the synth.
 
-**Files:** new `s1tui/match/twin.py`, `match/session.py` (new "twin-first" mode),
+**Files:** new `synth/match/twin.py`, `match/session.py` (new "twin-first" mode),
 `match/optimizer.py`, `tests/test_twin.py`.
 
 **Changes:**
@@ -134,7 +134,7 @@ the optimizer searches the *model* instead of the synth.
   `features.py` produces, so twin and hardware are directly comparable.
 - **Calibrate** the twin against a batch of real probes (reuse the Phase-0 corpus):
   fit the twin's free constants (filter Hz↔CC curve, env time↔CC curve, osc levels) so
-  `twin(cc)` ≈ real `S-1(cc)` in feature space. Cache calibration under `~/.s1tui/`.
+  `twin(cc)` ≈ real `S-1(cc)` in feature space. Cache calibration under `~/.synth/`.
 - New match flow: analyze (A) → estimate (B) → **descend the twin to the target**
   (gradient or CMA over the model, thousands of cheap evals) → **short hardware
   refinement** seeded at the twin's answer to close the sim-to-real gap, with early

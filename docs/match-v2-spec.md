@@ -30,7 +30,7 @@ Replace "CMA from schema defaults" with a three-stage pipeline. Stages 1–2 are
 pure DSP on the target clip (milliseconds, no hardware). Stage 3 is a *short*
 hardware polish around the analytic seed.
 
-### Stage 1 — target analysis (new module `s1tui/match/analyze.py`)
+### Stage 1 — target analysis (new module `synth/match/analyze.py`)
 
 All computed once from the target clip:
 

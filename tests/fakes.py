@@ -186,3 +186,54 @@ class FakeMidiWorld:
         port.closed = False
         port.callback = callback
         return port
+
+
+# ──────────────────────────────────────────────────────────────
+# Fake InstrumentBackend
+# ──────────────────────────────────────────────────────────────
+
+class FakeBackend:
+    """In-memory ``InstrumentBackend`` (music/CONTRACTS.md §6) for contract
+    tests — records every call instead of touching hardware.
+
+    Satisfies ``synth.backend_protocol.InstrumentBackend`` structurally. Use
+    :meth:`feed` to simulate an incoming knob move from the device.
+    """
+
+    def __init__(self) -> None:
+        self.connected = False
+        self.port_name: str | None = None
+        self.patch: dict[int, int] = {}       # last-known value per param
+        self.sent: list[tuple[int, int]] = []  # every (param, value) sent out
+        self.disconnects = 0
+        self._listeners: list = []
+
+    def connect(self, port: str) -> None:
+        self.connected = True
+        self.port_name = port
+
+    def disconnect(self) -> None:
+        self.connected = False
+        self.port_name = None
+        self.disconnects += 1
+
+    def push_all(self, patch: dict[int, int]) -> None:
+        for cc, value in patch.items():
+            self.patch[cc] = value
+            self.sent.append((cc, value))
+
+    def send(self, param: int, value: int) -> bool:
+        if not self.connected:
+            return False
+        self.patch[param] = value
+        self.sent.append((param, value))
+        return True
+
+    def on_incoming(self, cb) -> None:
+        self._listeners.append(cb)
+
+    # -- test helper ---------------------------------------------------------
+    def feed(self, param: int, value: int) -> None:
+        """Simulate the device reporting a parameter move to every listener."""
+        for cb in list(self._listeners):
+            cb(param, value)

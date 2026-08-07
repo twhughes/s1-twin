@@ -90,3 +90,52 @@ class TestParamState:
         state.set(74, 60, "midi")
         state.set(74, 70, "patch")
         assert sources == ["ui", "midi", "patch"]
+
+    def test_listener_may_unregister_during_notify(self):
+        """A listener that removes another listener mid-notify must not raise —
+        set() iterates a snapshot taken under the lock, not the live list."""
+        state = ParamState()
+        calls = []
+
+        def second(cc, val, src):
+            calls.append("second")
+
+        def first(cc, val, src):
+            calls.append("first")
+            if second in state._listeners:  # mutate during iteration, once
+                state.remove_listener(second)
+
+        state.add_listener(first)
+        state.add_listener(second)
+        state.set(74, 50)  # must not raise; snapshot keeps this pass stable
+        # second was still in the snapshot for this set, so both fired once.
+        assert calls == ["first", "second"]
+        calls.clear()
+        state.set(74, 60)  # second now gone
+        assert calls == ["first"]
+
+    def test_concurrent_add_listener_during_set(self):
+        """Registering a listener from another thread while set() fires must not
+        corrupt the list or raise (lock-guarded registration + iteration)."""
+        import threading
+
+        state = ParamState()
+        stop = threading.Event()
+
+        def noop(cc, val, src):
+            pass
+
+        def adder():
+            while not stop.is_set():
+                state.add_listener(noop)
+                state.remove_listener(noop)
+
+        state.add_listener(lambda cc, val, src: None)
+        t = threading.Thread(target=adder, daemon=True)
+        t.start()
+        try:
+            for i in range(2000):
+                state.set(74, i % 128)  # must never raise mid-iteration
+        finally:
+            stop.set()
+            t.join(timeout=2.0)

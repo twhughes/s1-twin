@@ -2,11 +2,21 @@
 
 from __future__ import annotations
 
+import logging
 import threading
+from typing import Callable
 
 import mido
 
+logger = logging.getLogger(__name__)
+
 ALL_NOTES_OFF_CC = 123
+
+# A port that has gone away raises OSError (mido's IOError is an alias). That is
+# the *expected* failure — a device unplug — and we handle it quietly. Anything
+# else is an unexpected bug and gets logged instead of vanishing (FABLE: no
+# silent swallow).
+_PORT_GONE = OSError
 
 
 class MidiBackend:
@@ -26,6 +36,8 @@ class MidiBackend:
         self._port_name: str | None = None
         self._channel: int = 0  # 0-indexed
         self._lock = threading.RLock()
+        # Callbacks registered via on_incoming(); poll_input() drives them.
+        self._incoming_listeners: list[Callable[[int, int], None]] = []
 
     @staticmethod
     def list_output_ports() -> list[str]:
@@ -68,20 +80,31 @@ class MidiBackend:
             inputs = self.input_names()
             # First try exact match
             if port_name in inputs:
-                try:
-                    self._input = self._mido.open_input(port_name)
-                except Exception:
-                    pass
+                self._input = self._try_open_input(port_name)
             else:
                 # Try to find corresponding input (e.g., "S-1 MIDI IN" -> "S-1 MIDI OUT")
                 base_name = port_name.replace(" MIDI IN", "").replace(" IN", "")
                 for inp in inputs:
                     if base_name in inp:
-                        try:
-                            self._input = self._mido.open_input(inp)
+                        self._input = self._try_open_input(inp)
+                        if self._input is not None:
                             break
-                        except Exception:
-                            pass
+
+    def _try_open_input(self, name: str):
+        """Best-effort open of the CC-feedback input port.
+
+        Input feedback is optional — the output is already open, so a failure
+        here never fails the connect. A port that is simply gone (OSError) is
+        expected and stays quiet; any *other* error is a real bug and gets
+        logged rather than silently swallowed.
+        """
+        try:
+            return self._mido.open_input(name)
+        except _PORT_GONE:
+            return None
+        except Exception:
+            logger.exception("unexpected error opening input port %r", name)
+            return None
 
     def disconnect(self) -> None:
         """Flush hung notes with all-notes-off, then close the ports."""
@@ -99,20 +122,28 @@ class MidiBackend:
             self._close_ports_locked()
 
     def _close_ports_locked(self) -> None:
-        """Close both ports without sending anything. Caller holds the lock."""
+        """Close both ports without sending anything. Caller holds the lock.
+
+        We always drop the references (the port is going regardless), but a
+        close that fails for an *unexpected* reason is logged — only the
+        expected "port already gone" (OSError) stays quiet.
+        """
         if self._output:
-            try:
-                self._output.close()
-            except Exception:
-                pass
+            self._close_one(self._output, "output")
             self._output = None
         if self._input:
-            try:
-                self._input.close()
-            except Exception:
-                pass
+            self._close_one(self._input, "input")
             self._input = None
         self._port_name = None
+
+    @staticmethod
+    def _close_one(port, kind: str) -> None:
+        try:
+            port.close()
+        except _PORT_GONE:
+            pass  # device already gone — closing a dead port is a no-op
+        except Exception:
+            logger.exception("unexpected error closing %s port", kind)
 
     def _send(self, msg: mido.Message) -> bool:
         """Send one message under the lock.
@@ -127,7 +158,16 @@ class MidiBackend:
             try:
                 self._output.send(msg)
                 return True
+            except _PORT_GONE:
+                # Expected: the device was unplugged mid-send. Drop the ports
+                # and report failure quietly — every thread survives the unplug.
+                self._close_ports_locked()
+                return False
             except Exception:
+                # Unexpected: a real bug in the send path. Preserve resilience
+                # (disconnect + return False) but make the bug visible, never
+                # a silent pass.
+                logger.exception("unexpected error sending %s message", msg.type)
                 self._close_ports_locked()
                 return False
 
@@ -198,10 +238,59 @@ class MidiBackend:
         )
 
     def poll_input(self) -> list[mido.Message]:
-        """Non-blocking read of any pending input messages."""
+        """Non-blocking read of any pending input messages.
+
+        This is also the poll loop that drives :meth:`on_incoming` callbacks:
+        every incoming Control Change is dispatched to registered listeners as
+        ``(param, value)``. With no listeners registered (the default) this is
+        pure passthrough, so existing callers see no behavior change.
+        """
         if self._input is None:
             return []
-        msgs = []
-        for msg in self._input.iter_pending():
-            msgs.append(msg)
+        msgs = list(self._input.iter_pending())
+        if self._incoming_listeners:
+            for msg in msgs:
+                if msg.type == "control_change":
+                    self._dispatch_incoming(msg.control, msg.value)
         return msgs
+
+    # ── InstrumentBackend conformance (music/CONTRACTS.md §6) ────────────────
+    # These thin methods pin MidiBackend to the canonical instrument backend
+    # protocol (synth/backend_protocol.py). They are additive: connect/disconnect
+    # already match, and the rest wrap existing behavior so engine.py, match/,
+    # and logic.py keep importing MidiBackend with its full CC/note/transport API
+    # unchanged.
+
+    def send(self, param: int, value: int) -> bool:
+        """Protocol ``send``: one parameter change (one CC). Wraps
+        :meth:`send_cc`; returns ``True`` if it went out, ``False`` if the
+        backend is disconnected or the port vanished."""
+        return self.send_cc(param, value)
+
+    def on_incoming(self, cb: Callable[[int, int], None]) -> None:
+        """Protocol ``on_incoming``: register ``cb`` for incoming
+        ``(param, value)`` CC changes. :meth:`poll_input` invokes it when the
+        device reports a knob move."""
+        with self._lock:
+            self._incoming_listeners.append(cb)
+
+    def _dispatch_incoming(self, param: int, value: int) -> None:
+        with self._lock:
+            listeners = list(self._incoming_listeners)
+        for cb in listeners:
+            try:
+                cb(param, value)
+            except Exception:
+                logger.exception("incoming CC listener raised")
+
+    def push_all(self, patch: dict[int, int]) -> None:
+        """Protocol ``push_all``: push a whole patch (CC -> value) to the
+        device, one CC each.
+
+        NOTE: the authoritative full-state push for the S-1 lives on the engine
+        (:meth:`synth.engine.S1Engine.push_all`), which owns app state and marks
+        the session SYNCED. This is the thin transport half — a backend-level
+        way to blast a patch dict when you already hold one.
+        """
+        for cc, value in patch.items():
+            self.send_cc(cc, value)

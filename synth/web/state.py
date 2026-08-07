@@ -138,7 +138,11 @@ class MatchState:
                     session.run(on_progress=self._on_progress)
                 except Exception as e:  # noqa: BLE001
                     self.last_error = str(e)
-                    tick = session._snapshot(done=True)
+                    # Public snapshot() takes no flags (Group 3), so mark the
+                    # terminal/error state on the returned mutable Progress
+                    # rather than reaching into the private snapshot builder.
+                    tick = session.snapshot()
+                    tick.done = True
                     tick.error = str(e)
                     self._on_progress(tick)
 
@@ -167,7 +171,7 @@ class MatchState:
 
     def best_clip(self) -> AudioClip | None:
         with self._lock:
-            return self.session._best_clip if self.session else None
+            return self.session.best_clip() if self.session else None
 
     def last_clip(self) -> AudioClip | None:
         p = self.get_latest()

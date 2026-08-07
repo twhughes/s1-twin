@@ -5,9 +5,45 @@ from __future__ import annotations
 import random
 import threading
 import time
+from collections.abc import Callable
+from typing import Protocol, runtime_checkable
 
 from .midi_backend import MidiBackend
 from .sequence import Sequence
+
+# The step-advance callback: called with the current step index.
+PositionCb = Callable[[int], None]
+
+
+@runtime_checkable
+class SequencerLike(Protocol):
+    """The exact surface :class:`~synth.engine.S1Engine` consumes from its
+    sequencer — the engine↔sequencer seam, pinned.
+
+    Making the contract explicit (rather than leaning on the concrete
+    ``SequencerEngine``) lets tests inject a fake and keeps the engine honest
+    about what it actually touches: the clock-out toggle, the transport-status
+    reads, ``stop()`` on shutdown, and the position callback. Any object with
+    these members satisfies it structurally — ``SequencerEngine`` does.
+    """
+
+    clock_enabled: bool
+
+    @property
+    def playing(self) -> bool: ...
+
+    @property
+    def paused(self) -> bool: ...
+
+    @property
+    def position(self) -> int: ...
+
+    @property
+    def sequence(self) -> Sequence: ...
+
+    def stop(self) -> None: ...
+
+    def set_position_callback(self, callback: PositionCb) -> None: ...
 
 
 class SequencerEngine:
@@ -43,7 +79,7 @@ class SequencerEngine:
         # from the UI thread while _run() owns playback.
         self._active: list[tuple[int, float]] = []
         self._active_lock = threading.Lock()
-        self._position_callback: callable | None = None
+        self._position_callback: PositionCb | None = None
         self.gate: float = 1.0
         self.shuffle: float = 0.0
         self.last_step: int | None = None
@@ -77,7 +113,7 @@ class SequencerEngine:
     def position(self) -> int:
         return self._position
 
-    def set_position_callback(self, callback: callable) -> None:
+    def set_position_callback(self, callback: PositionCb) -> None:
         """Set a callback invoked with (step: int) on each step advance."""
         self._position_callback = callback
 

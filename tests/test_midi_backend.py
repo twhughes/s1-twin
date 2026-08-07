@@ -1,11 +1,13 @@
 """Tests for midi_backend.py — MIDI I/O layer."""
 
+import logging
 import threading
 from unittest.mock import MagicMock, patch
 
 import mido
 
 from synth.midi_backend import ALL_NOTES_OFF_CC, MidiBackend
+from tests.fakes import FakeMidiWorld
 
 
 class TestMidiBackendInit:
@@ -211,3 +213,84 @@ class TestMidiBackendThreadSafety:
         with patch("mido.get_input_names", return_value=["Port C"]):
             ports = MidiBackend.list_input_ports()
             assert ports == ["Port C"]
+
+
+class TestErrorDistinction:
+    """The silent-swallow fix (FABLE: no invisible bugs). A port-gone (OSError)
+    stays quiet and just disconnects; an *unexpected* error is logged."""
+
+    def test_send_port_gone_is_quiet(self, caplog):
+        mb = MidiBackend()
+        out = MagicMock()
+        out.send.side_effect = OSError("device unplugged")
+        mb._output = out
+        mb._port_name = "S-1"
+        with caplog.at_level(logging.ERROR, logger="synth.midi_backend"):
+            assert mb.send_cc(74, 64) is False
+        assert not mb.connected
+        assert caplog.records == []  # expected failure — nothing logged
+
+    def test_send_unexpected_error_is_logged(self, caplog):
+        mb = MidiBackend()
+        out = MagicMock()
+        out.send.side_effect = ValueError("bad message somewhere")
+        mb._output = out
+        mb._port_name = "S-1"
+        with caplog.at_level(logging.ERROR, logger="synth.midi_backend"):
+            assert mb.send_cc(74, 64) is False  # resilience preserved: no raise
+        assert not mb.connected                 # still disconnects
+        assert any("unexpected error sending" in r.message for r in caplog.records)
+
+    def test_close_port_gone_is_quiet(self, caplog):
+        mb = MidiBackend()
+        out = MagicMock()
+        out.close.side_effect = OSError("already gone")
+        mb._output = out
+        with caplog.at_level(logging.ERROR, logger="synth.midi_backend"):
+            mb.drop_ports()
+        assert mb._output is None  # reference dropped regardless
+        assert caplog.records == []
+
+    def test_close_unexpected_error_is_logged(self, caplog):
+        mb = MidiBackend()
+        out = MagicMock()
+        out.close.side_effect = RuntimeError("driver bug")
+        mb._output = out
+        with caplog.at_level(logging.ERROR, logger="synth.midi_backend"):
+            mb.drop_ports()
+        assert mb._output is None  # still dropped
+        assert any("unexpected error closing" in r.message for r in caplog.records)
+
+    def test_connect_input_open_unexpected_error_is_logged(self, caplog):
+        world = FakeMidiWorld()
+        world.add_device(out_name="S-1", in_name="S-1")
+        mb = MidiBackend(midi_module=world)
+
+        real_open = world.open_input
+
+        def boom(name, callback=None):
+            raise RuntimeError("input driver bug")
+
+        world.open_input = boom
+        with caplog.at_level(logging.ERROR, logger="synth.midi_backend"):
+            mb.connect("S-1")  # output opens fine; input open must not raise
+        world.open_input = real_open
+        assert mb.connected                 # output is up
+        assert mb._input is None            # input stayed unopened
+        assert any("unexpected error opening input" in r.message
+                   for r in caplog.records)
+
+    def test_connect_input_gone_is_quiet(self, caplog):
+        world = FakeMidiWorld()
+        world.add_device(out_name="S-1", in_name="S-1")
+        mb = MidiBackend(midi_module=world)
+
+        def gone(name, callback=None):
+            raise OSError("input port gone")
+
+        world.open_input = gone
+        with caplog.at_level(logging.ERROR, logger="synth.midi_backend"):
+            mb.connect("S-1")
+        assert mb.connected
+        assert mb._input is None
+        assert caplog.records == []

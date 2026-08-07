@@ -171,6 +171,26 @@ class TestClockGate:
         engine.set_mode(SOLO)
         assert engine.sequencer.clock_enabled is False
 
+    def test_clock_emits_in_solo_none_in_logic(self, engine, world):
+        """Direct clock-out contract (C4): the sequencer emits clock in solo and
+        emits none in logic — the single-master rule, checked at the seam."""
+        out, _ = plug_s1(world)
+        engine._tick()
+        seq = engine.sequencer
+
+        # solo (default): a due tick sounds.
+        assert engine.mode == SOLO
+        seq._next_clock = time.monotonic() - 1.0
+        seq._flush_clock(time.monotonic())
+        assert [m for m in out.sent if m.type == "clock"]
+
+        # logic: Logic masters clock, so none may go out.
+        out.sent.clear()
+        engine.set_mode(LOGIC)
+        seq._next_clock = time.monotonic() - 1.0
+        seq._flush_clock(time.monotonic())
+        assert [m for m in out.sent if m.type == "clock"] == []
+
 
 # ── monitor gate ───────────────────────────────────────────────
 class TestMonitorGate:
@@ -207,3 +227,23 @@ class TestMonitorGate:
         assert not audio_engine.monitor.running
         audio_engine.set_mode(SOLO)  # _apply_mode re-scans audio
         assert audio_engine.monitor.running
+
+    def test_switch_to_logic_suppresses_all_three_atomically(self, audio_engine,
+                                                              fake_sd, world):
+        """One set_mode(LOGIC) call must, together, stop the monitor, drop MK3
+        forwarding, and disable clock-out — the three things Logic owns (C8)."""
+        fake_sd.add_s1()
+        plug_s1(world)
+        world.add_device(in_name="KeyStep 32")
+        audio_engine._tick()
+        # In solo all three are live.
+        assert audio_engine.monitor.running
+        assert world.inputs["KeyStep 32"].callback == audio_engine._forward_keyboard
+        assert audio_engine.sequencer.clock_enabled is True
+
+        audio_engine.set_mode(LOGIC)
+
+        # After the single switch, all three are suppressed together.
+        assert not audio_engine.monitor.running
+        assert world.inputs["KeyStep 32"].callback is None
+        assert audio_engine.sequencer.clock_enabled is False

@@ -3,6 +3,9 @@ sequencer, export, monitor, WebSocket. All against a fake MIDI world."""
 
 from __future__ import annotations
 
+import re
+from pathlib import Path
+
 import pytest
 from fastapi.testclient import TestClient
 
@@ -14,6 +17,7 @@ import synth.web.server as server_mod
 from synth.engine import S1Engine
 from synth.prm import PrmFile
 from synth.schema import S1_PARAMS
+from synth.web.facade import EngineFacade
 from synth.web.server import app
 from tests.fakes import FakeMidiWorld
 
@@ -613,3 +617,36 @@ class TestMatchEndpoints:
 
     def test_record_without_monitor_400(self, client, engine):
         assert client.post("/api/monitor/record/start").status_code == 400
+
+
+# ── G4: the web↔engine seam is a pinned, faked-out contract ──
+class TestEngineFacade:
+    """The routes reach the engine through a typed surface, not an open object."""
+
+    def test_real_engine_conforms(self, world):
+        """The live S1Engine satisfies the EngineFacade the routes rely on."""
+        e = S1Engine(midi_module=world, audio_auto=False, poll_interval=999)
+        try:
+            assert isinstance(e, EngineFacade)
+        finally:
+            e.stop()
+
+    def test_facade_names_the_public_route_surface(self):
+        """Guard the contract's key public methods against silent drift."""
+        for name in (
+            "status", "monitor_status", "transport_status", "set_param",
+            "load_values", "push_all", "note_on", "note_off", "all_notes_off",
+            "select_pattern", "set_mode", "subscribe", "unsubscribe",
+            "publish", "start", "stop",
+        ):
+            assert hasattr(S1Engine, name), name
+
+
+# ── FABLE debt: no private reaches from the web layer into the session ──
+class TestNoPrivateSessionReach:
+    def test_state_module_uses_only_public_session_api(self):
+        """web/state.py must not touch MatchSession privates (session._foo) —
+        Group 3 gave it public snapshot()/best_clip(); this pins the fix."""
+        src = Path(server_mod.__file__).with_name("state.py").read_text()
+        offenders = re.findall(r"session\._[A-Za-z]\w*", src)
+        assert offenders == [], f"private session reach(es) remain: {offenders}"

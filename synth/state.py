@@ -2,9 +2,13 @@
 
 from __future__ import annotations
 
+import threading
 from collections.abc import Callable
 
 from .schema import S1_PARAMS
+
+# One listener: callback(cc, value, source).
+ParamListener = Callable[[int, int, str], None]
 
 
 class ParamState:
@@ -12,21 +16,30 @@ class ParamState:
 
     def __init__(self) -> None:
         self._values: dict[int, int] = {p.cc: p.default for p in S1_PARAMS}
-        self._listeners: list[Callable[[int, int, str], None]] = []
+        self._listeners: list[ParamListener] = []
+        # Guards listener registration and iteration. set() may run on the MIDI
+        # watcher thread while the web/UI thread (un)registers a listener, so we
+        # snapshot the list under the lock and fire callbacks outside it — no
+        # mutation-during-iteration, no callback running under the lock.
+        self._listeners_lock = threading.Lock()
 
-    def add_listener(self, callback: Callable[[int, int, str], None]) -> None:
+    def add_listener(self, callback: ParamListener) -> None:
         """Register a callback: callback(cc, value, source)."""
-        self._listeners.append(callback)
+        with self._listeners_lock:
+            self._listeners.append(callback)
 
-    def remove_listener(self, callback: Callable[[int, int, str], None]) -> None:
+    def remove_listener(self, callback: ParamListener) -> None:
         """Unregister a callback."""
-        self._listeners.remove(callback)
+        with self._listeners_lock:
+            self._listeners.remove(callback)
 
     def set(self, cc: int, value: int, source: str = "ui") -> None:
         """Set a CC value and notify listeners."""
         value = max(0, min(127, value))
         self._values[cc] = value
-        for listener in self._listeners:
+        with self._listeners_lock:
+            listeners = list(self._listeners)
+        for listener in listeners:
             listener(cc, value, source)
 
     def get(self, cc: int) -> int:

@@ -1,5 +1,5 @@
 # STATUS — synth
-*updated 2026-08-07 (chassis spec `docs/chassis-spec.md` — Logic-as-chassis architecture + contracts + milestones; earlier same day: keyboard forwarding moved off the watch tick to input callbacks; before that 2026-08-01 canonical `data/s1.json` + listen-only connect + `SYNTH_PORT`)*
+*updated 2026-08-07 (chassis build + hardening: M1/M2/M4 + matcher Phase 0/A scaffolding + a 5-group contract-hardening sweep, all on branch `chassis-hardening`, **552 tests**; earlier same day: chassis spec `docs/chassis-spec.md`; keyboard forwarding onto input callbacks; before that 2026-08-01 canonical `data/s1.json` + listen-only connect + `SYNTH_PORT`)*
 
 - **state:** active
 - **what:** The Roland S-1 hardware synth, fully present in software: one `s1` command starts a local web cockpit (FastAPI) with every panel knob and menu setting live-synced both directions, a piano-roll sequencer with MIDI clock out, auto-monitored USB audio with a live oscilloscope (drift-servo resampled passthrough, ~35 ms, glitch-free), MIDI-keyboard forwarding, .PRM export ("Save to S-1") *and* import (the librarian), synesthesia note-coloring, and a full REST/WS agent API. The Textual TUI is retired. Plus the CMA-ES sound-matching engine behind `[studio]`. 351 tests. A standalone headless twin of the monitor+forwarding lives at `music/tools/s1_rig.py` (launch: `music/rig.sh`).
@@ -13,6 +13,48 @@
   launcher convention: **`synth`** (`bin/synth`) runs the venv's `synth --no-browser`
   detached, waits on `/api/status`, opens the cockpit — `synth off` stops it. Appears on the
   HQ control panel (:8800).
+- **2026-08-07 — chassis build + hardening sweep (branch `chassis-hardening`, 351→552 tests):**
+  built the code half of `docs/chassis-spec.md` with parallel Opus subagents, then hardened
+  every architecture seam into an explicit, tested contract. NOT committed to `main` yet —
+  it sits on the branch for review. What landed:
+  - **M1 mode switch (C8):** `S1Engine.mode ∈ {solo, logic}`; `logic` suppresses MK3
+    forwarding + audio monitor + sequencer clock-out atomically (`set_mode`/`_apply_mode`),
+    everything else stays live. `GET/POST /api/mode`, WS broadcast, `hello` carries mode,
+    header chip.
+  - **M2 pattern bridge (C3):** `synth-prm export-mid`/`import-mid` — PRM ⇄ standard `.mid`
+    via `sequence.py`'s 480-PPQN writer; motion lanes (`MOTION_CC1..8`) export as CC events
+    on the synth channel; poly/step overflow surfaced, never silent. `save_midi` gained
+    optional `cc_events`/`channel`.
+  - **M4 headless Logic transport (C4/C5):** `synth-logic play|stop|record` + `POST
+    /api/logic/transport` send MMC (`F0 7F 7F 06 0N F7`, bytes pinned in tests) over the
+    `HQ Clock` IAC bus; missing bus fails loud. `midi_backend.send_sysex` added.
+  - **Matcher Phase 0 + A (offline half of FABLE ws#1):** `match/corpus.py` (Target,
+    deterministic corpus gen, `benchmark()→{median_seconds,mean_closeness,probe_count,cache_hits}`,
+    committed feature-only fixtures) and `match/analyze.py` (YIN f0 <0.35¢ error, Hz→MIDI,
+    ADSR segmentation). **Phase-A loop is wired**: `session` now probes at the target's
+    detected pitch (`analyze.probe_note`) instead of hardwired C3 — the `driver.py:17`
+    `PROBE_NOTE=48` bug is fixed at the call site. **Corpus audio is a labeled PLACEHOLDER,
+    not the S-1; the perceptual-metric validation against Tyler's ears is NOT done — still
+    the gate before any twin optimization (FABLE's #1 rule).**
+  - **Contract hardening (5 groups, seam audit → parallel):** new `Protocol`s pin every
+    seam — `InstrumentBackend`(+`DifferentiableBackend`) in `backend_protocol.py`,
+    `Driver`/`FeatureExtractor`/`DistanceMetric`/re-exported `Matcher` in `match/protocols.py`,
+    `SequencerLike`/`EventCb` in the engine, `EngineFacade` in `web/facade.py`. Parametrized
+    contract tests run real+fake side by side (`MidiBackend`/`FakeBackend`,
+    `SynthDriver`/`FakeDriver`). FABLE debt cleared: `callable`/string-literal type
+    annotations fixed; `midi_backend` no longer swallows unexpected errors silently
+    (unplug quiet, real bug logged); `ParamState` listener iteration lock-guarded;
+    `web/state.py` private reaches (`_snapshot`/`_best_clip`) replaced with public
+    `MatchSession.snapshot()`/`best_clip()`. The real untested `SynthDriver` got direct
+    unit coverage. Known leftover (flagged, engine-side): `server.py` still reaches
+    `engine._mido`/`_tick_audio()` — a future engine-side promotion.
+  - **Still needs Tyler/hardware (cannot be agent-closed):** M0 finish (save the `S-1 Rig`
+    template + MIDI-clock-transmit test drive) · M3 Retro Synth knob eval (your ears) ·
+    the twin itself (M5 Phase B — needs a torch install decision + the physical S-1 to
+    calibrate + the ears-metric validation) · M5b (BlackHole) · M6.
+- **2026-08-07 (earlier) — the chassis spec (`docs/chassis-spec.md`):** Logic Pro becomes
+  the chassis. See the entry below for the architecture; the build above executes its
+  code milestones.
 - **2026-08-01 — the CC table became data, and connect stopped shouting:**
   - **`synth/data/s1.json` is now the canonical S-1 device file** (54 params: CC, range,
     default, labels, access, menu code, control type, and the k/s tag the music project

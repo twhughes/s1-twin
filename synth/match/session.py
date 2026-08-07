@@ -12,12 +12,14 @@ from __future__ import annotations
 
 import threading
 from dataclasses import dataclass, field
+from typing import Callable
 
+from .analyze import probe_note
 from .capture import AudioClip, is_silent, load_audio, prepare
 from .distance import Weights, closeness, loss, reference_scales
-from .driver import SynthDriver
 from .features import Features, extract
 from .optimizer import make_optimizer
+from .protocols import Driver
 from .space import ParamSpace
 
 # Loss assigned to silent candidates and failed probes. Orders of magnitude
@@ -55,11 +57,11 @@ class Progress:
     last_clip: AudioClip | None = None
 
 
-ProgressCb = "callable"  # (Progress) -> None
+ProgressCb = Callable[[Progress], None]
 
 
 class MatchSession:
-    def __init__(self, driver: SynthDriver, config: MatchConfig | None = None):
+    def __init__(self, driver: Driver, config: MatchConfig | None = None):
         self.driver = driver
         self.config = config or MatchConfig()
         self.space = ParamSpace(include_effects=self.config.include_effects)
@@ -88,12 +90,26 @@ class MatchSession:
         self.target_clip = prepare(load_audio(path))
         self.target_feat = extract(self.target_clip)
         self._scales = reference_scales(self.target_feat)
+        self._tune_probe_to_target()
 
     def set_target_clip(self, clip: AudioClip) -> None:
         """Use an already-captured clip as the target (e.g. recorded live)."""
         self.target_clip = prepare(clip)
         self.target_feat = extract(self.target_clip)
         self._scales = reference_scales(self.target_feat)
+        self._tune_probe_to_target()
+
+    def _tune_probe_to_target(self) -> None:
+        """Phase A: probe at the target's pitch, not the hardwired C3.
+
+        Detects the target's fundamental and points the driver's probe note at
+        it, so a G4 target is compared against a G4 candidate rather than a C3
+        one. Unvoiced/noisy targets fall back to C3 (``probe_note`` returns 48),
+        preserving the old behaviour. No-op for drivers that carry no ``note``.
+        """
+        if self.target_clip is None or not hasattr(self.driver, "note"):
+            return
+        self.driver.note = probe_note(self.target_clip)
 
     def calibrate(self) -> float:
         return self.driver.calibrate()
@@ -120,6 +136,23 @@ class MatchSession:
 
     def best_patch(self) -> dict[int, int]:
         return dict(self._best_params)
+
+    def snapshot(self) -> Progress:
+        """Current :class:`Progress` — the public read of engine state.
+
+        Delegates to :meth:`_snapshot` with its default (no last/generation
+        flags). Callers outside the engine (the web layer) use this instead of
+        reaching into the private ``_snapshot``.
+        """
+        return self._snapshot()
+
+    def best_clip(self) -> AudioClip | None:
+        """The clip of the best-scoring candidate so far, or ``None``.
+
+        Public accessor over the private ``_best_clip`` so the web/UI layer can
+        render the winning sound without touching engine internals.
+        """
+        return self._best_clip
 
     def apply_best(self) -> None:
         if self._best_params:

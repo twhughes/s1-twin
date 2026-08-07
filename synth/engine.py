@@ -27,12 +27,17 @@ from __future__ import annotations
 
 import threading
 import time
+from collections.abc import Callable
 
 from .audio import AudioMonitor, default_output, find_s1_input, rescan_devices
 from .midi_backend import MidiBackend
 from .schema import param_by_cc
-from .sequencer_engine import SequencerEngine
+from .sequencer_engine import SequencerEngine, SequencerLike
 from .state import ParamState
+
+# One subscriber to the live event stream: called with the event dict that
+# publish() broadcasts (WebSocket clients, tests). See subscribe()/publish().
+EventCb = Callable[[dict], None]
 
 # Sync chip states.
 DISCONNECTED = "disconnected"
@@ -87,7 +92,7 @@ class S1Engine:
         self.midi.channel = DEFAULT_SYNTH_CHANNEL
         self.pc_channel = DEFAULT_PC_CHANNEL
         self.monitor = monitor if monitor is not None else AudioMonitor()
-        self.sequencer = SequencerEngine(self.midi)
+        self.sequencer: SequencerLike = SequencerEngine(self.midi)
         self.sequencer.set_position_callback(
             lambda step: self.publish({"type": "position", "step": step})
         )
@@ -100,7 +105,7 @@ class S1Engine:
         self._solo_clock = self.sequencer.clock_enabled
 
         self._poll_interval = poll_interval
-        self._listeners: list = []
+        self._listeners: list[EventCb] = []
         self._listeners_lock = threading.Lock()
         self._thread: threading.Thread | None = None
         self._stop = threading.Event()
@@ -111,12 +116,12 @@ class S1Engine:
         self.params.add_listener(self._on_param_change)
 
     # ── events ───────────────────────────────────────────────
-    def subscribe(self, callback) -> None:
+    def subscribe(self, callback: EventCb) -> None:
         """Register callback(event: dict). Fired from engine/worker threads."""
         with self._listeners_lock:
             self._listeners.append(callback)
 
-    def unsubscribe(self, callback) -> None:
+    def unsubscribe(self, callback: EventCb) -> None:
         with self._listeners_lock:
             if callback in self._listeners:
                 self._listeners.remove(callback)

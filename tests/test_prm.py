@@ -193,6 +193,21 @@ class TestBuildPattern:
         assert truncated == [0]
         assert len(prm.step(1).active_notes()) == 4
 
+    def test_truncation_reports_every_overflowing_step(self):
+        """No silent caps (chassis guardrail): apply_sequence returns EVERY
+        step past the 4-note ceiling — an unreported drop is the bug this
+        pins against."""
+        notes = [Note(step=0, pitch=50 + i) for i in range(5)]      # 5 on step 0
+        notes += [Note(step=2, pitch=60 + i) for i in range(6)]     # 6 on step 2
+        notes.append(Note(step=1, pitch=48))                        # 1 on step 1 (fine)
+        prm = load_template()
+        truncated = prm.apply_sequence(Sequence(notes=notes, steps=4, bpm=120.0))
+        assert truncated == [0, 2]
+        # The kept slots are exactly the first four; nothing vanished unheard.
+        assert len(prm.step(1).active_notes()) == 4
+        assert len(prm.step(3).active_notes()) == 4
+        assert len(prm.step(2).active_notes()) == 1
+
     def test_scale_from_resolution(self):
         seq = self.make_sequence()
         seq.step_resolution = "1/8"

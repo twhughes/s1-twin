@@ -6,7 +6,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from synth.sequence import Note, Sequence
-from synth.sequencer_engine import SequencerEngine
+from synth.sequencer_engine import SequencerEngine, SequencerLike
 
 
 @pytest.fixture
@@ -246,6 +246,34 @@ def test_same_pitch_overlap_not_cut(mock_midi):
     mock_midi.send_note_off.assert_called_once_with(60)
 
 
+def test_same_pitch_triple_overlap_off_only_after_last(mock_midi):
+    """Three stacked entries of one pitch: no off until the last hold expires,
+    then exactly one off. Guards the subtle overlap-hold path (only the *last*
+    expiry should sound a note-off — never one per overlapping entry)."""
+    engine = SequencerEngine(mock_midi)
+    now = time.monotonic()
+    # Two expired, one still sounding → the pitch is still held, no off.
+    engine._active = [(60, now - 0.02), (60, now - 0.01), (60, now + 10.0)]
+    engine._flush_note_offs(time.monotonic())
+    mock_midi.send_note_off.assert_not_called()
+    # The survivor expires → one and only one off for pitch 60.
+    engine._active = [(60, now - 0.01)]
+    engine._flush_note_offs(time.monotonic())
+    mock_midi.send_note_off.assert_called_once_with(60)
+
+
+def test_flush_note_offs_independent_pitches(mock_midi):
+    """Distinct pitches don't shield each other: a due pitch fires its off even
+    while another distinct pitch stays held."""
+    engine = SequencerEngine(mock_midi)
+    now = time.monotonic()
+    engine._active = [(60, now - 0.01), (64, now + 10.0)]  # 60 due, 64 held
+    engine._flush_note_offs(time.monotonic())
+    mock_midi.send_note_off.assert_called_once_with(60)
+    # 64 is still active and unsounded.
+    assert any(pitch == 64 for pitch, _ in engine._active)
+
+
 def test_gate_scales_note_off_time(mock_midi):
     ons, offs = [], []
     mock_midi.send_note_on.side_effect = lambda *a, **k: ons.append(time.monotonic())
@@ -299,6 +327,39 @@ def test_probability_zero_skips_all_notes(mock_midi):
     time.sleep(0.2)
     engine.stop()
     mock_midi.send_note_on.assert_not_called()
+
+
+def test_probability_one_fires_every_step(mock_midi):
+    """The positive gate: probability 1.0 lets every step's note through."""
+    import random
+
+    seq = Sequence(notes=[Note(step=s, pitch=60 + s) for s in range(4)], steps=4, bpm=600.0)
+    engine = SequencerEngine(mock_midi, seq, rng=random.Random(1))
+    engine.probability = 1.0
+    engine.play()
+    time.sleep(0.3)
+    engine.stop()
+    pitches = {c[0][0] for c in mock_midi.send_note_on.call_args_list}
+    assert {60, 61, 62, 63} <= pitches
+
+
+# ── engine↔sequencer seam (SequencerLike Protocol) ───────────
+
+def test_engine_satisfies_sequencer_protocol(mock_midi):
+    """SequencerEngine structurally satisfies the seam the engine consumes."""
+    assert isinstance(SequencerEngine(mock_midi), SequencerLike)
+
+
+def test_position_callback_receives_int(mock_midi, simple_sequence):
+    """The typed position callback fires with a plain int step index."""
+    seen: list[object] = []
+    engine = SequencerEngine(mock_midi, simple_sequence)
+    engine.set_position_callback(seen.append)
+    engine.play()
+    time.sleep(0.2)
+    engine.stop()
+    assert seen
+    assert all(isinstance(s, int) for s in seen)
 
 
 # ── MIDI clock emission (G7) ─────────────────────────────────

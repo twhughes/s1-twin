@@ -14,12 +14,29 @@ MAX_NOTES_PER_STEP = 4  # 4-note poly per step is the PRM ceiling
 
 @dataclass
 class Note:
-    """A single note event in the sequence."""
+    """A single note event in the sequence.
+
+    The interchange seam (contract C3): a Note that leaves this process — into
+    a ``.mid`` file, a PRM pattern, or the bank JSON — must be a real MIDI
+    event. ``__post_init__`` rejects out-of-range values so a malformed note
+    can never reach the wire; mutation of an already-valid note is unchecked
+    (the sequencer edits ``pitch``/``velocity`` in place and stays trusted).
+    """
 
     step: int  # step position (0-indexed, quantized to grid)
     pitch: int  # MIDI note number (0-127)
     velocity: int = 100  # 0-127
     duration: int = 1  # length in steps
+
+    def __post_init__(self) -> None:
+        if not 0 <= self.pitch <= 127:
+            raise ValueError(f"pitch out of MIDI range 0-127: {self.pitch}")
+        if not 0 <= self.velocity <= 127:
+            raise ValueError(f"velocity out of MIDI range 0-127: {self.velocity}")
+        if self.step < 0:
+            raise ValueError(f"step must be >= 0: {self.step}")
+        if self.duration < 1:
+            raise ValueError(f"duration must be >= 1 step: {self.duration}")
 
 
 @dataclass
@@ -31,6 +48,17 @@ class Sequence:
     bpm: float = 120.0
     step_resolution: str = "1/16"  # grid quantization
     dropped_notes: int = 0  # notes discarded on import (past max_steps)
+
+    def __post_init__(self) -> None:
+        # Validate the container invariants at the seam. NOT frozen: the piano
+        # roll and sequencer mutate ``notes``/``steps``/``bpm`` in place — this
+        # only screens the values a fresh Sequence is born with.
+        if self.steps < 1:
+            raise ValueError(f"steps must be >= 1: {self.steps}")
+        if self.bpm <= 0:
+            raise ValueError(f"bpm must be > 0: {self.bpm}")
+        if self.dropped_notes < 0:
+            raise ValueError(f"dropped_notes must be >= 0: {self.dropped_notes}")
 
     def note_at(self, step: int, pitch: int) -> Note | None:
         """Return the note at a given step and pitch, or None."""

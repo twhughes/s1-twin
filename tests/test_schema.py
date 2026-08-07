@@ -448,3 +448,32 @@ class TestCanonicalDeviceFile:
     def test_defaults_within_range(self):
         for p in S1_PARAMS:
             assert p.min_val <= p.default <= p.max_val, p.name
+
+    def test_s1_json_is_complete_and_self_consistent(self):
+        """C1 completeness/consistency pin: every s1.json entry carries the
+        full field set, CCs are unique, ranges are ordered, defaults sit in
+        range, and the k/s tag is one of {k, s}. One failing entry means the
+        canonical device file (and music's vendored copy) drifted."""
+        params = load_device_file()["params"]
+        assert len(params) == 54
+        required = {"name", "cc", "section", "access", "control_type",
+                    "min", "max", "default", "kind"}
+        seen_ccs = set()
+        for e in params:
+            missing = required - set(e)
+            assert not missing, f"CC {e.get('cc')} missing fields {sorted(missing)}"
+            assert e["cc"] not in seen_ccs, f"duplicate CC {e['cc']}"
+            seen_ccs.add(e["cc"])
+            assert e["min"] < e["max"], f"CC {e['cc']} min !< max"
+            assert e["min"] <= e["default"] <= e["max"], f"CC {e['cc']} default out of range"
+            assert e["kind"] in ("k", "s"), f"CC {e['cc']} bad kind {e['kind']!r}"
+            AccessLevel(e["access"])          # raises if not a valid access level
+            ControlType(e["control_type"])    # raises if not a valid control type
+
+    def test_only_sanctioned_departure_is_chord_key_shift_center(self):
+        """C1: the ONLY value in s1.json allowed to depart from the raw device
+        dump is CC 85/86/87 defaulting to 64 (chord-voice key shift centered).
+        Pinned here at the JSON level, mirroring test_prm's dump-side pin."""
+        entries = {e["cc"]: e for e in load_device_file()["params"]}
+        for cc in (85, 86, 87):
+            assert entries[cc]["default"] == 64, f"CC {cc} must center at 64"

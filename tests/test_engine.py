@@ -245,6 +245,45 @@ class TestKeyboardForwarding:
         engine._tick()
         assert [m.type for m in out.sent if m.type in ("note_on", "note_off")] == ["note_off"]
 
+    def test_callback_forwards_between_ticks(self, engine, world):
+        # A key pressed between watch ticks reaches the S-1 immediately via
+        # the input callback — no half-second poll latency, and a quick tap's
+        # note_on/note_off no longer collapse into one zero-length note.
+        out, _ = plug_s1(world)
+        world.add_device(in_name="KeyStep 32")
+        engine._tick()
+        kb = world.inputs["KeyStep 32"]
+        assert kb.callback is not None
+        kb.callback(mido.Message("note_on", channel=0, note=60, velocity=90))
+        kb.callback(mido.Message("note_off", channel=0, note=60))
+        notes = [m for m in out.sent if m.type in ("note_on", "note_off")]
+        assert [(m.type, m.note) for m in notes] == [("note_on", 60), ("note_off", 60)]
+
+    def test_wheels_and_damper_forwarded(self, engine, world):
+        # Pitch bend, mod wheel (CC 1) and damper pedal (CC 64) pass through,
+        # re-addressed to the S-1 channel — the device's 'external' tier.
+        out, _ = plug_s1(world)
+        world.add_device(in_name="KeyStep 32")
+        engine._tick()
+        kb = world.inputs["KeyStep 32"]
+        kb.callback(mido.Message("pitchwheel", channel=0, pitch=4096))
+        kb.callback(mido.Message("control_change", channel=0, control=1, value=88))
+        kb.callback(mido.Message("control_change", channel=0, control=64, value=127))
+        fwd = [m for m in out.sent if m.type in ("pitchwheel", "control_change")]
+        assert [(m.type, getattr(m, "control", None)) for m in fwd] == [
+            ("pitchwheel", None), ("control_change", 1), ("control_change", 64)]
+        assert fwd[0].pitch == 4096
+        assert all(m.channel == 2 for m in fwd)
+
+    def test_non_performance_cc_blocked(self, engine, world):
+        # A controller knob on a patch-param CC must NOT reach the S-1.
+        out, _ = plug_s1(world)
+        world.add_device(in_name="KeyStep 32")
+        engine._tick()
+        world.inputs["KeyStep 32"].callback(
+            mido.Message("control_change", channel=0, control=74, value=42))
+        assert [m for m in out.sent if m.type == "control_change"] == []
+
     def test_keyboard_hot_unplug(self, engine, world, events):
         plug_s1(world)
         world.add_device(in_name="KeyStep 32")

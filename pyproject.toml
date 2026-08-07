@@ -38,6 +38,8 @@ dev = [
 [project.scripts]
 synth = "synth.__main__:main"
 synth-match = "synth.match.cli:main"
+synth-prm = "synth.prm_cli:main"
+synth-logic = "synth.logic:main"
 
 [tool.ruff]
 line-length = 110

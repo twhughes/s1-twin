@@ -549,6 +549,39 @@ class TestStateWebSocket:
             assert states == ["connecting", "listening"]
 
 
+# ── C8: cockpit mode ─────────────────────────────────────────
+class TestMode:
+    def test_default_mode_is_solo(self, client):
+        assert client.get("/api/mode").json() == {"mode": "solo"}
+
+    def test_status_carries_mode(self, client):
+        assert client.get("/api/status").json()["mode"] == "solo"
+
+    def test_set_mode_logic_then_solo(self, client, engine):
+        assert client.post("/api/mode", json={"mode": "logic"}).json() == {"mode": "logic"}
+        assert engine.mode == "logic"
+        assert client.get("/api/mode").json() == {"mode": "logic"}
+        assert client.post("/api/mode", json={"mode": "solo"}).json() == {"mode": "solo"}
+        assert engine.mode == "solo"
+
+    def test_set_mode_rejects_unknown(self, client):
+        assert client.post("/api/mode", json={"mode": "couch"}).status_code == 422
+
+    def test_mode_broadcast_over_ws(self, client, engine):
+        with client.websocket_connect("/ws/state") as ws:
+            ws.receive_json()  # hello
+            client.post("/api/mode", json={"mode": "logic"})
+            event = ws.receive_json()
+            assert event == {"type": "mode", "mode": "logic"}
+
+    def test_hello_carries_mode(self, client, engine):
+        engine.set_mode("logic")
+        with client.websocket_connect("/ws/state") as ws:
+            hello = ws.receive_json()
+            assert hello["mode"] == "logic"
+            assert hello["status"]["mode"] == "logic"
+
+
 # ── security ─────────────────────────────────────────────────
 class TestSecurity:
     def test_forbidden_host_rejected(self, engine):

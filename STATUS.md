@@ -1,5 +1,5 @@
 # STATUS — synth
-*updated 2026-08-01 (canonical `data/s1.json` + listen-only connect + `SYNTH_PORT`; before that 2026-07-30 port 8765→8766 + `bin/synth`)*
+*updated 2026-08-07 (chassis spec `docs/chassis-spec.md` — Logic-as-chassis architecture + contracts + milestones; earlier same day: keyboard forwarding moved off the watch tick to input callbacks; before that 2026-08-01 canonical `data/s1.json` + listen-only connect + `SYNTH_PORT`)*
 
 - **state:** active
 - **what:** The Roland S-1 hardware synth, fully present in software: one `s1` command starts a local web cockpit (FastAPI) with every panel knob and menu setting live-synced both directions, a piano-roll sequencer with MIDI clock out, auto-monitored USB audio with a live oscilloscope (drift-servo resampled passthrough, ~35 ms, glitch-free), MIDI-keyboard forwarding, .PRM export ("Save to S-1") *and* import (the librarian), synesthesia note-coloring, and a full REST/WS agent API. The Textual TUI is retired. Plus the CMA-ES sound-matching engine behind `[studio]`. 351 tests. A standalone headless twin of the monitor+forwarding lives at `music/tools/s1_rig.py` (launch: `music/rig.sh`).
@@ -31,3 +31,26 @@
     `POST /api/push-all` or the cockpit's **PUSH TO S-1** button, which is what now
     marks the session `synced`. This matches `music/music/instrument/service.py`'s policy.
   - `SYNTH_PORT` env overrides the 8766 bind (`--port` still wins over both). 360 tests.
+- **2026-08-07 — keyboard forwarding is instant (input callbacks, not the tick):** external
+  keyboard notes were only forwarded on the engine's 0.5 s watch tick — up to half a second
+  of MIDI latency, and a quick tap's note_on+note_off arrived back-to-back as a zero-length
+  (silent) note, which read as "keys not going through". `_tick_keyboards` now opens inputs
+  with `callback=self._forward_keyboard`, so notes forward on the MIDI driver thread the
+  moment a key moves (backend's send lock makes this safe); the tick-side `iter_pending`
+  drain stays as a fallback for ports without callback support. Same session: forwarding
+  grew pitch bend + the 'external' CC tier (Mod Wheel 1, Damper 64; `PERFORMANCE_CCS`) —
+  all other keyboard CCs are blocked so controller knobs can't rewrite patch params.
+  `send_pitchwheel` joined the backend. Found live 2026-08-07 playing the Keystation 49
+  MK3 through the cockpit. 363 tests.
+- **2026-08-07 — the chassis spec (`docs/chassis-spec.md`):** Logic Pro becomes the
+  chassis; written from the brainstorm session — architecture (5 layers, 4 modes:
+  couch/cockpit/practice/logic), 9 contracts, milestones M0–M6 + a pinned skip list.
+  Load-bearing decisions: **cockpit owns the patch, Logic owns the performance, music
+  owns the judgment**; one clock master per mode (Logic never slaves); S-1 enters Logic
+  as an External Instrument over aggregate "S1 Rig" with IAC buses `HQ Clock/Bridge/Twin`;
+  patterns travel PRM ⇄ `.mid` via `sequence.py`'s 480-PPQN writer + motion lanes → CC
+  automation (M2); Retro Synth is tier-2 only (M3 knob experiment, timeboxed, no preset
+  converter); the twin stays FABLE workstream #1 unchanged, then joins the same template
+  via `HQ Twin` + BlackHole (M5b) — and becomes practice's optional sound module; drums
+  are Logic natives for now (`s1_drums` stays the couch companion). Next Tyler ceremony:
+  **M0 rig day-zero** (~90 min: IAC buses + aggregate + template + the chassis ceremony).

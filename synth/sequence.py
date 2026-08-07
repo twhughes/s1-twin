@@ -144,8 +144,19 @@ def load_midi(path: Path, quantize: str = "1/16", max_steps: int = 64) -> Sequen
     )
 
 
-def save_midi(seq: Sequence, path: Path) -> None:
-    """Export a Sequence as a standard MIDI file."""
+def save_midi(
+    seq: Sequence,
+    path: Path,
+    cc_events: list[tuple[int, int, int]] | None = None,
+    channel: int = 0,
+) -> None:
+    """Export a Sequence as a standard MIDI file.
+
+    ``cc_events`` is an optional list of ``(step, cc, value)`` control-change
+    events (the S-1's motion lanes, per contract C3) placed at step-boundary
+    ticks on the same track. ``channel`` (0-indexed) is applied to both the
+    notes and the CC events — the S-1's synth channel when exporting a pattern.
+    """
     ticks_per_beat = 480
     step_ticks = _resolution_ticks(seq.step_resolution, ticks_per_beat)
 
@@ -156,22 +167,27 @@ def save_midi(seq: Sequence, path: Path) -> None:
     # Tempo meta message
     track.append(mido.MetaMessage("set_tempo", tempo=mido.bpm2tempo(seq.bpm), time=0))
 
-    # Build a list of (abs_tick, type, pitch, velocity) events
-    events: list[tuple[int, str, int, int]] = []
+    # Build a list of (abs_tick, order, kind, a, b) events. `order` breaks ties
+    # at equal ticks: note_off (0) before control_change (1) before note_on (2).
+    events: list[tuple[int, int, str, int, int]] = []
     for note in seq.notes:
         on_tick = note.step * step_ticks
         off_tick = on_tick + note.duration * step_ticks
-        events.append((on_tick, "note_on", note.pitch, note.velocity))
-        events.append((off_tick, "note_off", note.pitch, 0))
+        events.append((on_tick, 2, "note_on", note.pitch, note.velocity))
+        events.append((off_tick, 0, "note_off", note.pitch, 0))
+    for step, cc, value in cc_events or []:
+        events.append((step * step_ticks, 1, "control_change", cc, value))
 
-    # Sort by tick, with note_off before note_on at same tick
-    events.sort(key=lambda e: (e[0], 0 if e[1] == "note_off" else 1))
+    events.sort(key=lambda e: (e[0], e[1]))
 
     # Convert to delta times
     prev_tick = 0
-    for tick, msg_type, pitch, vel in events:
+    for tick, _order, kind, a, b in events:
         delta = tick - prev_tick
-        track.append(mido.Message(msg_type, note=pitch, velocity=vel, time=delta))
+        if kind == "control_change":
+            track.append(mido.Message("control_change", channel=channel, control=a, value=b, time=delta))
+        else:
+            track.append(mido.Message(kind, channel=channel, note=a, velocity=b, time=delta))
         prev_tick = tick
 
     # End of track

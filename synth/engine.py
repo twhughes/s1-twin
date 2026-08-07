@@ -49,6 +49,23 @@ DEFAULT_PC_CHANNEL = 15
 
 POLL_INTERVAL = 0.5
 
+# Keyboard CCs forwarded to the S-1: Mod Wheel (1) and Damper Pedal (64) —
+# the device's 'external' performance tier. Everything else is blocked so a
+# controller's knobs/faders can't silently rewrite patch parameters.
+PERFORMANCE_CCS = frozenset({1, 64})
+
+# Cockpit modes (chassis-spec C8). Exactly one at a time.
+#   solo  — the cockpit is the hub: it forwards MK3 notes, monitors the S-1's
+#           audio, and masters MIDI clock. This is the default (current app).
+#   logic — Logic Pro is the hub and owns notes, clock, and audio, so the
+#           cockpit MUST NOT double-drive them: MK3 forwarding, the audio
+#           monitor, and sequencer clock-out are all suppressed. Everything
+#           else — CC sync both ways, librarian, patch bank, push-all — stays
+#           live in every mode.
+SOLO = "solo"
+LOGIC = "logic"
+MODES = (SOLO, LOGIC)
+
 
 def _is_s1(port_name: str) -> bool:
     return S1_PORT_MARKER in port_name.lower()
@@ -76,6 +93,11 @@ class S1Engine:
         )
         self.sync_state = DISCONNECTED
         self.audio_auto = audio_auto
+        # Cockpit mode (C8). Default: solo (current behavior). `_solo_clock`
+        # remembers the sequencer's clock-out preference so logic mode can
+        # suppress it and solo mode restore exactly what the user chose.
+        self.mode = SOLO
+        self._solo_clock = self.sequencer.clock_enabled
 
         self._poll_interval = poll_interval
         self._listeners: list = []
@@ -163,6 +185,60 @@ class S1Engine:
         self.publish({"type": "pattern", "bank": bank, "slot": slot, "program": program})
         return program
 
+    # ── mode (C8: hub exclusivity) ───────────────────────────
+    def set_mode(self, mode: str) -> str:
+        """Switch the cockpit mode, applying the suppression/restoration atomically.
+
+        `logic` stops MK3 forwarding, stops the audio monitor, and stops
+        sequencer clock-out (Logic owns those). `solo` restores all three.
+        Idempotent; returns the resulting mode. Broadcasts a ``mode`` event.
+        """
+        if mode not in MODES:
+            raise ValueError(f"unknown mode {mode!r}; expected one of {MODES}")
+        if mode == self.mode:
+            return self.mode
+        self.mode = mode
+        self._apply_mode()
+        self.publish({"type": "mode", "mode": self.mode})
+        return self.mode
+
+    def _apply_mode(self) -> None:
+        """Apply the current mode's ownership split (C8), atomically.
+
+        CC sync (both directions), the librarian, the patch bank, and
+        push-all are never touched — they stay live in every mode.
+        """
+        if self.mode == LOGIC:
+            # Logic masters clock, so silence sequencer clock-out. Remember the
+            # user's preference to restore it verbatim on the way back to solo.
+            self._solo_clock = self.sequencer.clock_enabled
+            self.sequencer.clock_enabled = False
+            # Logic owns the audio return; stop the cockpit's own monitor. The
+            # mode gate in _tick_audio keeps it from auto-restarting.
+            was_running = self.monitor.running
+            self.monitor.stop()
+            if was_running:
+                self.publish({"type": "monitor", **self.monitor_status()})
+        else:
+            self.sequencer.clock_enabled = self._solo_clock
+        # Re-open external keyboards so the note-forwarding callback matches the
+        # mode: registered in solo, absent in logic.
+        self._reopen_keyboards()
+        if self.mode == SOLO:
+            # Bring the monitor back if the S-1's audio input is present.
+            self._tick_audio()
+
+    def _reopen_keyboards(self) -> None:
+        """Close and re-detect external keyboards so their input callback is
+        (re)bound for the current mode — solo forwards, logic does not."""
+        for port in self._keyboards.values():
+            try:
+                port.close()
+            except Exception:
+                pass
+        self._keyboards.clear()
+        self._tick_keyboards()
+
     # ── lifecycle ────────────────────────────────────────────
     def start(self) -> None:
         """Start the watcher thread (idempotent)."""
@@ -190,6 +266,7 @@ class S1Engine:
     # ── status ───────────────────────────────────────────────
     def status(self) -> dict:
         return {
+            "mode": self.mode,
             "sync": self.sync_state,
             "port": self.midi.port_name,
             "channel": self.midi.channel + 1,
@@ -282,11 +359,15 @@ class S1Engine:
         except Exception:
             names = []
 
+        # In logic mode Logic owns the notes, so the port opens without the
+        # forwarding callback (the entry gate in _forward_keyboard backs this up).
+        callback = self._forward_keyboard if self.mode == SOLO else None
         changed = False
         for name in names:
             if name not in self._keyboards:
                 try:
-                    self._keyboards[name] = midi_module.open_input(name)
+                    self._keyboards[name] = midi_module.open_input(
+                        name, callback=callback)
                     changed = True
                 except Exception:
                     pass
@@ -301,19 +382,43 @@ class S1Engine:
         if changed:
             self.publish({"type": "keyboards", "names": sorted(self._keyboards)})
 
-        # Forward notes from every external keyboard to the S-1.
+        # Drain any port delivering via iter_pending (no callback support).
+        # With a live callback the queue stays empty and this is a no-op.
         for port in self._keyboards.values():
             try:
                 pending = list(port.iter_pending())
             except Exception:
                 continue
             for msg in pending:
-                if msg.type == "note_on" and msg.velocity > 0:
-                    self.note_on(msg.note, msg.velocity)
-                elif msg.type == "note_off" or (msg.type == "note_on" and msg.velocity == 0):
-                    self.note_off(msg.note)
+                self._forward_keyboard(msg)
+
+    def _forward_keyboard(self, msg) -> None:
+        """Forward one external-keyboard message to the S-1.
+
+        Fires on the MIDI driver's callback thread the moment a key moves —
+        never on the 0.5 s watch tick, which added up to half a second of
+        latency and collapsed quick taps into inaudible zero-length notes.
+        The backend serializes all sends through its lock, so this is safe.
+
+        Suppressed in logic mode: Logic owns the notes there, so the cockpit
+        must not double-drive the S-1 (C8).
+        """
+        if self.mode == LOGIC:
+            return
+        if msg.type == "note_on" and msg.velocity > 0:
+            self.note_on(msg.note, msg.velocity)
+        elif msg.type == "note_off" or (msg.type == "note_on" and msg.velocity == 0):
+            self.note_off(msg.note)
+        elif msg.type == "pitchwheel":
+            self.midi.send_pitchwheel(msg.pitch)
+        elif msg.type == "control_change" and msg.control in PERFORMANCE_CCS:
+            self.midi.send_cc(msg.control, msg.value)
 
     def _tick_audio(self) -> None:
+        # Logic owns the audio return in logic mode; never auto-start the
+        # cockpit monitor there (C8).
+        if self.mode == LOGIC:
+            return
         if not self.audio_auto:
             return
         if self.monitor.running:

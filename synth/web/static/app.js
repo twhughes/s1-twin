@@ -236,11 +236,20 @@ function setKbdChip(names) {
   chip.title = names.join("\n") || "";
 }
 
+function setModeChip(mode) {
+  APP.mode = mode;
+  const chip = $("mode-chip");
+  if (!chip) return;
+  chip.classList.toggle("logic", mode === "logic");
+  chip.textContent = (mode || "solo").toUpperCase();
+}
+
 function applyStatus(st) {
   APP.status = st;
   setSyncChip(st.sync, st.port);
   setAudioChip(st.monitor);
   setKbdChip(st.keyboards || []);
+  if (st.mode) setModeChip(st.mode);
   if (st.transport) applyTransport(st.transport);
 }
 
@@ -268,6 +277,9 @@ function connectStateWS() {
         break;
       case "keyboards":
         setKbdChip(m.names);
+        break;
+      case "mode":
+        setModeChip(m.mode);
         break;
       case "position":
         APP.position = m.step;
@@ -1158,6 +1170,11 @@ async function init() {
   if (APP.studio) connectMatchWS();
 
   $("push-all").onclick = pushAllToS1;
+
+  $("mode-chip").onclick = () =>
+    api("POST", "/api/mode", { mode: APP.mode === "logic" ? "solo" : "logic" })
+      .then((r) => setModeChip(r.mode))
+      .catch((e) => toast(e.message, true));
 
   $("mute").onclick = () =>
     api("POST", "/api/monitor/mute", { muted: !(APP.status?.monitor?.muted) })

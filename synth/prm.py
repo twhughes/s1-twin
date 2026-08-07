@@ -146,12 +146,19 @@ def ticks_per_step(resolution: str) -> int:
 
 @dataclass
 class PrmStep:
-    """One STEP_NOTE line: up to 4 note slots plus substep/probability."""
+    """One STEP_NOTE line: up to 4 note slots plus substep/probability.
+
+    ``motion`` holds this step's recorded value for any active motion lane:
+    ``{lane (1-8): cc value 0-127}``. Lanes with no recorded value at this
+    step are simply absent, so a step without motion serializes exactly as the
+    device wrote it (no ``MOTION<n>`` tokens).
+    """
     notes: list[int] = field(default_factory=lambda: [-1, -1, -1, -1])
     velocities: list[int] = field(default_factory=lambda: [0, 0, 0, 0])
     lengths: list[int] = field(default_factory=lambda: [0, 0, 0, 0])
     substep: int = 0
     prob: int = 10  # tenths: 10 = 100%
+    motion: dict[int, int] = field(default_factory=dict)
 
     @classmethod
     def parse(cls, raw: str) -> PrmStep:
@@ -171,6 +178,8 @@ class PrmStep:
                 step.velocities[int(k[4:]) - 1] = value
             elif k.startswith("LENG") and k[4:].isdigit() and 1 <= int(k[4:]) <= 4:
                 step.lengths[int(k[4:]) - 1] = value
+            elif k.startswith("MOTION") and k[6:].isdigit() and 1 <= int(k[6:]) <= 8:
+                step.motion[int(k[6:])] = value
             elif k == "SUBSTEP":
                 step.substep = value
             elif k == "PROB":
@@ -185,6 +194,8 @@ class PrmStep:
             parts.append(f"LENG{i + 1}={self.lengths[i]}")
         parts.append(f"SUBSTEP={self.substep}")
         parts.append(f"PROB={self.prob}")
+        for lane in sorted(self.motion):
+            parts.append(f"MOTION{lane}={self.motion[lane]}")
         return " ".join(parts)
 
     def active_notes(self) -> list[tuple[int, int, int]]:
@@ -309,6 +320,41 @@ class PrmFile:
 
     def set_step(self, number: int, step: PrmStep) -> bool:
         return self.set(f"STEP_NOTE {number}", step.serialize())
+
+    # ── motion lanes ─────────────────────────────────────────
+    def motion_lanes(self) -> dict[int, int]:
+        """Assigned motion lanes: ``{lane 1-8: cc number}``. A lane whose
+        ``MOTION_CC<n>`` is -1 (unassigned) is omitted — those carry no data."""
+        out: dict[int, int] = {}
+        for lane in range(1, 9):
+            cc = self.get_int(f"MOTION_CC{lane}", -1)
+            if cc >= 0:
+                out[lane] = cc
+        return out
+
+    def to_motion_events(self) -> list[tuple[int, int, int]]:
+        """Recorded knob motion as ``(step_index, cc, value)``, one event per
+        step that holds a value on an assigned lane, sorted by (step, cc).
+
+        Only lanes that carry data appear: a lane must be assigned to a CC
+        (``MOTION_CC<n>`` >= 0) and have a non-negative value at the step.
+        """
+        lanes = self.motion_lanes()
+        if not lanes:
+            return []
+        steps = max(1, min(MAX_STEPS, self.get_int("LENG", 16)))
+        events: list[tuple[int, int, int]] = []
+        for n in range(1, steps + 1):
+            step = self.step(n)
+            if step is None:
+                continue
+            for lane, value in step.motion.items():
+                cc = lanes.get(lane)
+                if cc is None or value < 0:
+                    continue
+                events.append((n - 1, cc, max(0, min(127, value))))
+        events.sort(key=lambda e: (e[0], e[1]))
+        return events
 
     # ── patch (CC) view ──────────────────────────────────────
     def to_cc_values(self) -> dict[int, int]:

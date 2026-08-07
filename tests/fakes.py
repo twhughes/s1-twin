@@ -124,6 +124,7 @@ class FakeMidiPort:
         self.name = name
         self.sent: list = []       # messages sent out (for output ports)
         self.pending: list = []    # messages waiting to be read (for input ports)
+        self.callback = None       # input callback; fires only when a test calls it
         self.closed = False
         self.fail_next_send = False
 
@@ -178,9 +179,10 @@ class FakeMidiWorld:
         port.closed = False
         return port
 
-    def open_input(self, name):
+    def open_input(self, name, callback=None):
         if name not in self.inputs:
             raise OSError(f"unknown port {name!r}")
         port = self.inputs[name]
         port.closed = False
+        port.callback = callback
         return port

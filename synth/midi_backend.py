@@ -138,6 +138,25 @@ class MidiBackend:
             mido.Message("control_change", channel=self._channel, control=cc, value=value)
         )
 
+    def send_pitchwheel(self, pitch: int) -> bool:
+        """Send a Pitch Bend message (pitch -8192..8191)."""
+        pitch = max(-8192, min(8191, pitch))
+        return self._send(
+            mido.Message("pitchwheel", channel=self._channel, pitch=pitch)
+        )
+
+    def send_sysex(self, data: bytes) -> bool:
+        """Send a System Exclusive message.
+
+        ``data`` is the full sysex including the 0xF0 start and 0xF7 end bytes;
+        mido frames the payload itself, so we hand it the bytes between the
+        markers. Like every other send, a port error marks the backend
+        disconnected and returns False rather than raising.
+        """
+        if len(data) < 2 or data[0] != 0xF0 or data[-1] != 0xF7:
+            raise ValueError("sysex must start with 0xF0 and end with 0xF7")
+        return self._send(mido.Message("sysex", data=list(data[1:-1])))
+
     def send_note_on(self, note: int, velocity: int = 100) -> bool:
         return self._send(
             mido.Message("note_on", channel=self._channel, note=note, velocity=velocity)

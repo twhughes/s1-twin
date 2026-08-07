@@ -32,6 +32,7 @@ from pydantic import BaseModel, Field
 
 import synth.engine as engine_module
 
+from .. import logic as logic_module
 from .. import patches as patch_bank
 from .. import prm as prm_module
 from .. import sequences as seq_bank
@@ -206,6 +207,47 @@ def push_all() -> dict:
     engine = eng()
     engine.push_all()
     return {"pushed": len(engine.params.snapshot()), "sync": engine.sync_state}
+
+
+class ModeReq(BaseModel):
+    mode: Literal["solo", "logic"] = Field(
+        description="solo = cockpit is the hub; logic = Logic Pro is the hub"
+    )
+
+
+@app.get("/api/mode", tags=["state"], summary="Current cockpit mode")
+def get_mode() -> dict:
+    """The cockpit mode (chassis-spec C8): ``solo`` (the cockpit forwards MK3
+    notes, monitors S-1 audio, and masters clock) or ``logic`` (Logic owns
+    notes, clock, and audio; the cockpit suppresses all three). Patch control
+    — CC sync, librarian, bank, push-all — stays live in every mode."""
+    return {"mode": eng().mode}
+
+
+@app.post("/api/mode", tags=["state"], summary="Set the cockpit mode")
+def post_mode(req: ModeReq) -> dict:
+    """Switch modes. Applies the suppression/restoration atomically and
+    broadcasts a ``mode`` event to every open view."""
+    return {"mode": eng().set_mode(req.mode)}
+
+
+class LogicTransportReq(BaseModel):
+    action: Literal["play", "stop", "record"] = Field(
+        description="play = roll, stop = halt, record = arm/punch-in"
+    )
+
+
+@app.post("/api/logic/transport", tags=["state"], summary="Drive Logic Pro's transport")
+def logic_transport(req: LogicTransportReq) -> dict:
+    """Send MMC (MIDI Machine Control) over the ``HQ Clock`` IAC bus so Logic —
+    with "Listen to MMC" on (chassis-spec C7) — rolls, stops, or arms (M4).
+    There is no tempo-set message (C4); tempo is typed in Logic. A missing
+    ``HQ Clock`` bus fails loud with a setup pointer (C5)."""
+    try:
+        data = logic_module.send_transport(req.action, midi_module=eng()._mido)
+    except logic_module.LogicTransportError as e:
+        raise HTTPException(503, str(e))
+    return {"action": req.action, "port": logic_module.HQ_CLOCK_PORT, "sent": list(data)}
 
 
 class ParamValue(BaseModel):
@@ -955,6 +997,7 @@ async def ws_state(websocket: WebSocket) -> None:
     try:
         await websocket.send_json({
             "type": "hello",
+            "mode": engine.mode,
             "params": {str(cc): v for cc, v in engine.params.snapshot().items()},
             "status": engine.status(),
             "sequence": seq_bank.sequence_to_dict(engine.sequencer.sequence),

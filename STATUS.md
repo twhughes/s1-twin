@@ -1,5 +1,5 @@
 # STATUS — synth
-*updated 2026-08-08 (**the differentiable digital twin** — `match/twin.py`, autograd, gradcheck-exact, self-consistent twin-guided match; **615 tests**; before that 2026-08-07 chassis build + hardening: M1/M2/M4 + matcher Phase 0/A scaffolding + a 5-group contract-hardening sweep, **601 tests**; chassis spec `docs/chassis-spec.md`; before that 2026-08-01 canonical `data/s1.json` + listen-only connect + `SYNTH_PORT`)*
+*updated 2026-08-08 (**standalone playable soft synth + differentiable visual sound-matcher** at `soft/` :8767 — drop a note/chord, seed the keys, watch the knobs gradient-descend a match; **638 tests**; before that same day **the differentiable digital twin** — `match/twin.py`, autograd, gradcheck-exact, self-consistent twin-guided match, **615 tests**; before that 2026-08-07 chassis build + hardening: M1/M2/M4 + matcher Phase 0/A scaffolding + a 5-group contract-hardening sweep, **601 tests**; chassis spec `docs/chassis-spec.md`; before that 2026-08-01 canonical `data/s1.json` + listen-only connect + `SYNTH_PORT`)*
 
 - **state:** active
 - **what:** The Roland S-1 hardware synth, fully present in software: one `s1` command starts a local web cockpit (FastAPI) with every panel knob and menu setting live-synced both directions, a piano-roll sequencer with MIDI clock out, auto-monitored USB audio with a live oscilloscope (drift-servo resampled passthrough, ~35 ms, glitch-free), MIDI-keyboard forwarding, .PRM export ("Save to S-1") *and* import (the librarian), synesthesia note-coloring, and a full REST/WS agent API. The Textual TUI is retired. Plus the CMA-ES sound-matching engine behind `[studio]` and now a differentiable digital twin (`match/twin.py`, autograd, `[twin]`). 615 tests. A standalone headless twin of the monitor+forwarding lives at `music/tools/s1_rig.py` (launch: `music/rig.sh`).
@@ -13,6 +13,26 @@
   launcher convention: **`synth`** (`bin/synth`) runs the venv's `synth --no-browser`
   detached, waits on `/api/status`, opens the cockpit — `synth off` stops it. Appears on the
   HQ control panel (:8800).
+- **2026-08-08 — standalone playable soft synth + differentiable visual sound-matcher (`soft/`, :8767, 620→638 tests):**
+  a self-contained Web-Audio S-1-style instrument (`soft/index.html`): rotary knobs (osc/filter/env/LFO),
+  a clickable + computer-key + Web-MIDI keyboard, Tyler's synesthesia key-colors — plays real-time, no
+  hardware. Plus a **streaming visual sound-matcher**: drop a single note or **chord (up to 4)** → either
+  **SEED the notes** by clicking keys (recommended; skips detection) or **cold-start** auto-detect
+  (`analyze.detect_notes`, iterative harmonic-salience) → gradient-descend the shared patch on **a
+  differentiable model of this synth** (reuses `match/twin.py` + `render_chord`; framed as the model, not
+  "the twin"). You **watch it train**: knobs animate to the current guess, a loss curve falls, matched keys
+  light, note-search refines the set. **Silent + fast by default** (server renders arrays only, zero audio);
+  a **MONITOR** toggle plays candidates to hear it converge. Warm-start from the current knobs; QUICK vs
+  **THOROUGH** (160 iters × 4 restarts). Server `soft/server.py` (FastAPI, WS `/ws/match`, 127.0.0.1 only,
+  `SOFT_PORT` env 8767 — **claim in PORTS.md**); run `SOFT_PORT=8767 bash soft/run.sh`.
+  - **Formulation:** objective = differentiable **multi-resolution STFT + log-mel + envelope** loss;
+    search space = **~18 continuous k** (Adam) + **3 discrete s** (sub-octave / LFO-wave / amp-mode,
+    enumerated) + **1–4 notes** (seeded or searched). Non-convex → multi-restart + a **Continue** button
+    (queued). **Gold-standard recovery test** passes: a random rendered patch is recovered to closeness
+    54–70 from cold — matches the **sound, not the exact knobs** (the synth is non-injective).
+  - **Timing (seeded, thorough):** mono ~37 s (closeness 74) · 3-note ~78 s (87) · 4-note ~99 s (87).
+  - **Queued next (same files):** delay + reverb knobs (S-1 CC 89/91/92) + matching, and the Continue
+    button to resume a weak match.
 - **2026-08-08 — the differentiable digital twin (FABLE centerpiece / M5 Phase B, `match/twin.py`, 601→615 tests):**
   built the software S-1: a differentiable forward model of the fully-known signal chain, in
   **HIPS `autograd`** (NOT torch/jax), added as a `[twin]` optional extra in `pyproject.toml`.

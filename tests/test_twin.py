@@ -27,6 +27,8 @@ from synth.match.twin import (
     CalibrationReport,
     Twin,
     TwinMatcher,
+    _adam_descend,
+    _closeness_vs,
     _default_s,
     calibrate,
     spectral_loss,
@@ -120,6 +122,70 @@ def test_cc_k_roundtrips():
     assert float(np.abs(k - k2).max()) < 0.02  # within CC quantization
 
 
+# ── polyphonic render (render_chord) ──────────────────────────────────────────
+
+
+def test_render_chord_shape_and_finite():
+    tw = Twin(sr=16000, seconds=0.4)
+    k = np.full(tw.k_dim, 0.5)
+    audio = np.asarray(tw.render_chord(k, _default_s(), [60, 64, 67]))
+    assert audio.shape == (int(round(0.4 * 16000)),)
+    assert np.isfinite(audio).all()
+
+
+def test_render_chord_single_note_equals_mono():
+    """A 1-note chord is the mono render (sqrt(1) == 1 normalization)."""
+    tw = Twin(sr=16000, seconds=0.4)
+    k = np.full(tw.k_dim, 0.45)
+    mono = np.asarray(tw.render(k, _default_s(), 57))
+    chord = np.asarray(tw.render_chord(k, _default_s(), [57]))
+    assert float(np.abs(mono - chord).max()) == 0.0
+
+
+def test_render_chord_sums_and_normalizes():
+    """The chord is the summed voices divided by sqrt(N) — verify against the
+    explicit sum, and that it does not simply equal any single voice."""
+    tw = Twin(sr=16000, seconds=0.4)
+    k = np.full(tw.k_dim, 0.5)
+    notes = [48, 55, 60]
+    voices = [np.asarray(tw.render(k, _default_s(), n)) for n in notes]
+    expect = sum(voices) / np.sqrt(len(notes))
+    got = np.asarray(tw.render_chord(k, _default_s(), notes))
+    assert float(np.abs(got - expect).max()) < 1e-9
+    assert float(np.abs(got - voices[0]).mean()) > 1e-6
+
+
+def test_render_chord_is_differentiable():
+    """Autograd gradient of a chord loss matches central finite differences on a
+    couple of params — the shared patch descends a real gradient against a chord."""
+    from autograd import grad
+
+    tw = Twin(sr=8000, seconds=0.3)
+    notes = [60, 64, 67]
+    target = np.asarray(tw.render_chord(np.full(tw.k_dim, 0.4), None, notes), dtype=np.float64)
+
+    def obj(k: np.ndarray) -> float:
+        return spectral_loss(tw.render_chord(k, None, notes), target, tw.sr)
+
+    k = np.full(tw.k_dim, 0.5)
+    g = grad(obj)(k)
+    for name in ("saw_lvl", "cutoff", "attack"):
+        i = _K_INDEX[name]
+        kp, km = k.copy(), k.copy()
+        kp[i] += 1e-5
+        km[i] -= 1e-5
+        fd = (obj(kp) - obj(km)) / 2e-5
+        assert np.isfinite(g[i])
+        rel = abs(g[i] - fd) / (max(abs(fd), abs(g[i])) + 1e-6)
+        assert rel < 1e-3, f"{name}: grad {g[i]:.5f} vs fd {fd:.5f}"
+
+
+def test_render_chord_rejects_empty():
+    tw = Twin(sr=16000, seconds=0.3)
+    with pytest.raises(ValueError):
+        tw.render_chord(np.full(tw.k_dim, 0.5), None, [])
+
+
 # ── the core correctness proof ────────────────────────────────────────────────
 
 
@@ -187,6 +253,45 @@ def test_self_consistency_search_recovers_the_patch():
     result = matcher.match(target, note)
     assert result.closeness > 60.0, f"closeness {result.closeness:.1f}"
     assert result.evals > 0
+
+
+@pytest.mark.parametrize("seed", [0, 7])
+def test_random_chord_recovery_by_sound(seed):
+    """Gold-standard validation: render the model at RANDOM notes + RANDOM
+    continuous params + RANDOM discrete ``s`` — that IS the target, so a global
+    optimum (closeness→100) provably exists. A COLD (random-init) multi-restart
+    search on ``render_chord`` then recovers the SOUND to a high closeness.
+
+    We assert on the SOUND (closeness), NOT on parameter equality: the synth is
+    non-injective, so the recovered knobs / ``s`` may legitimately differ from the
+    originals while sounding the same (seed 0 here recovers a *different* ``s`` yet
+    lands well above chance). This mirrors the server's real algorithm — multi-
+    restart gradient descent on the shared patch, then a cheap discrete-``s`` sweep."""
+    tw = Twin(sr=8000, seconds=0.4)
+    rng = np.random.default_rng(seed)
+    base = int(rng.integers(45, 58))
+    notes = sorted({base, base + int(rng.integers(3, 6)), base + int(rng.integers(7, 12))})
+    k_star = np.clip(rng.uniform(0.1, 0.9, tw.k_dim), 0.0, 1.0)
+    s_star = {sp.name: int(rng.choice(sp.choices)) for sp in S_PARAMS}
+    target = np.asarray(tw.render_chord(k_star, s_star, notes), dtype=np.float64)
+
+    # cold multi-restart GD on the continuous patch (default s during search)…
+    best_k, best_l = None, np.inf
+    for _r in range(3):
+        x0 = np.clip(rng.uniform(0.1, 0.9, tw.k_dim), 0.0, 1.0)
+        xk, lk, _ev = _adam_descend(
+            lambda k: spectral_loss(tw.render_chord(k, _default_s(), notes), target, tw.sr),
+            x0, iters=130, lr=0.08)
+        if lk < best_l:
+            best_l, best_k = lk, xk
+    # …then the cheap discrete-s sweep on the best patch (no gradient).
+    best_clos = -1.0
+    for s_cfg in tw.s_configs():
+        audio = np.asarray(tw.render_chord(best_k, s_cfg, notes), dtype=np.float32)
+        best_clos = max(best_clos, _closeness_vs(audio, target, tw.sr))
+
+    # Well above chance (random patches score near 0-20); solution exists at ~100.
+    assert best_clos > 45.0, f"seed {seed} notes {notes}: closeness {best_clos:.1f}"
 
 
 def test_twin_matcher_conforms_to_matcher_protocol():

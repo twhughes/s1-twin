@@ -12,6 +12,7 @@ from synth.match.analyze import (
     C3_FALLBACK,
     Segments,
     detect_f0,
+    detect_notes,
     hz_to_midi,
     midi_to_hz,
     probe_note,
@@ -97,6 +98,50 @@ class TestProbeNote:
         rng = np.random.default_rng(1)
         clip = AudioClip((0.5 * rng.standard_normal(2 * WORKING_SR)).astype(np.float32), WORKING_SR)
         assert probe_note(clip) == 48
+
+
+# ── multi-pitch detection (detect_notes) ─────────────────────────────────────
+def harmonic_note(midi: int, t: np.ndarray, n_harm: int = 6) -> np.ndarray:
+    """One harmonic (steady, clean) tone at ``midi`` — a stack of ``n_harm`` sines
+    with 1/h amplitudes, exactly the material detect_notes is honest about."""
+    f = midi_to_hz(midi)
+    return sum((1.0 / h) * np.sin(2 * np.pi * f * h * t) for h in range(1, n_harm + 1))
+
+
+def chord_clip(midis: list[int], seconds: float = 2.0, sr: int = WORKING_SR) -> AudioClip:
+    t = np.linspace(0, seconds, int(seconds * sr), endpoint=False)
+    x = sum(harmonic_note(m, t) for m in midis)
+    x = x / np.abs(x).max()
+    return AudioClip(x.astype(np.float32), sr)
+
+
+class TestDetectNotes:
+    def test_three_note_major_triad(self):
+        # C major triad: C4 + E4 + G4 (MIDI 60, 64, 67).
+        assert detect_notes(chord_clip([60, 64, 67])) == [60, 64, 67]
+
+    def test_four_note_seventh_chord(self):
+        # C dominant-7th: C4 + E4 + G4 + Bb4 (MIDI 60, 64, 67, 70).
+        assert detect_notes(chord_clip([60, 64, 67, 70])) == [60, 64, 67, 70]
+
+    def test_returns_notes_low_to_high(self):
+        got = detect_notes(chord_clip([67, 60, 64]))  # unsorted input notes
+        assert got == sorted(got) == [60, 64, 67]
+
+    def test_single_sine_is_exactly_one_note(self):
+        # A pure single pitch must yield exactly one note (no polyphony regression).
+        assert detect_notes(sine(392.0)) == [67]  # G4
+
+    def test_single_harmonic_note_is_one_note(self):
+        assert detect_notes(chord_clip([57])) == [57]  # A3, harmonic-rich but mono
+
+    def test_respects_max_notes_cap(self):
+        got = detect_notes(chord_clip([60, 64, 67, 70]), max_notes=2)
+        assert len(got) <= 2
+
+    def test_silence_falls_back(self):
+        clip = AudioClip(np.zeros(WORKING_SR, dtype=np.float32), WORKING_SR)
+        assert detect_notes(clip) == [C3_FALLBACK]
 
 
 # ── segmentation ─────────────────────────────────────────────────────────────

@@ -513,6 +513,24 @@ class Twin:
             vca = gate
         return filtered * vca
 
+    def render_chord(
+        self, k: Any, s: dict[str, int] | None = None, notes: Sequence[int] = (60,)
+    ) -> Any:
+        """Render the SAME ``(k, s)`` patch on each MIDI note in ``notes`` and sum
+        the voices — a polyphonic chord on this one patch (for matching chords).
+
+        Stays autograd-differentiable in ``k`` (it is a plain sum of
+        :meth:`render` calls). The sum is normalized by ``sqrt(len(notes))`` so a
+        thick chord does not clip relative to a single note. A single-element
+        ``notes`` therefore equals the mono :meth:`render` (``sqrt(1) == 1``)."""
+        note_list = [int(n) for n in notes]
+        if not note_list:
+            raise ValueError("render_chord needs at least one note")
+        total = self.render(k, s, note_list[0])
+        for note in note_list[1:]:
+            total = total + self.render(k, s, note)
+        return total / math.sqrt(len(note_list))
+
     # -- CC <-> k conversions -------------------------------------------------
     def cc_to_k(self, cc: dict[int, int]) -> np.ndarray:
         """Normalize a CC vector to the twin's k in [0,1] (uses schema CC ranges)."""

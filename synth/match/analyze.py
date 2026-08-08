@@ -163,6 +163,132 @@ def probe_note(clip: AudioClip) -> int:
     return hz_to_midi(f0)
 
 
+# ── multi-pitch detection (iterative harmonic salience) ──────────────────────
+# For matching CHORDS (up to 4 notes) we need the note SET, not one pitch. This
+# is deliberately simpler than YIN: a harmonic-sum salience over candidate MIDI
+# fundamentals, greedy-peeled one note at a time (pick the strongest, subtract
+# its harmonic partials from the spectrum, repeat).
+
+# How many harmonics a candidate's salience sums, and the per-harmonic decay.
+# The decay makes a true fundamental out-score its sub-octave (whose only energy
+# sits in the *even* harmonic slots, each down-weighted), killing octave errors.
+_SALIENCE_HARMONICS = 16
+_SALIENCE_DECAY = 0.85
+# Fractional half-width of the notch that suppresses a picked note's partials
+# (±3 % ≈ a half-semitone), so the next peel sees the residual spectrum.
+_SUPPRESS_BW = 0.03
+# A candidate only competes if its OWN fundamental bin carries real energy — at
+# least this fraction of the strongest fundamental. This is the octave-error
+# guard: a sub-harmonic like C3 "explaining" a C4+G4 dyad has NO energy at 130 Hz,
+# so it is rejected (missing-fundamental error). Suppression handles the octave
+# *above* (a picked note zeros the partials its octave-up would sit on).
+_FUND_GATE_REL = 0.1
+# A peeled note counts only if its salience clears this fraction of the first
+# (strongest) note's salience — the "relative threshold" that stops the peel.
+_SALIENCE_REL_THRESHOLD = 0.1
+
+
+def _harmonic_salience_notes(
+    clip: AudioClip,
+    max_notes: int = 4,
+    fmin: float = DEFAULT_FMIN,
+    fmax: float = DEFAULT_FMAX,
+) -> list[tuple[int, float]]:
+    """Peel up to ``max_notes`` MIDI notes by iterative harmonic salience.
+
+    Returns ``(midi_note, salience)`` pairs in **selection order** (strongest
+    first), with NO relative-threshold cut — always as many as it can peel up to
+    ``max_notes`` (so a caller can inspect ranking / an extra candidate). Empty
+    for silence. This is the raw ranked engine behind :func:`detect_notes`.
+    """
+    x = np.asarray(clip.samples, dtype=np.float64)
+    sr = clip.samplerate
+    if x.size == 0 or float(np.abs(x).max()) < SILENCE_FLOOR:
+        return []
+
+    seg_len = min(x.size, sr)  # up to ~1 s of the loudest body, for f0 resolution
+    seg = _analysis_window(x, sr, seg_len)
+    if seg.size < 2:
+        return []
+    seg = seg * np.hanning(seg.size)
+    n_fft = 1 << int(np.ceil(np.log2(max(2, seg.size * 2))))
+    spec = np.abs(np.fft.rfft(seg, n=n_fft))
+    freqs = np.fft.rfftfreq(n_fft, 1.0 / sr)
+    nyq = float(freqs[-1])
+
+    lo_note = int(np.ceil(69.0 + 12.0 * np.log2(fmin / 440.0)))
+    hi_note = int(np.floor(69.0 + 12.0 * np.log2(min(fmax, nyq) / 440.0)))
+    if hi_note < lo_note:
+        return []
+    cand_notes = np.arange(lo_note, hi_note + 1)
+    cand_freqs = 440.0 * 2.0 ** ((cand_notes - 69) / 12.0)
+    # Reference for the fundamental-presence gate: the strongest candidate
+    # fundamental in the ORIGINAL spectrum (before any peeling).
+    fund_ref = float(np.max(np.interp(cand_freqs, freqs, spec))) if cand_freqs.size else 0.0
+    fund_gate = _FUND_GATE_REL * fund_ref
+
+    residual = spec.copy()
+    out: list[tuple[int, float]] = []
+    taken: set[int] = set()
+    for _ in range(int(max(1, max_notes))):
+        best_note, best_sal = None, 0.0
+        for note, f in zip(cand_notes, cand_freqs):
+            if int(note) in taken:
+                continue
+            # Octave-error guard: the candidate's own fundamental must carry energy.
+            if float(np.interp(f, freqs, residual)) < fund_gate:
+                continue
+            harm_count = int(min(_SALIENCE_HARMONICS, nyq // f))
+            if harm_count < 1:
+                continue
+            hs = np.arange(1, harm_count + 1) * f
+            mags = np.interp(hs, freqs, residual)
+            weights = _SALIENCE_DECAY ** np.arange(harm_count)
+            sal = float(np.dot(weights, mags))
+            if sal > best_sal:
+                best_note, best_sal = int(note), sal
+        if best_note is None or best_sal <= 1e-9:
+            break
+        out.append((best_note, best_sal))
+        taken.add(best_note)
+        # Subtract the picked note's harmonic partials so the next peel is honest.
+        f = 440.0 * 2.0 ** ((best_note - 69) / 12.0)
+        for h in range(1, _SALIENCE_HARMONICS + 1):
+            fh = h * f
+            if fh > nyq:
+                break
+            residual[(freqs >= fh * (1 - _SUPPRESS_BW)) & (freqs <= fh * (1 + _SUPPRESS_BW))] = 0.0
+    return out
+
+
+def detect_notes(clip: AudioClip, max_notes: int = 4) -> list[int]:
+    """Detect the set of MIDI notes sounding in ``clip`` (chords up to ``max_notes``).
+
+    Iterative harmonic salience: sum each candidate fundamental's harmonic
+    magnitudes, pick the strongest, subtract its partials, repeat — stopping when
+    a peeled note's salience falls below :data:`_SALIENCE_REL_THRESHOLD` of the
+    first note's, or ``max_notes`` is reached. Returns MIDI notes **low→high**;
+    a mono (single-pitch) input yields exactly one note, so this never regresses
+    the single-note path.
+
+    Honest scope: this is reliable on **clean, steady, harmonic** material — synth
+    chords with clear fundamentals, exactly what the twin renders. It degrades on
+    dense voicings, inharmonic timbres, reverb, and real polyphonic mixes, where
+    shared partials and missing fundamentals confuse the greedy peel. It is NOT a
+    general polyphonic transcriber. Falls back to :data:`C3_FALLBACK` for silence.
+    """
+    ranked = _harmonic_salience_notes(clip, max_notes)
+    if not ranked:
+        return [C3_FALLBACK]
+    top = ranked[0][1]
+    kept = [ranked[0][0]]
+    for note, sal in ranked[1:]:
+        if sal < _SALIENCE_REL_THRESHOLD * top:
+            break
+        kept.append(note)
+    return sorted(set(kept))
+
+
 # ── envelope segmentation (ADSR regions) ─────────────────────────────────────
 
 

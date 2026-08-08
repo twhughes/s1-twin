@@ -27,6 +27,13 @@ studio = [
     "scipy>=1.10",
     "cma>=3.2",
 ]
+# The differentiable digital twin (synth/match/twin.py). autograd (HIPS autograd,
+# not torch/jax) gives exact gradients through autograd.numpy — including
+# autograd.numpy.fft — for the gradient-descent sound match. Install with the
+# studio extra: pip install -e ".[studio,twin]"
+twin = [
+    "autograd>=1.6",
+]
 # Tests and linting: pip install -e ".[studio,dev]"
 dev = [
     "pytest>=8",

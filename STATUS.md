@@ -1,8 +1,8 @@
 # STATUS — synth
-*updated 2026-08-07 (chassis build + hardening: M1/M2/M4 + matcher Phase 0/A scaffolding + a 5-group contract-hardening sweep, all on branch `chassis-hardening`, **601 tests**; earlier same day: chassis spec `docs/chassis-spec.md`; keyboard forwarding onto input callbacks; before that 2026-08-01 canonical `data/s1.json` + listen-only connect + `SYNTH_PORT`)*
+*updated 2026-08-08 (**the differentiable digital twin** — `match/twin.py`, autograd, gradcheck-exact, self-consistent twin-guided match; **615 tests**; before that 2026-08-07 chassis build + hardening: M1/M2/M4 + matcher Phase 0/A scaffolding + a 5-group contract-hardening sweep, **601 tests**; chassis spec `docs/chassis-spec.md`; before that 2026-08-01 canonical `data/s1.json` + listen-only connect + `SYNTH_PORT`)*
 
 - **state:** active
-- **what:** The Roland S-1 hardware synth, fully present in software: one `s1` command starts a local web cockpit (FastAPI) with every panel knob and menu setting live-synced both directions, a piano-roll sequencer with MIDI clock out, auto-monitored USB audio with a live oscilloscope (drift-servo resampled passthrough, ~35 ms, glitch-free), MIDI-keyboard forwarding, .PRM export ("Save to S-1") *and* import (the librarian), synesthesia note-coloring, and a full REST/WS agent API. The Textual TUI is retired. Plus the CMA-ES sound-matching engine behind `[studio]`. 351 tests. A standalone headless twin of the monitor+forwarding lives at `music/tools/s1_rig.py` (launch: `music/rig.sh`).
+- **what:** The Roland S-1 hardware synth, fully present in software: one `s1` command starts a local web cockpit (FastAPI) with every panel knob and menu setting live-synced both directions, a piano-roll sequencer with MIDI clock out, auto-monitored USB audio with a live oscilloscope (drift-servo resampled passthrough, ~35 ms, glitch-free), MIDI-keyboard forwarding, .PRM export ("Save to S-1") *and* import (the librarian), synesthesia note-coloring, and a full REST/WS agent API. The Textual TUI is retired. Plus the CMA-ES sound-matching engine behind `[studio]` and now a differentiable digital twin (`match/twin.py`, autograd, `[twin]`). 615 tests. A standalone headless twin of the monitor+forwarding lives at `music/tools/s1_rig.py` (launch: `music/rig.sh`).
 - **interesting:** the "digital twin" — a differentiable software model of the S-1's fully-known signal chain, calibrated on a few hundred hardware probes, so sound-matching becomes offline gradient descent instead of 15 minutes of blind hardware probing. It's also the seed of the standalone soft synth.
 - **last mile:** the joint plug-in ceremony (Tyler + hardware: knob-twist→UI, HW keyboard, disk-mode write, replug resync) confirms the ship; then the FABLE north star — validate the perceptual distance metric against Tyler's ears, then build the twin (docs/match-v3-spec.md).
 - **cluster:** creative
@@ -13,6 +13,36 @@
   launcher convention: **`synth`** (`bin/synth`) runs the venv's `synth --no-browser`
   detached, waits on `/api/status`, opens the cockpit — `synth off` stops it. Appears on the
   HQ control panel (:8800).
+- **2026-08-08 — the differentiable digital twin (FABLE centerpiece / M5 Phase B, `match/twin.py`, 601→615 tests):**
+  built the software S-1: a differentiable forward model of the fully-known signal chain, in
+  **HIPS `autograd`** (NOT torch/jax), added as a `[twin]` optional extra in `pyproject.toml`.
+  The DSP math is a clean autograd.numpy reimplementation of music's gradcheck-exact torch
+  kernel (credited in-file, never imported across the repo boundary): band-limited saw/pulse/sub
+  + noise → **analytic 4-pole ladder** (a frequency-domain transfer function, NOT an unrolled
+  recurrence, so autograd's tape stays shallow) → ADSR VCA, with an LFO on pitch + cutoff.
+  Continuous params are the normalized **k** vector (18 CCs); discrete **s** (sub octave / LFO
+  wave / amp-env mode) enumerated. The twin conforms to `DifferentiableBackend` — it's a real
+  tier-1 backend beside the hardware (chassis C9).
+  - **Gradcheck (the core proof):** the `k → render → differentiable-loss` gradient matches
+    central finite differences to **max rel-err ~3e-8** (well under the 1e-3 bar), on the harder
+    time-varying-filter + LFO path. *(Found and fixed a real autograd bug on the way: its
+    `fft.rfft` VJP is wrong when the FFT size exceeds the input length — the code zero-pads
+    manually instead.)*
+  - **Search:** a **differentiable log-mel + multi-scale-STFT + envelope** loss carried in
+    autograd (features.py/distance.py are plain numpy, not differentiable) + Adam over k, s
+    enumerated. Self-consistency (target rendered by the twin at a known cc\*) recovers to
+    **closeness ~78** — proves the search end-to-end with **zero hardware**.
+  - **Benchmark numbers** (`benchmark(twin_matcher, corpus)`, probes = **0**, median **~23 s**/match,
+    << FABLE's 4-min bar): twin-native corpus mean closeness **77**; the Phase-0 PLACEHOLDER
+    corpus mean **51** (bright_saw 51 / dark_square 60 / sub_heavy 71 / noisy 22) — the residual
+    is a real **twin-vs-placeholder** timbre gap (the placeholder is a crude different synth),
+    which is exactly what calibration closes. See `docs/match-benchmarks.md`.
+  - **HONEST GAPS (not done, by design — the tagged hardware/ears session):** calibration is
+    against **synthetic/self-consistent** targets only (no real S-1 this session); `calibrate(probes)`
+    is a working seam that fits the same curves against real hardware when it exists, and it
+    reports a held-out feature gap (labeled synthetic). The differentiable distance is
+    perceptually **MOTIVATED, not validated** — validating it against Tyler's ears is still the
+    gate before trusting any match (FABLE rule #1). No metric-vs-ears claim is made anywhere.
 - **2026-08-07 — chassis build + hardening sweep (branch `chassis-hardening`, 351→552 tests):**
   built the code half of `docs/chassis-spec.md` with parallel Opus subagents, then hardened
   every architecture seam into an explicit, tested contract. NOT committed to `main` yet —

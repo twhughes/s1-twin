@@ -68,7 +68,7 @@ thorough):
 
 Localhost only (127.0.0.1) with a host guard on both the HTTP routes and the
 WebSocket: this process reads uploaded files and runs compute, so no cross-origin
-/ DNS-rebinding caller may reach it. Port from ``SOFT_PORT`` (default **8767**).
+/ DNS-rebinding caller may reach it. Port from ``SOFT_PORT`` (default **8816**).
 """
 
 from __future__ import annotations
@@ -87,7 +87,7 @@ from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, JSONResponse
 
 HOST = "127.0.0.1"
-PORT = int(os.environ.get("SOFT_PORT", "8767"))  # PORTS.md (claim 8767 later); SOFT_PORT overrides
+PORT = int(os.environ.get("SOFT_PORT", "8816"))  # PORTS.md 8816 (synth soft matcher); SOFT_PORT overrides
 MAX_UPLOAD_BYTES = 25 * 1024 * 1024
 
 # Frame pacing (seconds slept between streamed frames). Small so the default run

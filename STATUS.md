@@ -1,5 +1,5 @@
 # STATUS — synth
-*updated 2026-08-08 (**standalone playable soft synth + differentiable visual sound-matcher** at `soft/` :8767 — drop a note/chord, seed the keys, watch the knobs gradient-descend a match; **638 tests**; before that same day **the differentiable digital twin** — `match/twin.py`, autograd, gradcheck-exact, self-consistent twin-guided match, **615 tests**; before that 2026-08-07 chassis build + hardening: M1/M2/M4 + matcher Phase 0/A scaffolding + a 5-group contract-hardening sweep, **601 tests**; chassis spec `docs/chassis-spec.md`; before that 2026-08-01 canonical `data/s1.json` + listen-only connect + `SYNTH_PORT`)*
+*updated 2026-09-07 (**venv rebuilt, 638/638 green on Python 3.12, `MERGE-REVIEW.md` written — `chassis-hardening` is 6 commits ahead of `main`, fast-forwardable, waiting on Tyler's merge OK**; before that 2026-08-08 **standalone playable soft synth + differentiable visual sound-matcher** at `soft/` :8816 — drop a note/chord, seed the keys, watch the knobs gradient-descend a match; **638 tests**; before that same day **the differentiable digital twin** — `match/twin.py`, autograd, gradcheck-exact, self-consistent twin-guided match, **615 tests**; before that 2026-08-07 chassis build + hardening: M1/M2/M4 + matcher Phase 0/A scaffolding + a 5-group contract-hardening sweep, **601 tests**; chassis spec `docs/chassis-spec.md`; before that 2026-08-01 canonical `data/s1.json` + listen-only connect + `SYNTH_PORT`)*
 
 - **state:** active
 - **what:** The Roland S-1 hardware synth, fully present in software: one `s1` command starts a local web cockpit (FastAPI) with every panel knob and menu setting live-synced both directions, a piano-roll sequencer with MIDI clock out, auto-monitored USB audio with a live oscilloscope (drift-servo resampled passthrough, ~35 ms, glitch-free), MIDI-keyboard forwarding, .PRM export ("Save to S-1") *and* import (the librarian), synesthesia note-coloring, and a full REST/WS agent API. The Textual TUI is retired. Plus the CMA-ES sound-matching engine behind `[studio]` and now a differentiable digital twin (`match/twin.py`, autograd, `[twin]`). 615 tests. A standalone headless twin of the monitor+forwarding lives at `music/tools/s1_rig.py` (launch: `music/rig.sh`).
@@ -13,7 +13,15 @@
   launcher convention: **`synth`** (`bin/synth`) runs the venv's `synth --no-browser`
   detached, waits on `/api/status`, opens the cockpit — `synth off` stops it. Appears on the
   HQ control panel (:8800).
-- **2026-08-08 — standalone playable soft synth + differentiable visual sound-matcher (`soft/`, :8767, 620→638 tests):**
+- **2026-09-07 — venv rebuild + merge prep (no merge):** `.venv` was missing (the 638 tests were unrunnable).
+  Recreated with **`/usr/local/bin/python3.12 -m venv .venv && .venv/bin/pip install -e ".[studio,twin,dev]"`**
+  (recorded in README; Homebrew `python3` is 3.14 — don't use it). Full suite: **638 passed, 0 failed, ruff clean**
+  (numpy 2.5 / scipy 1.18 / fastapi 0.141 / autograd 1.9 / pytest 9 — no rot in synth code; the 3 warnings are
+  starlette/anyio deprecations). One real fix: `soft/run.sh` still defaulted to **8767** (mashup's port) after
+  `f3fcfe4` moved the server to **8816** — aligned. **Branch state:** `chassis-hardening` = 6 commits / 54 files /
+  +7,931 lines ahead of `main` (last main commit `8c2fb90`, 456 tests); `main` is an ancestor → **fast-forward**.
+  Review pack: `MERGE-REVIEW.md`. **Waiting on Tyler:** one word — merge `chassis-hardening` into `main`?
+- **2026-08-08 — standalone playable soft synth + differentiable visual sound-matcher (`soft/`, :8816, 620→638 tests):**
   a self-contained Web-Audio S-1-style instrument (`soft/index.html`): rotary knobs (osc/filter/env/LFO),
   a clickable + computer-key + Web-MIDI keyboard, Tyler's synesthesia key-colors — plays real-time, no
   hardware. Plus a **streaming visual sound-matcher**: drop a single note or **chord (up to 4)** → either
@@ -24,7 +32,7 @@
   light, note-search refines the set. **Silent + fast by default** (server renders arrays only, zero audio);
   a **MONITOR** toggle plays candidates to hear it converge. Warm-start from the current knobs; QUICK vs
   **THOROUGH** (160 iters × 4 restarts). Server `soft/server.py` (FastAPI, WS `/ws/match`, 127.0.0.1 only,
-  `SOFT_PORT` env 8767 — **claim in PORTS.md**); run `SOFT_PORT=8767 bash soft/run.sh`.
+  `SOFT_PORT` env 8816 — **claim in PORTS.md**); run `bash soft/run.sh`.
   - **Formulation:** objective = differentiable **multi-resolution STFT + log-mel + envelope** loss;
     search space = **~18 continuous k** (Adam) + **3 discrete s** (sub-octave / LFO-wave / amp-mode,
     enumerated) + **1–4 notes** (seeded or searched). Non-convex → multi-restart + a **Continue** button

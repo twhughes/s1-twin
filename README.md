@@ -13,7 +13,9 @@ through a documented API.
 ## Quickstart
 
 ```bash
-pip install -e .
+# The ONE venv recipe (bin/synth and soft/run.sh both expect .venv/):
+/usr/local/bin/python3.12 -m venv .venv
+.venv/bin/pip install -e ".[studio,twin,dev]"
 ```
 
 1. Fresh terminal: `s1` → the browser opens to the cockpit.
@@ -98,9 +100,10 @@ synth-match        # the matcher's CLI (needs [studio])
 ## Development
 
 ```bash
-pip install -e ".[studio,dev]"
-pytest             # the whole suite runs against fake MIDI/audio — no hardware
-ruff check synth tests
+/usr/local/bin/python3.12 -m venv .venv          # Homebrew python3 is 3.14 — use 3.12
+.venv/bin/pip install -e ".[studio,twin,dev]"
+.venv/bin/python -m pytest   # the whole suite runs against fake MIDI/audio — no hardware (~4.5 min)
+.venv/bin/ruff check .
 ```
 
 Architecture: `schema.py` (the single source of truth for every parameter,

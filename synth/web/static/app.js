@@ -309,6 +309,8 @@ function connectStateWS() {
  * so black keys render as sharps (brightened). "legible" trades fidelity
  * for distinctness: 12 evenly-spaced hues, octave-invariant, A anchored
  * red. "off" restores the plain neon roll. Persisted in localStorage. */
+// Vendored copy of music/music/web/static/colors.js BASE — the note-color
+// authority (Tyler's synesthesia palette). Drift test: hq tests/test_drift_music_synth.py (P2).
 const TRUE_BASE = {
   A: [235, 92, 92], B: [181, 141, 102], C: [236, 236, 238], D: [178, 192, 216],
   E: [57, 255, 20], F: [168, 24, 30], G: [36, 66, 168],

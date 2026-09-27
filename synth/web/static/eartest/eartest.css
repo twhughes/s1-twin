@@ -1,0 +1,104 @@
+/* The ear test page. Colors and type come from the design kit (/design/tokens.css);
+   every var() carries a fallback so the page stays a calm dark-blue page without it.
+   No hues: this page has no pitch and no hardware, so it is ink on the field only. */
+
+html, body { margin: 0; }
+body {
+  background: var(--field, #0E2A52);
+  color: var(--ink, #EEF3FA);
+  font: 400 15px/1.5 var(--sans, "Helvetica Neue", Helvetica, Arial, sans-serif);
+  -webkit-font-smoothing: antialiased;
+  min-height: 100vh;
+}
+button { font: inherit; color: inherit; }
+:focus-visible { outline: 1.5px dashed var(--ink, #EEF3FA); outline-offset: 3px; border-radius: 2px; }
+
+main {
+  position: relative; z-index: 1;               /* above the kit's sun-print texture */
+  max-width: 720px; margin: 0 auto;
+  padding: 28px var(--gutter, 40px) 120px;
+}
+
+.et-head { display: flex; justify-content: space-between; align-items: baseline; gap: 16px; }
+.et-title { font: italic 400 22px/1.2 var(--serif, "Iowan Old Style", Palatino, Georgia, serif); }
+.et-progress { color: var(--ink-2, #A3B9DA); font-size: 13.5px; font-variant-numeric: tabular-nums; }
+
+.et-question {
+  font: italic 400 34px/1.15 var(--serif, "Iowan Old Style", Palatino, Georgia, serif);
+  margin: 56px 0 14px;
+}
+.et-note { color: var(--ink-2, #A3B9DA); max-width: 52ch; margin: 0 0 12px; }
+
+.pill {
+  background: transparent; cursor: pointer; color: var(--ink, #EEF3FA);
+  border: 1.25px solid var(--ink-3, rgba(238, 243, 250, 0.26)); border-radius: 999px;
+  padding: 9px 17px; font-size: 14px; font-weight: 500;
+}
+.pill:hover { border-color: var(--ink, #EEF3FA); }
+.pill:disabled { opacity: .45; cursor: default; }
+.et-start { margin-top: 18px; }
+
+.et-listen { display: flex; flex-wrap: wrap; gap: 12px 28px; margin: 34px 0 44px; }
+.et-clip {
+  position: relative; background: none; border: 0; cursor: pointer; padding: 8px 0 10px;
+  color: var(--ink-2, #A3B9DA); font-size: 15px;
+}
+.et-clip:hover, .et-clip.playing { color: var(--ink, #EEF3FA); }
+.et-clip:disabled { opacity: .45; cursor: default; }
+/* The underline is a playhead: it grows while that clip plays. */
+.et-bar {
+  position: absolute; left: 0; bottom: 2px; height: 1.5px; width: 100%;
+  background: var(--ink-4, rgba(238, 243, 250, 0.11));
+}
+.et-bar::after {
+  content: ""; position: absolute; left: 0; top: 0; height: 100%;
+  width: var(--played, 0%); background: var(--ink, #EEF3FA);
+}
+
+.et-label { margin: 0 0 12px; font-size: 13.5px; color: var(--ink-2, #A3B9DA); }
+.et-answer { display: flex; flex-wrap: wrap; gap: 12px; }
+.et-choice { min-width: 76px; display: inline-flex; align-items: baseline; justify-content: center; gap: 10px; }
+.et-choice.chosen { border-color: var(--ink, #EEF3FA); }
+.et-key { color: var(--ink-2, #A3B9DA); font-size: 12px; font-variant-numeric: tabular-nums; }
+
+.et-status { margin-top: 30px; min-height: 1.5em; color: var(--ink-2, #A3B9DA); font-size: 13.5px; }
+.et-status .linkish, .linkish {
+  background: none; border: 0; padding: 0; cursor: pointer; color: var(--ink, #EEF3FA);
+  text-decoration: underline; text-underline-offset: 3px; text-decoration-thickness: 1px;
+}
+
+.et-cmd {
+  background: var(--deep, #081C3A); color: var(--ink, #EEF3FA); border-radius: 3px;
+  padding: 12px 14px; font: 13px/1.5 ui-monospace, "SF Mono", Menlo, monospace;
+  white-space: pre-wrap; word-break: break-all; margin: 0;
+}
+
+/* The keyboard-hint bar: the vendored /keyhint/ pair when present, themed to the kit;
+   otherwise a small inline fallback in the same corner. */
+.keyhint {
+  --kh-bg: var(--lift, #13335F); --kh-border: var(--ink-3, rgba(238, 243, 250, 0.26));
+  --kh-fg: var(--ink-2, #A3B9DA); --kh-key-bg: var(--deep, #081C3A); --kh-key-fg: var(--ink, #EEF3FA);
+  --kh-key-border: var(--ink-3, rgba(238, 243, 250, 0.26)); --kh-muted: var(--ink-2, #A3B9DA);
+  box-shadow: none !important;
+}
+.et-keys {
+  position: fixed; right: 14px; bottom: 14px; z-index: 5; display: flex; flex-wrap: wrap;
+  justify-content: flex-end; gap: 6px 12px; max-width: calc(100vw - 28px); padding: 8px 11px;
+  background: var(--lift, #13335F); border: 1px solid var(--ink-3, rgba(238, 243, 250, 0.26));
+  border-radius: 12px; font-size: 12px; color: var(--ink-2, #A3B9DA);
+}
+.et-keys b {
+  display: inline-block; min-width: 15px; padding: 0 6px; margin-right: 5px; text-align: center;
+  font-weight: 500; color: var(--ink, #EEF3FA); background: var(--deep, #081C3A);
+  border: 1px solid var(--ink-3, rgba(238, 243, 250, 0.26)); border-radius: 6px;
+}
+
+@media (max-width: 640px) {
+  main { padding: 20px 16px 140px; }
+  .et-question { font-size: 27px; margin-top: 36px; }
+  .et-listen { gap: 6px 22px; margin: 26px 0 34px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .et-bar::after { width: 0 !important; }
+  .et-clip.playing .et-bar::after { width: 100% !important; }
+}

@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Ear test</title>
+<link rel="icon" href="/design/favicon.svg">
+<!-- The design kit (lead-owned). If it is missing, eartest.css falls back to a plain dark-blue page. -->
+<link rel="stylesheet" href="/design/tokens.css">
+<!-- The canonical keyboard-hint bar, vendored by the cockpit (static/keyhint/). Optional here. -->
+<link rel="stylesheet" href="/keyhint/keyhint.css">
+<link rel="stylesheet" href="/eartest/eartest.css">
+</head>
+<body>
+<main id="app">
+  <header class="et-head">
+    <span class="et-title">Ear test</span>
+    <span class="et-progress" id="progress" aria-live="polite"></span>
+  </header>
+
+  <h1 class="et-question">Which one is closer to the reference?</h1>
+
+  <section id="intro" class="et-intro">
+    <p class="et-note">You hear a reference sound, then A, then B. Choose the one that sounds more
+      like the reference. When you cannot hear a difference, choose "Can't tell". There are no
+      wrong answers: this checks the computer's idea of "close" against your ears.</p>
+    <p class="et-note">40 pairs, about 10 minutes. Headphones help.</p>
+    <button class="pill et-start" id="start" type="button">Start</button>
+  </section>
+
+  <section id="trial" class="et-trial" hidden>
+    <div class="et-listen" role="group" aria-label="Listen">
+      <button class="et-clip" type="button" data-clip="reference">Hear the reference<span class="et-bar"></span></button>
+      <button class="et-clip" type="button" data-clip="a">Hear A<span class="et-bar"></span></button>
+      <button class="et-clip" type="button" data-clip="b">Hear B<span class="et-bar"></span></button>
+    </div>
+    <p class="et-label" id="answer-label">Closer to the reference:</p>
+    <div class="et-answer" role="group" aria-labelledby="answer-label">
+      <button class="pill et-choice" type="button" data-choice="A">A<span class="et-key">1</span></button>
+      <button class="pill et-choice" type="button" data-choice="B">B<span class="et-key">2</span></button>
+      <button class="pill et-choice" type="button" data-choice="same">Can't tell<span class="et-key">0</span></button>
+    </div>
+  </section>
+
+  <section id="finish" class="et-finish" hidden>
+    <p class="et-note" id="finish-text"></p>
+    <p class="et-note">To see how the metric did, run this in a terminal:</p>
+    <pre class="et-cmd" id="finish-cmd"></pre>
+  </section>
+
+  <p class="et-status" id="status" role="status" aria-live="polite"></p>
+</main>
+
+<div class="et-keys" id="keys-fallback" hidden aria-label="keyboard shortcuts"></div>
+<script src="/keyhint/keyhint.js"></script>
+<script type="module" src="/eartest/eartest.js"></script>
+</body>
+</html>

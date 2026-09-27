@@ -9,7 +9,7 @@ A differentiable model of the Roland S-1, the small SH-101-style synth, that you
 inside, and teach. Play it in the browser. Drop in a sound and watch gradient descent turn its
 knobs until it sounds like the sound. Plug in a real S-1 and it syncs: every knob, both ways.
 
-**Try it in your browser:** *(link goes live with the first release)*
+**Try it in your browser:** [tylerwhughes.com/s1-twin](https://tylerwhughes.com/s1-twin/)
 
 ## What it does
 
@@ -47,7 +47,7 @@ Python 3.10 or newer (3.12 recommended):
 
 ```bash
 python3.12 -m venv .venv
-.venv/bin/pip install "synth[studio,twin] @ git+https://github.com/twhughes/s1tui"
+.venv/bin/pip install "synth[studio,twin] @ git+https://github.com/twhughes/s1-twin"
 .venv/bin/s1            # opens the page; plug in an S-1 any time
 ```
 

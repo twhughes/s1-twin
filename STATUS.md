@@ -13,6 +13,16 @@
   launcher convention: **`synth`** (`bin/synth`) runs the venv's `synth --no-browser`
   detached, waits on `/api/status`, opens the cockpit — `synth off` stops it. Appears on the
   HQ control panel (:8800).
+- **2026-09-27 (later) — the cyanotype build is underway (Tyler: "go for it"):** `main` fast-forwarded to
+  `chassis-hardening` (f37cdd0; 638 green; local only, nothing pushed). Work branch **`cyanotype`** (the name
+  `redesign` collides with the old `redesign/synthwave-neon`). Contract `docs/design/BUILD.md` (one UI in three
+  contexts: cockpit + S-1 · cockpit with the browser twin · static page). Lead-built design kit in
+  `synth/web/static/design/` (tokens, vendored OFL fonts, knob/switch/draw/palette/mark; 23 node checks).
+  Router stubs `plate_routes` / `match_ws` / `eartest` wired into `server.py`. Four parallel workers on
+  worktrees (branches `w/twin`, `w/plate`, `w/match`, `w/hardware`): browser twin with a parity test vs
+  `twin.py` (the soft synth's biquad engine is NOT the twin's model — this fixes it), the shell + Synth view +
+  drawers, the matcher in the cockpit + Match/Sequencer views, and `synth-calibrate` + the ear test +
+  `docs/hardware-session.md`. Integration + review by the lead next.
 - **2026-09-27 — rename + redesign, proposal stage (Claude as art director, Tyler's ask):** name **Menura**
   (the lyrebird's genus: it copies any sound it hears); direction = **cyanotype specimen plate** (Prussian-blue
   field, paper-white line art; color means pitch, bronze means the hardware). Signature pieces: the signal line

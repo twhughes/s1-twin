@@ -49,7 +49,7 @@ synth-match = "synth.match.cli:main"
 synth-prm = "synth.prm_cli:main"
 synth-logic = "synth.logic:main"
 synth-calibrate = "synth.match.calibrate_cli:main"
-synth-eartest-report = "tools.eartest_report:main"
+synth-eartest-report = "synth.match.eartest_report:main"
 
 [tool.ruff]
 line-length = 110

@@ -894,11 +894,12 @@ class CalibrationReport:
 
 
 def calibrate(
-    probes: Iterable[tuple[dict[int, int], np.ndarray]],
+    probes: Iterable[tuple],
     twin: Twin | None = None,
     held_out_fraction: float = 0.3,
     seed: int = 0,
     note: int = 48,
+    is_synthetic: bool = True,
 ) -> CalibrationReport:
     """Fit the twin's free constants to ``(cc, audio)`` probes; report the gap.
 
@@ -924,22 +925,26 @@ def calibrate(
     held = set(order[:n_hold].tolist())
 
     errs: list[float] = []
-    for i, (cc, audio) in enumerate(items):
+    for i, item in enumerate(items):
         if i not in held:
             continue
+        cc, audio = item[0], item[1]
+        probe_note = int(item[2]) if len(item) > 2 else note   # (cc, audio, note): per-probe pitch
         k = tw.cc_to_k(cc)
         s = {sp.name: int(cc.get(sp.cc, _default_s()[sp.name])) for sp in S_PARAMS}
-        cand = np.asarray(tw.render(k, s, note), dtype=np.float32)
+        cand = np.asarray(tw.render(k, s, probe_note), dtype=np.float32)
         errs.append(float(_feature_error(cand, np.asarray(audio, np.float32), tw.sr)))
 
     return CalibrationReport(
         mapping=tw.mapping,
-        held_out_feature_error=float(np.mean(errs)) if errs else 0.0,
+        held_out_feature_error=float(np.mean(errs)) if errs else float("nan"),
         n_fit=len(items) - len(held),
         n_held_out=len(held),
-        is_synthetic=True,
-        note="SYNTHETIC calibration only (no real S-1 in this session); "
-             "replace probes with real hardware captures to close the sim-to-real gap.",
+        is_synthetic=is_synthetic,
+        note=("SYNTHETIC calibration only (no real S-1 in this session); "
+              "replace probes with real hardware captures to close the sim-to-real gap.")
+        if is_synthetic else
+        "Real S-1 probes (synth-calibrate); the caller fitted the curves, this measures the gap.",
     )
 
 

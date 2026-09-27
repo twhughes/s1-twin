@@ -36,7 +36,7 @@ Every command below is one line. Paste it into a terminal as it is.
 
    If the install fails (for example, no network), skip it. Use
    `.venv/bin/python -m synth.match.calibrate_cli` wherever this page says
-   `.venv/bin/synth-calibrate`, and `.venv/bin/python tools/eartest_report.py` wherever
+   `.venv/bin/synth-calibrate`, and `.venv/bin/python -m synth.match.eartest_report` wherever
    it says `.venv/bin/synth-eartest-report`.
 
 2. Have these ready: the S-1, its USB-C **data** cable, the Keystation and its cable, and

@@ -1,4 +1,4 @@
-"""Tests for the ear test (``synth/web/eartest.py``) and its report (``tools/eartest_report.py``).
+"""Tests for the ear test (``synth/web/eartest.py``) and its report (``synth/match/eartest_report.py``).
 
 FABLE rule 1 — "play me pairs, ask which is closer, confirm the number agrees with my
 ears" — only works if (a) the side the metric calls closer really IS closer by the
@@ -22,10 +22,10 @@ from fastapi.testclient import TestClient
 import synth.engine as engine_module
 import synth.web.eartest as et
 from synth.engine import S1Engine
+from synth.match import eartest_report as rep
 from synth.match.twin import spectral_loss
 from synth.web.server import app
 from tests.fakes import FakeMidiWorld
-from tools import eartest_report as rep
 
 BASE_URL = "http://127.0.0.1:8766"
 

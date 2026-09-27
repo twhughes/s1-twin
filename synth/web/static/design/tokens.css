@@ -42,6 +42,8 @@ body::before {
   background-image:
     url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='900' height='900'><filter id='m'><feTurbulence type='fractalNoise' baseFrequency='.0035' numOctaves='3' seed='11' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 1  0 0 0 0 1  0 0 0 0 1  0 0 0 .9 -.28'/></filter><rect width='100%' height='100%' filter='url(%23m)'/></svg>"),
     url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='240' height='240'><filter id='g'><feTurbulence type='fractalNoise' baseFrequency='.85' numOctaves='2' seed='3' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 1  0 0 0 0 1  0 0 0 0 1  0 0 0 .5 -.18'/></filter><rect width='100%' height='100%' filter='url(%23g)'/></svg>");
+  background-size: cover, 240px 240px;    /* the mottling is stretched, not tiled: a tile edge showed as a seam */
+  background-repeat: no-repeat, repeat;
   opacity: .16;
   mix-blend-mode: soft-light;
 }

@@ -36,7 +36,14 @@
 .placeholder .note { font-size: 14px; }
 
 /* ---------- the plate ---------- */
-.plate { position: relative; max-width: 1480px; margin: 0 auto; padding: 30px var(--gutter) 56px; }
+/* One screen (docs/design/ROUND2.md §4): at 1470 × 760, every control and the keys show at 100% zoom.
+   Above the stacking width the plate has one design size, 1470 px wide; views/synth.js scales it down
+   evenly to fit a smaller window (from its top left corner, then centers it). */
+.plate { position: relative; max-width: 1480px; margin: 0 auto; padding: 16px var(--gutter) 14px; transform-origin: 0 0; }
+@media (min-width: 1181px) {
+  .plate { width: 1470px; max-width: none; margin: 0; }
+  .plate-box { overflow: clip; }          /* the plate's unscaled layout box never makes the page scroll */
+}
 .overlay { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; overflow: visible; }
 .overlay .sig, .overlay .heads {
   fill: none; stroke: var(--ink-2); stroke-width: 1.25; stroke-linecap: round; stroke-linejoin: round;
@@ -46,24 +53,37 @@
 .grid {
   position: relative;
   display: grid;
-  grid-template-columns: minmax(0, 1.5fr) minmax(0, 1fr) minmax(0, .7fr) minmax(0, 1fr) minmax(0, 1.4fr);
-  column-gap: var(--gap); row-gap: 46px; align-items: start;
+  grid-template-columns: minmax(0, 2.8fr) minmax(0, 1.45fr) minmax(0, .9fr) minmax(0, 1.05fr) minmax(0, 2fr);
+  column-gap: 36px; row-gap: 22px; align-items: start;
 }
 .blk-lfo { grid-column: 1; grid-row: 2; }
 .blk-env { grid-column: 2 / span 2; grid-row: 2; }
 .blk-keys { grid-column: 4 / span 2; grid-row: 2; }
 .stage, .mod { position: relative; min-width: 0; }
-.well-wrap { height: 214px; display: flex; align-items: center; }
-.plate .well { height: 118px; }
-.plate .blk-out .well { height: 214px; }
-.controls { margin-top: 18px; display: grid; gap: 18px; justify-items: start; }
-.row.wide { gap: 14px 24px; }
+.well-wrap { height: 140px; display: flex; align-items: center; }
+.plate .well { height: 102px; }
+.plate .blk-out .well { height: 140px; }
+.plate .caption { margin-top: 10px; font-size: 21px; }
+.plate .caption .note { margin-top: 3px; font-size: 12.5px; line-height: 1.4; max-width: 50ch; }
+.controls { margin-top: 12px; display: grid; gap: 12px; justify-items: start; }
+.plate .row { gap: 12px 8px; }
+.row.wide { gap: 12px 22px; }
 .row .gap { margin-left: 14px; }
-.mod h3 { font: italic 400 22px/1.15 var(--serif); margin: 0 0 14px; }
+.mod h3 { font: italic 400 21px/1.15 var(--serif); margin: 0 0 10px; }
 .mod .controls { margin-top: 0; }
-.blk-voices { margin-top: 30px; }
-.blk-voices .controls { gap: 14px; }
-.adsr { display: block; width: 100%; height: 92px; margin-bottom: 14px; }
+.mod-head { display: flex; flex-wrap: wrap; align-items: flex-start; justify-content: space-between; gap: 4px 18px; margin-bottom: 8px; }
+.mod-head h3 { margin: 0; }
+.mod-head .head-controls { margin: 1px 0 0; }
+.blk-voices { margin-top: 14px; }
+.blk-voices .controls { gap: 10px; }
+.adsr { display: block; width: 100%; height: 54px; margin-bottom: 8px; }
+
+/* the plate's knobs: a smaller dial, and room for a two-word label on one line */
+.plate .knob { width: 68px; }
+.plate .knob svg { width: 44px; height: 44px; }
+.plate .knob.hero { width: 84px; }
+.plate .knob.hero svg { width: 74px; height: 74px; }
+.plate .k-label { margin-top: 3px; white-space: nowrap; }
 
 details.more { margin-top: -2px; }
 details.more summary { cursor: pointer; color: var(--ink-2); font-size: 13px; list-style: none; width: max-content; }
@@ -72,25 +92,28 @@ details.more summary::-webkit-details-marker { display: none; }
 details.more summary::before { content: "+"; display: inline-block; width: 1em; }
 details.more[open] summary::before { content: "\2212"; }
 details.more .row { margin-top: 12px; }
+/* a fold-out at the end of a row: its summary sits level with the dials; opened, it takes a line */
+.row > details.more { align-self: flex-start; margin: 14px 0 0 10px; }
+.row > details.more[open] { flex-basis: 100%; margin: 2px 0 0; }
 
 /* ---------- keys ---------- */
 .keys-head { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 0 16px; }
-.keys-hint { color: var(--ink-2); font-size: 13px; margin: -6px 0 14px; }
+.keys-hint { color: var(--ink-2); font-size: 12.5px; margin: -4px 0 10px; }
 .octave { display: inline-flex; align-items: baseline; gap: 12px; color: var(--ink-2); font-size: 12.5px; font-variant-numeric: tabular-nums; }
 .octave .quiet { font-size: 13px; padding: 0; }
 .keyboard {
-  position: relative; height: 78px; display: flex;
+  position: relative; height: 72px; display: flex;
   background: var(--deep); border-radius: 3px;
   user-select: none; -webkit-user-select: none; touch-action: none;
 }
 .wk {
   position: relative; flex: 1; border-right: 1px solid var(--ink-4); cursor: pointer;
-  display: flex; align-items: flex-end; justify-content: center; padding-bottom: 7px;
+  display: flex; align-items: flex-end; justify-content: center; padding-bottom: 6px;
   font-size: 10.5px; color: var(--ink-3);
 }
 .wk:last-child { border-right: 0; }
 .bk {
-  position: absolute; top: 0; height: 46px; z-index: 2; cursor: pointer;
+  position: absolute; top: 0; height: 43px; z-index: 2; cursor: pointer;
   background: var(--field); border: 1px solid var(--ink-3); border-top: 0; border-radius: 0 0 2px 2px;
   display: flex; align-items: flex-end; justify-content: center; padding-bottom: 5px;
   font-size: 10px; color: var(--ink-3);
@@ -161,12 +184,15 @@ body.drawer-open .keyhint { right: auto; left: 14px; }       /* never over the d
 
 /* ---------- smaller screens: the chain stacks, the line steps aside ---------- */
 @media (max-width: 1180px) {
+  .plate { padding-bottom: 48px; }
   .grid { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); row-gap: 36px; }
   .blk-out { grid-column: 1 / -1; order: -1; }
   .blk-lfo, .blk-env, .blk-keys { grid-row: auto; grid-column: auto; }
   .blk-keys { grid-column: 1 / -1; }
   .overlay { display: none; }
   .well-wrap { height: auto; }
+  .plate .well { height: 118px; }                /* the stacked plate scrolls, so its wells keep their size */
+  .plate .blk-out .well { height: 214px; }
 }
 @media (max-width: 640px) {
   .top { flex-wrap: wrap; gap: 12px 18px; padding-top: 16px; }

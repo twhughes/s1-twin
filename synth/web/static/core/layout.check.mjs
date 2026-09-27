@@ -24,7 +24,7 @@ function controls(blocks, out = []) {
       }
     }
   };
-  for (const b of blocks) { walkRows(b.rows, b.id); controls(b.blocks, out); }
+  for (const b of blocks) { walkRows(b.head ? [b.head] : [], b.id); walkRows(b.rows, b.id); controls(b.blocks, out); }
   return out;
 }
 
@@ -126,5 +126,12 @@ ok(sentence("Voice 2 Key Shift") === "Voice 2 key shift" && sentence("PWM Source
 ok(specFor({ cc: 1, name: "Mod Wheel", type: "continuous", min: 0, max: 127, default: 0 }).label === "Mod wheel", "WORDS win over the schema name");
 ok(Object.keys(WORDS).every((cc) => ccs.includes(Number(cc))), "WORDS name only real CCs");
 ok(PLATE.map((b) => b.id).join() === "osc,filter,amp,fx,out,lfo,env,keys", "the plate's blocks in signal order");
+
+// ── the one-screen plate (ROUND2.md §4): no stage stacks more than four rows of controls ─
+const depth = (b) => (b.rows || []).filter((r) => !r.more).length;
+for (const b of PLATE) ok(depth(b) <= 4, `${b.id} has ${depth(b)} rows (four at most)`);
+ok(L.placement.get(29) === "plate:env", "Triggered by sits on the Envelope's title line");
+const envHead = L.plate.find((b) => b.id === "env").head;
+ok(envHead && envHead.items.map((c) => c.cc).join() === "29", "the Envelope's head holds Triggered by");
 
 console.log(`layout: ${checks} checks passed`);

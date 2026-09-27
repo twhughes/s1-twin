@@ -74,18 +74,21 @@ export const WORDS = {
 };
 
 // Row grammar: [cc, …] is a row; {wide, items} a row with more air; {pair: [cc, cc]} two controls
-// stacked; {cc, gap: true} a control set apart; {more: title, rows} a fold-out.
+// stacked; {cc, gap: true} a control set apart; {more: title, rows} a fold-out (the plate draws its
+// summary at the end of the row above it). A block's `head` holds controls that sit on its title line.
+//
+// The plate fits one laptop screen at 100% (docs/design/ROUND2.md §4): each stage's switches share one
+// line, so no column is taller than about four rows.
 export const PLATE = [
   { id: "osc", kind: "stage", title: "Oscillator", well: "Oscillator waveform", rows: [
-    [14],
+    { wide: true, items: [14, 22, 78] },
     [19, 20, 21, 23],
-    { wide: true, items: [22, 78] },
-    { more: "Draw and chop", rows: [[107], [102, 103, 104]] },
+    { more: "Draw and chop", rows: [[107, { cc: 102, gap: true }, 103, 104]] },
     [15, 16, 13],   // last row: the LFO/Env leaders to Pulse width and Vibrato rise without crossing text
   ] },
   { id: "filter", kind: "stage", title: "Filter", well: "Waveform after the filter", rows: [
-    [74, { pair: [71, 26] }],
-    [24, 25],
+    [74, 71],
+    [26, 24, 25],
   ] },
   { id: "amp", kind: "stage", title: "Amplifier", well: "Volume over one note", rows: [[28]] },
   { id: "fx", kind: "stage", title: "Effects", well: "The note with delay and reverb", rows: [
@@ -94,13 +97,13 @@ export const PLATE = [
     [93],
   ] },
   { id: "out", kind: "stage", title: "Output", well: "The output, drawn as a plume", rows: [], blocks: [
-    { id: "voices", title: "Voices", rows: [{ wide: true, items: [80] }, [31, 5, 77]] },
+    { id: "voices", title: "Voices", rows: [{ wide: true, items: [80, 31] }, [5, 77]] },
   ] },
   { id: "lfo", kind: "mod", title: "LFO", rows: [
     { wide: true, items: [3, 12] },
     { wide: true, items: [79, 106, 105] },
   ] },
-  { id: "env", kind: "mod", title: "Envelope", adsr: true, rows: [[73, 75, 30, 72, { cc: 29, gap: true }]] },
+  { id: "env", kind: "mod", title: "Envelope", adsr: true, head: [29], rows: [[73, 75, 30, 72]] },
   { id: "keys", kind: "keys", title: "Keys", rows: [] },
 ];
 
@@ -230,6 +233,7 @@ export function plateLayout(schema) {
   const block = (b, where) => ({
     id: b.id, kind: b.kind || "block", title: b.title, well: b.well || null, note: b.note || null,
     adsr: Boolean(b.adsr),
+    head: b.head ? row(b.head, `${where}:${b.id}`) : null,
     rows: (b.rows || []).map((r) => row(r, `${where}:${b.id}`)).filter(Boolean),
     blocks: (b.blocks || []).map((x) => block(x, where)),
   });

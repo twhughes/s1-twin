@@ -1,0 +1,212 @@
+/* core/app.css — the shell, the plate, the keys, and the drawers' contents.
+   Colors are tokens only (design/tokens.css). The kit's shared classes (.caption .note .well .row
+   .pair .quiet .pill .linkish .drawer .scrim .toast, knobs and switches) live in tokens.css and are
+   not restyled here. Layout follows docs/design/menura-comp.html. */
+
+/* ---------- header ---------- */
+.top {
+  position: relative; z-index: 2;
+  display: flex; align-items: center; gap: 40px;
+  max-width: 1480px; margin: 0 auto; padding: 22px var(--gutter) 0;
+}
+.brand { display: flex; align-items: center; gap: 10px; color: var(--ink); text-decoration: none; }
+.mark { width: 34px; height: 34px; flex: none; }
+.wordmark { font: italic 400 31px/1 var(--serif); letter-spacing: .01em; padding-bottom: 3px; min-width: 1ch; }
+.views { display: flex; gap: 24px; }
+.views a {
+  color: var(--ink-2); text-decoration: none; font-size: 14.5px;
+  padding: 5px 0; border-bottom: 1.5px solid transparent;
+}
+.views a:hover { color: var(--ink); }
+.views a[aria-current="page"] { color: var(--ink); border-bottom-color: var(--ink); }
+.actions { margin-left: auto; display: flex; align-items: center; gap: 22px; }
+.sync { display: inline-flex; align-items: center; gap: 9px; color: var(--ink-2); font-size: 13.5px; }
+.sync .dot { width: 9px; height: 9px; border-radius: 50%; border: 1.5px solid var(--ink-2); flex: none; }
+.sync.near { color: var(--ink); }
+.sync.near .dot { border-color: var(--bronze); }
+.sync.on { color: var(--ink); }
+.sync.on .dot {
+  background: var(--bronze); border-color: var(--bronze);
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--bronze) 16%, transparent);
+}
+
+/* ---------- the view host and its calm placeholder ---------- */
+.view-host { position: relative; z-index: 1; min-height: 50vh; }
+.placeholder { max-width: 1480px; margin: 0 auto; padding: 56px var(--gutter); }
+.placeholder .note { font-size: 14px; }
+
+/* ---------- the plate ---------- */
+/* One screen (docs/design/ROUND2.md §4): at 1470 × 760, every control and the keys show at 100% zoom.
+   Above the stacking width the plate has one design size, 1470 px wide; views/synth.js scales it down
+   evenly to fit a smaller window (from its top left corner, then centers it). */
+.plate { position: relative; max-width: 1480px; margin: 0 auto; padding: 16px var(--gutter) 14px; transform-origin: 0 0; }
+@media (min-width: 1181px) {
+  .plate { width: 1470px; max-width: none; margin: 0; }
+  .plate-box { overflow: clip; }          /* the plate's unscaled layout box never makes the page scroll */
+}
+.overlay { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; overflow: visible; }
+.overlay .sig, .overlay .heads {
+  fill: none; stroke: var(--ink-2); stroke-width: 1.25; stroke-linecap: round; stroke-linejoin: round;
+}
+.overlay .lead { fill: none; stroke: var(--ink); stroke-dasharray: 1.5 5; stroke-linecap: round; }
+.overlay .lead-end { fill: var(--ink); }
+.grid {
+  position: relative;
+  display: grid;
+  grid-template-columns: minmax(0, 2.8fr) minmax(0, 1.45fr) minmax(0, .9fr) minmax(0, 1.05fr) minmax(0, 2fr);
+  column-gap: 36px; row-gap: 22px; align-items: start;
+}
+.blk-lfo { grid-column: 1; grid-row: 2; }
+.blk-env { grid-column: 2 / span 2; grid-row: 2; }
+.blk-keys { grid-column: 4 / span 2; grid-row: 2; }
+.stage, .mod { position: relative; min-width: 0; }
+.well-wrap { height: 140px; display: flex; align-items: center; }
+.plate .well { height: 102px; }
+.plate .blk-out .well { height: 140px; }
+.plate .caption { margin-top: 10px; font-size: 21px; }
+.plate .caption .note { margin-top: 3px; font-size: 12.5px; line-height: 1.4; max-width: 50ch; }
+.controls { margin-top: 12px; display: grid; gap: 12px; justify-items: start; }
+.plate .row { gap: 12px 8px; }
+.row.wide { gap: 12px 22px; }
+.row .gap { margin-left: 14px; }
+.mod h3 { font: italic 400 21px/1.15 var(--serif); margin: 0 0 10px; }
+.mod .controls { margin-top: 0; }
+.mod-head { display: flex; flex-wrap: wrap; align-items: flex-start; justify-content: space-between; gap: 4px 18px; margin-bottom: 8px; }
+.mod-head h3 { margin: 0; }
+.mod-head .head-controls { margin: 1px 0 0; }
+.blk-voices { margin-top: 14px; }
+.blk-voices .controls { gap: 10px; }
+.adsr { display: block; width: 100%; height: 54px; margin-bottom: 8px; }
+
+/* the plate's knobs: a smaller dial, and room for a two-word label on one line */
+.plate .knob { width: 68px; }
+.plate .knob svg { width: 44px; height: 44px; }
+.plate .knob.hero { width: 84px; }
+.plate .knob.hero svg { width: 74px; height: 74px; }
+.plate .k-label { margin-top: 3px; white-space: nowrap; }
+
+details.more { margin-top: -2px; }
+details.more summary { cursor: pointer; color: var(--ink-2); font-size: 13px; list-style: none; width: max-content; }
+details.more summary:hover { color: var(--ink); }
+details.more summary::-webkit-details-marker { display: none; }
+details.more summary::before { content: "+"; display: inline-block; width: 1em; }
+details.more[open] summary::before { content: "\2212"; }
+details.more .row { margin-top: 12px; }
+/* a fold-out at the end of a row: its summary sits level with the dials; opened, it takes a line */
+.row > details.more { align-self: flex-start; margin: 14px 0 0 10px; }
+.row > details.more[open] { flex-basis: 100%; margin: 2px 0 0; }
+
+/* ---------- keys ---------- */
+.keys-head { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 0 16px; }
+.keys-hint { color: var(--ink-2); font-size: 12.5px; margin: -4px 0 10px; }
+.octave { display: inline-flex; align-items: baseline; gap: 12px; color: var(--ink-2); font-size: 12.5px; font-variant-numeric: tabular-nums; }
+.octave .quiet { font-size: 13px; padding: 0; }
+.keyboard {
+  position: relative; height: 72px; display: flex;
+  background: var(--deep); border-radius: 3px;
+  user-select: none; -webkit-user-select: none; touch-action: none;
+}
+.wk {
+  position: relative; flex: 1; border-right: 1px solid var(--ink-4); cursor: pointer;
+  display: flex; align-items: flex-end; justify-content: center; padding-bottom: 6px;
+  font-size: 10.5px; color: var(--ink-3);
+}
+.wk:last-child { border-right: 0; }
+.bk {
+  position: absolute; top: 0; height: 43px; z-index: 2; cursor: pointer;
+  background: var(--field); border: 1px solid var(--ink-3); border-top: 0; border-radius: 0 0 2px 2px;
+  display: flex; align-items: flex-end; justify-content: center; padding-bottom: 5px;
+  font-size: 10px; color: var(--ink-3);
+}
+.wk.down, .bk.down { background: rgb(var(--pc)); color: var(--on-pc); box-shadow: inset 0 0 0 1.5px var(--ink); }
+
+/* ---------- the drawers' contents ---------- */
+.drawer { padding-bottom: 88px; }            /* room above the key-hint bar */
+.drawer .close { position: absolute; top: 26px; right: 26px; }
+.drawer h3.first { margin-top: 0; }
+.drawer p.after { margin-top: 10px; }
+.drawer .status { margin-top: 12px; font-size: 13px; }
+.drawer .row.spaced { gap: 14px 26px; align-items: flex-end; margin: 6px 0 4px; }
+.patches { list-style: none; margin: 0; padding: 0; }
+.patches li { display: flex; align-items: baseline; gap: 12px; border-bottom: 1px solid var(--ink-4); }
+.patches .patch-name {
+  flex: 1; min-width: 0; background: none; border: 0; cursor: pointer; padding: 7px 0;
+  font-size: 14.5px; color: var(--ink-2); text-align: left; overflow-wrap: anywhere;
+}
+.patches .patch-name:hover { color: var(--ink); }
+.patches .patch-name[aria-current="true"] { color: var(--ink); }
+.patches .patch-name[aria-current="true"]::after { content: "  in use"; color: var(--ink-2); font-size: 12px; }
+.patches .patch-meta { color: var(--ink-2); font-size: 12px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.patches .patch-acts { display: inline-flex; gap: 12px; }
+.patches .patch-acts .linkish { font-size: 12.5px; color: var(--ink-2); }
+.patches .patch-acts .linkish:hover { color: var(--ink); }
+.patches li.empty { display: block; border: 0; padding: 4px 0; color: var(--ink-2); font-size: 13.5px; }
+.saverow { display: flex; gap: 10px; margin-top: 14px; align-items: center; }
+.saverow input { flex: 1; min-width: 0; }
+.saverow.center { gap: 18px; flex-wrap: wrap; }
+.steps { margin: 0 0 16px; padding-left: 1.3em; color: var(--ink-2); font-size: 13.5px; }
+.steps li { margin-bottom: 7px; padding-left: 4px; }
+.steps li::marker { color: var(--ink); font-variant-numeric: tabular-nums; }
+.slotrow { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; margin-bottom: 14px; color: var(--ink-2); font-size: 13px; }
+.checks { display: flex; flex-wrap: wrap; gap: 6px 18px; margin: 0 0 8px; color: var(--ink-2); font-size: 13.5px; }
+.checks input { accent-color: var(--ink); }
+details.more.prm { margin-top: 30px; }
+.prm-list { display: grid; grid-template-columns: 1fr auto; gap: 5px 16px; margin: 10px 0 0; font-size: 13px; }
+.prm-list dt { color: var(--ink-2); }
+.prm-list dd { margin: 0; color: var(--ink); text-align: right; font-variant-numeric: tabular-nums; }
+.meter-wrap { display: flex; flex-direction: column; gap: 6px; min-width: 110px; padding-bottom: 22px; }
+.meter { height: 4px; background: var(--ink-4); border-radius: 2px; overflow: hidden; }
+.meter i { display: block; height: 100%; width: 0; background: var(--ink-2); transition: width 200ms linear; }
+.meter-text { font-size: 12px; color: var(--ink-2); font-variant-numeric: tabular-nums; }
+
+/* ---------- the footer ---------- */
+.foot {
+  position: relative; z-index: 1;
+  max-width: 1480px; margin: 0 auto; padding: 0 var(--gutter) 40px;
+  color: var(--ink-2); font-size: 12.5px; max-inline-size: 1480px;
+}
+
+/* ---------- the page-load exposure: a paler print that darkens (views/synth.js) ---------- */
+.veil {
+  position: fixed; inset: 0; z-index: 5; pointer-events: none;
+  background: var(--ink); mix-blend-mode: soft-light;
+  opacity: 0; transition: opacity 1200ms cubic-bezier(.2, .7, .2, 1);
+}
+html.developing .veil { opacity: 1; transition: none; }
+
+/* ---------- the key-hint bar (keyhint/, vendored): themed through its own properties ---------- */
+:root {
+  --kh-bg: var(--lift); --kh-border: var(--ink-3); --kh-fg: var(--ink-2);
+  --kh-key-bg: var(--deep); --kh-key-fg: var(--ink); --kh-key-border: var(--ink-3); --kh-muted: var(--ink-2);
+}
+.keyhint { box-shadow: none; backdrop-filter: none; -webkit-backdrop-filter: none; font-family: var(--sans); }
+body.drawer-open .keyhint { right: auto; left: 14px; }       /* never over the drawer's words */
+
+/* ---------- smaller screens: the chain stacks, the line steps aside ---------- */
+@media (max-width: 1180px) {
+  .plate { padding-bottom: 48px; }
+  .grid { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); row-gap: 36px; }
+  .blk-out { grid-column: 1 / -1; order: -1; }
+  .blk-lfo, .blk-env, .blk-keys { grid-row: auto; grid-column: auto; }
+  .blk-keys { grid-column: 1 / -1; }
+  .overlay { display: none; }
+  .well-wrap { height: auto; }
+  .plate .well { height: 118px; }                /* the stacked plate scrolls, so its wells keep their size */
+  .plate .blk-out .well { height: 214px; }
+}
+@media (max-width: 640px) {
+  .top { flex-wrap: wrap; gap: 12px 18px; padding-top: 16px; }
+  .views { order: 3; width: 100%; }
+  .actions { order: 4; margin-left: 0; width: 100%; flex-wrap: wrap; gap: 10px 18px; }
+  .grid { grid-template-columns: minmax(0, 1fr); }
+  .row .gap { margin-left: 0; }
+  .drawer { padding: 24px 18px 40px; }
+}
+@media (hover: none), (max-width: 640px) {
+  .keyhint { display: none; }
+}
+
+/* The static page's one intro line (shown only when no cockpit server answers). */
+.intro { position: relative; z-index: 1; max-width: 1480px; margin: 10px auto 0; padding: 0 var(--gutter);
+  color: var(--ink-2); font-size: 13.5px; }
+.intro a { color: var(--ink); text-underline-offset: 3px; text-decoration-thickness: 1px; }

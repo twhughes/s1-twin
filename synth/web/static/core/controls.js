@@ -25,12 +25,18 @@ export function buildControl(spec, ctx) {
 
 /** Keep controls (Map cc -> control) in step with ctx. Returns off(). */
 export function bindControls(ctx, controls) {
-  const modeled = (cc) => {
-    try { return ctx.twin.modeled(cc) !== false; } catch { return true; }
+  // Dim only what does nothing without the S-1. audible() covers the twin's model plus the browser's
+  // voice layer and effects (they work, so they stay bright); modeled() is stricter (what the
+  // matcher can fit) and is only the fallback for a twin without audible().
+  const audible = (cc) => {
+    try {
+      const t = ctx.twin;
+      return (typeof t.audible === "function" ? t.audible(cc) : t.modeled(cc)) !== false;
+    } catch { return true; }
   };
   const dim = () => {
     const twinMode = ctx.soundSource === "twin";
-    for (const [cc, c] of controls) c.modeled(!twinMode || modeled(cc));
+    for (const [cc, c] of controls) c.modeled(!twinMode || audible(cc));
   };
   const offs = [
     ctx.on("param", ({ cc, value, source }) => controls.get(cc)?.set(value, { source })),

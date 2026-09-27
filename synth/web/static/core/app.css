@@ -179,3 +179,8 @@ body.drawer-open .keyhint { right: auto; left: 14px; }       /* never over the d
 @media (hover: none), (max-width: 640px) {
   .keyhint { display: none; }
 }
+
+/* The static page's one intro line (shown only when no cockpit server answers). */
+.intro { position: relative; z-index: 1; max-width: 1480px; margin: 10px auto 0; padding: 0 var(--gutter);
+  color: var(--ink-2); font-size: 13.5px; }
+.intro a { color: var(--ink); text-underline-offset: 3px; text-decoration-thickness: 1px; }

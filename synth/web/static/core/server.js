@@ -8,6 +8,8 @@
 // Importable in node (no DOM at load time): core/ctx.check.mjs tests the echo filter.
 
 export async function probe(timeoutMs = 2500) {
+  // tools/build_site.py marks the public page; there is no cockpit behind it, so don't knock.
+  if (typeof document !== "undefined" && document.querySelector('meta[name="twin-static"]')) return null;
   const ac = typeof AbortController !== "undefined" ? new AbortController() : null;
   const timer = ac ? setTimeout(() => ac.abort(), timeoutMs) : 0;
   try {

@@ -14,7 +14,7 @@
 // static: the schema comes from core/schema.json and the browser twin is the only sound.
 // The twin is twin/audio.js (W-twin) whenever it loads, else the stand-in core/twin-stub.js.
 
-import { NAME, TAGLINE, DISCLAIMER } from "./design/brand.js";
+import { NAME, TAGLINE, DISCLAIMER, REPO_URL } from "./design/brand.js";
 import { createCtx } from "./core/ctx.js";
 import { probe, api, wsURL, connectState, createEchoFilter, serverTransport } from "./core/server.js";
 import { loadStatic, loadStaticCurves } from "./core/static.js";
@@ -215,6 +215,16 @@ async function boot() {
   const server = status ? { api, ws: (path) => new WebSocket(wsURL(path)) } : null;
   const { schema, status: initial } = server ? { schema: await api("GET", "/api/schema"), status } : await loadStatic();
   const { twin, info } = await loadTwin(Boolean(server));
+  if (!server) {  // the public page: say what this is, and where the full app lives
+    const intro = $("intro");
+    intro.append(
+      "A software twin of the Roland S-1, running in your browser. Play it with A to K or a MIDI keyboard. "
+      + "To sync a real S-1 and match your own sounds, ",
+      Object.assign(document.createElement("a"), { href: REPO_URL, textContent: "install it from GitHub", rel: "noopener" }),
+      ".",
+    );
+    intro.hidden = false;
+  }
   $("foot").textContent = (info.stub ? "The waveforms here come from a stand-in model until the twin module is installed. " : "")
     + `${TAGLINE} ${DISCLAIMER}`;
 

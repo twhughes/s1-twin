@@ -32,3 +32,6 @@ htmlcov/
 
 # S1 TUI
 ~/.synth/
+
+# the built public page (tools/build_site.py); deployed, never committed on main
+site/

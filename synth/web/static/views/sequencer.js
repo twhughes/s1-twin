@@ -1,48 +1,34 @@
 // views/sequencer.js — the Sequencer view: piano roll, transport, performance, banks, S-1 patterns.
-// Contract: docs/design/BUILD.md §2.2 (ctx). With a server it drives the cockpit's sequencer
-// (/api/sequence, /api/transport, /api/sequences, /api/device/pattern) and follows it live over its
-// own /ws/state socket; with no S-1 connected it also voices each step on the browser twin. In static
-// mode (ctx.server === null) it plays the roll on the twin with a local clock.
-// The pure helpers (stepSeconds, rollGeometry, cellAt, stepPlan, …) run in node: views/sequencer.check.mjs.
+// Contract: docs/design/BUILD.md §2.2 (ctx) and ROUND2.md §2. The page's one transport
+// (ctx.transport, core/transport.js) owns the sequence, the performance settings and the engine, so a
+// pattern keeps playing on the other views; this view is its UI. It edits ctx.transport.seq and calls
+// edited(); the transport sends the edits to the cockpit (/api/sequence, /api/transport) and follows it,
+// or runs its own clock on the static page. The banks and the S-1's patterns (/api/sequences,
+// /api/device/pattern) are this view's own. Space, ⇧ Space, − and = and Delete come from
+// core/shortcuts.js; the roll keeps its own keys while it has focus.
+// The pure helpers (rollGeometry, cellAt, moveCursor, …) run in node: views/sequencer.check.mjs; the
+// step rules (stepSeconds, stepPlan, swingDelay, …) moved to core/transport.js with the engine.
 
 import { knob } from "../design/knob.js";
 import { seg } from "../design/seg.js";
 import * as draw from "../design/draw.js";
 import { rgbOf, rgba, noteName } from "../design/colors.js";
+import { MAX_STEPS, stepSeconds, clampDuration, createTransport } from "../core/transport.js";
 
 export const id = "sequencer";
 export const title = "Sequencer";
 
 // ── pure helpers ─────────────────────────────────────────────────────────────────────
-export const MAX_STEPS = 64;
-export const MAX_NOTES_PER_STEP = 4;
 export const GRIDS = [
   { value: "1/8", label: "1/8" }, { value: "1/16", label: "1/16" }, { value: "1/32", label: "1/32" },
   { value: "8t", label: "8t" }, { value: "16t", label: "16t" }, { value: "32t", label: "32t" },
 ];
 const BLACK = new Set([1, 3, 6, 8, 10]);
 
-/** Seconds per step for a tempo and grid ("1/16", or "16t" for sixteenth triplets). */
-export function stepSeconds(bpm, res) {
-  const b = Math.max(1, Number(bpm) || 120);
-  const frac = /^(\d+)\/(\d+)$/.exec(String(res)), trip = /^(\d+)t$/.exec(String(res));
-  let beats = 1;                                             // unknown grid: a quarter note (as the server)
-  if (frac && +frac[2] > 0) beats = (4 * +frac[1]) / +frac[2];
-  else if (trip && +trip[1] > 0) beats = (4 / +trip[1]) * (2 / 3);
-  return (60 / b) * beats;
-}
-
 /** How many steps make one beat on this grid (for the stronger grid line): 4 on 1/16, 3 on 8t. */
 export function stepsPerBeat(res) {
   const beatsPerStep = stepSeconds(60, res);                 // at 60 BPM a beat is one second
   return Math.max(1, Math.round(1 / beatsPerStep));
-}
-
-/** Steps that start more notes than the S-1 can store (four per step). */
-export function polySteps(notes, max = MAX_NOTES_PER_STEP) {
-  const count = new Map();
-  for (const n of notes) count.set(n.step, (count.get(n.step) || 0) + 1);
-  return [...count].filter(([, c]) => c > max).map(([s]) => s).sort((a, b) => a - b);
 }
 
 /** The note sounding at (step, pitch): one that starts there or holds over it. */
@@ -75,31 +61,11 @@ export function noteRect(g, n) {
   return { x: stepX(g, n.step) + 1, y: rowY(g, n.pitch) + 1, w: n.duration * g.cellW - 2, h: g.rowH - 2 };
 }
 
-/** How long a new or dragged note may be at `step` (1 .. to the end of the pattern). */
-export const clampDuration = (d, step, steps) => Math.max(1, Math.min(steps - step, Math.round(d) || 1));
-
-/** What the sequencer fires at `step`: [{pitch, velocity, hold}] with hold in seconds (the server's
- *  rule: max(0.05, duration × gate) steps), or nothing when the probability roll fails. */
-export function stepPlan(notes, step, { gate = 1, probability = 1, stepSec = 0.125 } = {}, rand = Math.random) {
-  if (!(rand() < probability)) return [];
-  return notes.filter((n) => n.step === step)
-    .map((n) => ({ pitch: n.pitch, velocity: n.velocity, hold: Math.max(0.05, n.duration * gate) * stepSec }));
-}
-
-/** Swing: even-numbered steps (1-indexed; odd indices) start late by shuffle × a step. */
-export const swingDelay = (step, shuffle, stepSec) => (step % 2 === 1 ? Math.max(0, shuffle) * stepSec : 0);
-
 /** Arrow-key movement of the roll's keyboard cursor. */
 export function moveCursor(cur, key, { steps, lo, hi }, shift = false) {
   const d = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, shift ? 12 : 1], ArrowDown: [0, shift ? -12 : -1] }[key];
   if (!d) return cur;
   return { step: Math.max(0, Math.min(steps - 1, cur.step + d[0])), pitch: Math.max(lo, Math.min(hi, cur.pitch + d[1])) };
-}
-
-/** The steps as the server sees them (only the fields it accepts). */
-export function sequencePayload(seq) {
-  return { steps: seq.steps, bpm: seq.bpm, step_resolution: seq.step_resolution,
-    notes: seq.notes.map((n) => ({ step: n.step, pitch: n.pitch, velocity: n.velocity, duration: n.duration })) };
 }
 
 /** A bank name the app accepts (synth/patches.py sanitize_name): no path separators, no leading dot. */
@@ -108,7 +74,7 @@ export const validName = (name) => {
   return !!n && n !== "." && n !== ".." && !/[\\/\u0000]/.test(n) && !n.startsWith(".");
 };
 
-/** Position words: "Step 5 of 16", "Paused at step 5", "Stopped". */
+/** Position words: "Step 5 of 16", "Paused at step 5", "Stopped" (the transport's state). */
 export function positionText({ playing, paused, position, steps }) {
   if (paused && position >= 0) return `Paused at step ${position + 1}`;
   if (playing && position >= 0) return `Step ${position + 1} of ${steps}`;
@@ -181,7 +147,19 @@ export function unmount() {
   try { current.destroy(); } finally { current = null; }
 }
 
-export default { id, title, mount, unmount };
+/** The KeyHint bar on this view (app.js shows it): the transport's keys, then the roll's. */
+export const hints = [
+  { key: "Space", label: "Play/pause" },
+  { key: "⇧ Space", label: "Stop" },
+  { key: "− =", label: "Tempo" },
+  { key: "← ↑ → ↓", label: "Move" },
+  { key: "Enter", label: "Add" },
+  { key: "Delete", label: "Remove" },
+  { key: "[ ]", label: "Length" },
+  { key: "?", label: "Keys" },
+];
+
+export default { id, title, mount, unmount, hints };
 
 function h(tag, attrs = {}, ...kids) {
   const el = document.createElement(tag);
@@ -207,14 +185,15 @@ function createView(root, ctx) {
   document.head.append(style);
   disposers.push(() => style.remove());
 
-  const seq = { steps: 16, bpm: 120, step_resolution: "1/16", notes: [] };
-  const perf = { gate: 1, shuffle: 0, probability: 1, clock: true };
-  let poly = [];
-  let playing = false, paused = false, position = -1;
+  // The page's transport owns the sequence and the engine; without the shell (a bare mount) the view
+  // makes its own for its lifetime.
+  const T = ctx.transport || createTransport(ctx);
+  if (!ctx.transport) disposers.push(() => T.destroy());
+  const seq = T.seq, perf = T.perf;            // the ONE copy: edit it, then push()
   let selected = null, drag = null;
   let cursor = { step: 0, pitch: 60 }, cursorOn = false;
   let newVelocity = 100;
-  let sync = "offline";                 // the S-1 as the server sees it (offline → the twin voices steps)
+  let scrolled = false;                         // the roll opened on the notes once
   let geo = rollGeometry({ steps: seq.steps });
 
   // ── layout ──────────────────────────────────────────────────────────────────────
@@ -222,19 +201,19 @@ function createView(root, ctx) {
   root.append(view);
   disposers.push(() => view.remove());
 
-  const playBtn = h("button", { type: "button", class: "pill", "data-action": "play", "aria-pressed": "false", onclick: () => transport("play") }, "Play");
-  const pauseBtn = h("button", { type: "button", class: "pill", "data-action": "pause", "aria-pressed": "false", onclick: () => transport("pause") }, "Pause");
-  const stopBtn = h("button", { type: "button", class: "pill", "data-action": "stop", onclick: () => transport("stop") }, "Stop");
+  const playBtn = h("button", { type: "button", class: "pill", "data-action": "play", "aria-pressed": "false", onclick: () => T.play() }, "Play");
+  const pauseBtn = h("button", { type: "button", class: "pill", "data-action": "pause", "aria-pressed": "false", onclick: () => T.pause() }, "Pause");
+  const stopBtn = h("button", { type: "button", class: "pill", "data-action": "stop", onclick: () => T.stop() }, "Stop");
   const pos = h("span", { class: "sq-pos", text: "Stopped" });
-  const bpmIn = h("input", { type: "number", min: "20", max: "300", step: "0.5", value: "120", "aria-label": "Tempo in beats per minute" });
-  const stepsIn = h("input", { type: "number", min: "1", max: String(MAX_STEPS), step: "1", value: "16", "aria-label": "Pattern length in steps" });
-  const gridSeg = seg({ label: "Grid", value: seq.step_resolution, options: GRIDS, onInput: (v) => { seq.step_resolution = v; push(true); } });
-  const clockSeg = seg({ label: "Send MIDI clock", value: "on", options: [{ value: "off", label: "Off" }, { value: "on", label: "On" }],
-    onInput: (v) => { perf.clock = v === "on"; if (!staticMode) api("PUT", "/api/transport", { clock_enabled: perf.clock }).catch(fail); } });
+  const bpmIn = h("input", { type: "number", min: "20", max: "300", step: "0.5", value: String(seq.bpm), "aria-label": "Tempo in beats per minute" });
+  const stepsIn = h("input", { type: "number", min: "1", max: String(MAX_STEPS), step: "1", value: String(seq.steps), "aria-label": "Pattern length in steps" });
+  const gridSeg = seg({ label: "Grid", value: seq.step_resolution, options: GRIDS, onInput: (v) => { seq.step_resolution = v; drawRoll(); push(true); } });
+  const clockSeg = seg({ label: "Send MIDI clock", value: perf.clock ? "on" : "off", options: [{ value: "off", label: "Off" }, { value: "on", label: "On" }],
+    onInput: (v) => T.setPerf({ clock: v === "on" }) });
   const pct = (v) => `${v}%`;
-  const gateKnob = knob({ label: "Gate", min: 5, max: 100, value: 100, def: 100, format: pct, onInput: (v) => { perf.gate = v / 100; sendPerf(); } });
-  const shuffleKnob = knob({ label: "Shuffle", min: 0, max: 75, value: 0, def: 0, format: pct, onInput: (v) => { perf.shuffle = v / 100; sendPerf(); } });
-  const probKnob = knob({ label: "Probability", min: 0, max: 100, value: 100, def: 100, format: pct, onInput: (v) => { perf.probability = v / 100; sendPerf(); } });
+  const gateKnob = knob({ label: "Gate", min: 5, max: 100, value: Math.round(perf.gate * 100), def: 100, format: pct, onInput: (v) => T.setPerf({ gate: v / 100 }) });
+  const shuffleKnob = knob({ label: "Shuffle", min: 0, max: 75, value: Math.round(perf.shuffle * 100), def: 0, format: pct, onInput: (v) => T.setPerf({ shuffle: v / 100 }) });
+  const probKnob = knob({ label: "Probability", min: 0, max: 100, value: Math.round(perf.probability * 100), def: 100, format: pct, onInput: (v) => T.setPerf({ probability: v / 100 }) });
 
   const warn = h("p", { class: "sq-warn sq-hidden", role: "status", "data-role": "poly-warning" });
   const canvas = h("canvas", { tabindex: "0", role: "application", "aria-roledescription": "piano roll",
@@ -303,7 +282,7 @@ function createView(root, ctx) {
     canvas.style.height = `${geo.h}px`;
     drawRoll();
   }
-  function drawRoll() {
+  function drawRoll({ playing, paused, position } = T.state) {
     if (!canvas.isConnected) return;
     const [c, w, hh] = draw.fit(canvas);
     const g = geo;
@@ -342,7 +321,7 @@ function createView(root, ctx) {
     }
     // steps with too many notes: an engraved hatch over the column
     c.strokeStyle = draw.INK3;
-    for (const s of poly) {
+    for (const s of T.poly) {
       if (s >= g.steps) continue;
       const x0 = stepX(g, s);
       c.save(); c.beginPath(); c.rect(x0, 0, g.cellW, hh); c.clip();
@@ -391,6 +370,7 @@ function createView(root, ctx) {
     try { canvas.setPointerCapture(e.pointerId); } catch (_) { /* a synthetic pointer cannot be captured */ }
     cursor = { ...cell };
     cursorOn = false;
+    T.hold(true);                                   // the app's echoes wait until the drag ends
     const hit = noteAt(seq.notes, cell.step, cell.pitch);
     if (hit) { select(hit); drag = { note: hit }; }
     else {
@@ -398,7 +378,6 @@ function createView(root, ctx) {
       seq.notes.push(n);
       select(n);
       drag = { note: n };
-      refreshPoly();
     }
   });
   canvas.addEventListener("pointermove", (e) => {
@@ -408,7 +387,7 @@ function createView(root, ctx) {
     const n = drag.note, d = clampDuration(cell.step - n.step + 1, n.step, seq.steps);
     if (d !== n.duration) { n.duration = d; lenKnob.set(d); drawRoll(); }
   });
-  const endDrag = () => { if (drag) { drag = null; push(); } };
+  const endDrag = () => { T.hold(false); if (drag) { drag = null; push(); } };
   canvas.addEventListener("pointerup", endDrag);
   canvas.addEventListener("pointercancel", endDrag);
   canvas.addEventListener("dblclick", (e) => {
@@ -425,14 +404,14 @@ function createView(root, ctx) {
       cursorOn = true;
       revealCursor();
       drawRoll();
-    } else if (e.key === "Enter" || e.key === " ") {
+    } else if (e.key === "Enter") {                 // Space is play/pause everywhere (core/shortcuts.js)
       e.preventDefault();
       cursorOn = true;
       const hit = noteAt(seq.notes, cursor.step, cursor.pitch);
       if (hit) select(hit);
       else {
         const n = { step: cursor.step, pitch: cursor.pitch, velocity: newVelocity, duration: 1 };
-        seq.notes.push(n); select(n); refreshPoly(); push();
+        seq.notes.push(n); select(n); push();
       }
     } else if ((e.key === "Delete" || e.key === "Backspace") && selected) {
       e.preventDefault(); deleteNote(selected);
@@ -465,182 +444,66 @@ function createView(root, ctx) {
     if (!n) return;
     seq.notes = seq.notes.filter((x) => x !== n);
     if (selected === n) select(null);
-    refreshPoly();
     drawRoll();
     push();
   }
   function refreshPoly() {
-    if (staticMode) poly = polySteps(seq.notes);
+    const poly = T.poly;
     warn.textContent = warningText(poly);
     warn.classList.toggle("sq-hidden", !poly.length);
   }
 
-  // ── talking to the app ──────────────────────────────────────────────────────────
-  // A local edit is queued or on its way: the app's "sequence" echo must not overwrite it.
-  let pushTimer = 0, queued = false, inflight = 0;
-  function push(now = false) {
-    refreshPoly();
-    if (staticMode) { drawRoll(); return; }
-    clearTimeout(pushTimer);
-    queued = true;
-    const go = async () => {
-      queued = false; inflight += 1;
-      try {
-        const r = await api("PUT", "/api/sequence", sequencePayload(seq));
-        poly = r.poly_warnings || [];
-        refreshPoly();
-        drawRoll();
-      } catch (e) { fail(e); } finally { inflight -= 1; }
-    };
-    if (now) go(); else pushTimer = later(go, 180);
-  }
-  let perfTimer = 0;
-  function sendPerf() {
-    if (staticMode) return;
-    clearTimeout(perfTimer);
-    perfTimer = later(() => api("PUT", "/api/transport", { gate: perf.gate, shuffle: perf.shuffle, probability: perf.probability }).catch(fail), 120);
-  }
-  function applySequence(s) {
-    if (!s || drag) return;                        // never fight a live edit
+  // ── the transport: edits go through it, and it tells us what changed ─────────────
+  /** An edit to seq: the transport re-counts the four-note warning (static) or sends it to the app. */
+  function push(now = false) { T.edited({ now }); }
+  /** The transport's sequence was replaced (the app, another tab, a loaded bank): show it. The
+   *  selection re-binds to the same note in the fresh list (a replacement makes new objects). */
+  function adopt() {
     const keep = selected ? { step: selected.step, pitch: selected.pitch } : null;
-    seq.steps = s.steps; seq.bpm = s.bpm; seq.step_resolution = s.step_resolution;
-    seq.notes = (s.notes || []).map((n) => ({ step: n.step, pitch: n.pitch, velocity: n.velocity, duration: n.duration }));
-    if (Array.isArray(s.poly_warnings)) poly = s.poly_warnings;
-    // Re-bind the selection to the same note in the fresh list (server echoes replace objects).
     selected = keep ? seq.notes.find((n) => n.step === keep.step && n.pitch === keep.pitch) || null : null;
     inspector.classList.toggle("sq-hidden", !selected);
     if (selected) select(selected);
     if (document.activeElement !== bpmIn) bpmIn.value = String(seq.bpm);
     if (document.activeElement !== stepsIn) stepsIn.value = String(seq.steps);
     gridSeg.set(seq.step_resolution);
+    cursor.step = Math.min(cursor.step, seq.steps - 1);
     refreshPoly();
     layout();
-  }
-  function applyTransport(t) {
-    if (!t) return;
-    playing = !!t.playing; paused = !!t.paused;
-    if (typeof t.position === "number" && (playing || paused)) position = t.position;
-    if (!playing && !paused) position = -1;
-    if (!playing || paused) twinOffAll();
-    paintTransport();
-  }
-  function paintTransport() {
-    playBtn.setAttribute("aria-pressed", String(playing && !paused));
-    pauseBtn.setAttribute("aria-pressed", String(paused));
-    pos.textContent = positionText({ playing, paused, position, steps: seq.steps });
-    drawRoll();
-  }
-  async function transport(action) {
-    if (action === "play") ctx.twin?.resume?.();
-    if (staticMode) { local[action](); return; }
-    try {
-      const t = await api("POST", "/api/transport", { action });
-      applyTransport(t);
-      if (action === "play" && !t.playing && !seq.notes.length) ctx.toast?.("Add a note to the roll first.");
-    } catch (e) { fail(e); }
-  }
-
-  bpmIn.addEventListener("change", () => {
-    const v = Math.max(20, Math.min(300, Number(bpmIn.value) || 120));
-    bpmIn.value = String(v); seq.bpm = v; push(true);
-  });
-  stepsIn.addEventListener("change", () => {
-    const v = Math.max(1, Math.min(MAX_STEPS, Math.round(Number(stepsIn.value)) || 16));
-    stepsIn.value = String(v); seq.steps = v;
-    seq.notes = seq.notes.filter((n) => n.step < v);        // as the server does: notes past the end go
-    for (const n of seq.notes) n.duration = clampDuration(n.duration, n.step, v);
-    if (selected && !seq.notes.includes(selected)) select(null);
-    cursor.step = Math.min(cursor.step, v - 1);
-    layout(); push(true);
-  });
-
-  // ── sound on the twin: the server's steps when no S-1 is connected, or a local clock ──
-  const offAt = new Map();                          // pitch -> when its latest hold ends (ms)
-  const twinOn = new Set();
-  function voice(step) {
-    const twin = ctx.twin;
-    if (!twin) return;
-    const stepSec = stepSeconds(seq.bpm, seq.step_resolution);
-    for (const n of stepPlan(seq.notes, step, { gate: perf.gate, probability: perf.probability, stepSec })) {
-      const end = performance.now() + n.hold * 1000;
-      offAt.set(n.pitch, end);
-      try { twin.noteOn(n.pitch, n.velocity); twinOn.add(n.pitch); } catch (_) { /* the twin is best-effort */ }
-      later(() => {
-        if ((offAt.get(n.pitch) || 0) > performance.now() + 2) return;   // a later note holds this pitch
-        offAt.delete(n.pitch); twinOn.delete(n.pitch);
-        try { twin.noteOff(n.pitch); } catch (_) { /* ignore */ }
-      }, n.hold * 1000);
+    if (!scrolled && seq.notes.length) {             // open on the notes, the top one with a little room
+      const top = Math.max(...seq.notes.map((n) => n.pitch));
+      well.scrollTop = Math.max(0, rowY(geo, Math.min(geo.hi, top + 3)) - 10);
+      scrolled = true;
     }
   }
-  function twinOffAll() {
-    offAt.clear();
-    if (!twinOn.size) return;
-    for (const p of twinOn) { try { ctx.twin?.noteOff(p); } catch (_) { /* ignore */ } }
-    twinOn.clear();
+  function showPerf() {
+    gateKnob.set(Math.round(perf.gate * 100)); shuffleKnob.set(Math.round(perf.shuffle * 100)); probKnob.set(Math.round(perf.probability * 100));
+    clockSeg.set(perf.clock ? "on" : "off");
   }
-  const local = (() => {                           // static mode's clock (the server's rules)
-    let timer = 0, t0 = 0, k = 0, step = 0;
-    const tick = () => {
-      const stepSec = stepSeconds(seq.bpm, seq.step_resolution);
-      if (step >= seq.steps) step = 0;
-      position = step; voice(step); paintTransport();
-      step = (step + 1) % seq.steps; k += 1;
-      const due = t0 + k * stepSec * 1000 + swingDelay(step, perf.shuffle, stepSec) * 1000;
-      timer = setTimeout(tick, Math.max(0, due - performance.now()));
-    };
-    const start = () => { clearTimeout(timer); t0 = performance.now(); k = 0; tick(); };
-    return {                                      // the server's semantics: Play resumes a pause
-      play() {
-        if (playing && !paused) return;
-        if (!seq.notes.length) { ctx.toast?.("Add a note to the roll first."); return; }
-        if (!paused) step = 0;
-        playing = true; paused = false; start();
-      },
-      pause() { if (!playing || paused) return; clearTimeout(timer); paused = true; twinOffAll(); paintTransport(); },
-      stop() { clearTimeout(timer); playing = false; paused = false; position = -1; step = 0; twinOffAll(); paintTransport(); },
-      destroy() { clearTimeout(timer); },
-    };
-  })();
-  disposers.push(() => { local.destroy(); twinOffAll(); });
+  function paintTransport(st = T.state) {
+    playBtn.setAttribute("aria-pressed", String(st.playing));
+    pauseBtn.setAttribute("aria-pressed", String(st.paused));
+    pos.textContent = positionText(st);
+    drawRoll(st);
+  }
+  disposers.push(T.on((st, what) => {
+    if (what === "sequence") adopt();
+    else if (what === "tempo") { if (document.activeElement !== bpmIn) bpmIn.value = String(seq.bpm); }
+    else if (what === "poly") refreshPoly();
+    else if (what === "perf") showPerf();
+    paintTransport(st);
+  }));
+  // Delete (core/shortcuts.js) deletes the selected note wherever focus is, except in a text field.
+  const offDelete = ctx.shortcuts?.handle?.("delete", () => { if (!selected) return false; deleteNote(selected); return true; });
+  if (offDelete) disposers.push(offDelete);
 
-  // ── live: the server's sequencer, over our own /ws/state ─────────────────────────
-  let socket = null, closed = false, retry = 1000;
-  function connect() {
-    if (closed || staticMode) return;
-    let ws;
-    try { ws = ctx.server.ws("/ws/state"); } catch (_) { return; }
-    socket = ws;
-    ws.onopen = () => { retry = 1000; };
-    ws.onmessage = (ev) => {
-      let m; try { m = JSON.parse(ev.data); } catch (_) { return; }
-      switch (m.type) {
-        case "hello":
-          sync = m.status?.sync || sync;
-          applySequence(m.sequence);
-          applyTransport(m.status?.transport);
-          break;
-        case "sequence":                              // another client changed it (our own echo is skipped)
-          if (!queued && !inflight && !drag) api("GET", "/api/sequence").then((s) => { if (!queued && !inflight) applySequence(s); }).catch(() => {});
-          break;
-        case "transport": applyTransport(m); break;
-        case "sync": sync = m.state || sync; break;
-        case "position":
-          position = m.step;
-          if (!playing) playing = true;
-          if (sync === "disconnected" || sync === "offline") voice(m.step);   // no S-1: the twin plays the step
-          paintTransport();
-          break;
-        default: break;
-      }
-    };
-    ws.onclose = () => {
-      if (socket === ws) socket = null;
-      if (closed) return;
-      later(connect, retry);
-      retry = Math.min(retry * 2, 10000);
-    };
-  }
-  disposers.push(() => { closed = true; if (socket) { try { socket.close(); } catch (_) { /* closed */ } socket = null; } });
+  bpmIn.addEventListener("change", () => { bpmIn.value = String(T.setTempo(bpmIn.value, { now: true })); });
+  stepsIn.addEventListener("change", () => {
+    const v = T.setSteps(stepsIn.value);                  // notes past the end go, as the app does
+    stepsIn.value = String(v);
+    if (selected && !seq.notes.includes(selected)) select(null);
+    cursor.step = Math.min(cursor.step, v - 1);
+    layout();
+  });
 
   // ── banks and patterns ──────────────────────────────────────────────────────────
   let savedNames = [];
@@ -659,7 +522,7 @@ function createView(root, ctx) {
         });
         return h("li", {}, h("span", { text: r.name }),
           h("button", { type: "button", class: "quiet", onclick: async () => {
-            try { applySequence(await api("POST", `/api/sequences/${encodeURIComponent(r.name)}/load`)); ctx.toast?.(`Loaded ${r.name}.`); }
+            try { T.replace(await api("POST", `/api/sequences/${encodeURIComponent(r.name)}/load`)); ctx.toast?.(`Loaded ${r.name}.`); }
             catch (e) { fail(e); }
           } }, "Load"), del);
       }));
@@ -694,7 +557,7 @@ function createView(root, ctx) {
     const bank = Number(bankSel.value), slot = Number(slotSel.value);
     try {
       const r = await api("POST", "/api/device/pattern", { bank, slot });
-      ctx.toast?.(sync === "disconnected" || sync === "offline"
+      ctx.toast?.(ctx.status?.sync === "offline"
         ? "The S-1 is not connected, so nothing changed. Plug it in, then switch again."
         : `Switched the S-1 to pattern ${r.bank}-${r.slot}.`);
     } catch (e) { fail(e); }
@@ -704,27 +567,16 @@ function createView(root, ctx) {
   const ro = new ResizeObserver(() => layout());
   ro.observe(well);
   disposers.push(() => ro.disconnect());
-  layout();
-  well.scrollTop = Math.max(0, rowY(geo, 79) - 10);   // open around C4–G5
+  adopt();                                          // the transport already holds the sequence
+  if (!scrolled) well.scrollTop = Math.max(0, rowY(geo, 79) - 10);   // an empty roll opens around C4–G5
   if (!staticMode) {
-    api("GET", "/api/sequence").then(applySequence).then(() => {
-      const top = seq.notes.length ? Math.max(...seq.notes.map((n) => n.pitch)) : 79;
-      well.scrollTop = Math.max(0, rowY(geo, Math.min(geo.hi, top + 3)) - 10);
-    }).catch(fail);
-    api("PUT", "/api/transport", {}).then((t) => {       // an empty PUT reads the performance settings
-      perf.gate = t.gate ?? 1; perf.shuffle = t.shuffle ?? 0; perf.probability = t.probability ?? 1; perf.clock = t.clock_enabled ?? true;
-      gateKnob.set(Math.round(perf.gate * 100)); shuffleKnob.set(Math.round(perf.shuffle * 100)); probKnob.set(Math.round(perf.probability * 100));
-      clockSeg.set(perf.clock ? "on" : "off");
-      applyTransport(t);
-    }).catch(() => {});
+    T.refresh();                                    // the performance settings may have changed in another tab
     refreshList();
-    connect();
   }
   paintTransport();
 
   return {
     destroy() {
-      clearTimeout(pushTimer); clearTimeout(perfTimer);
       for (const t of timers) clearTimeout(t);
       timers.clear();
       for (const d of disposers.reverse()) { try { d(); } catch (_) { /* keep tearing down */ } }

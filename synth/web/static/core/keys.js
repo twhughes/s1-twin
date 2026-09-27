@@ -22,7 +22,8 @@ export const isBlack = (n) => BLACK.has(((n % 12) + 12) % 12);
 export const SPAN = 25;                       // C to C, two octaves
 export const BASE_MIN = 12, BASE_MAX = 96;
 
-const typing = (t) => Boolean(t && (t.isContentEditable || /^(INPUT|SELECT|TEXTAREA)$/.test(t.tagName)));
+/** True while focus is in a place that takes typing (the shortcuts in core/shortcuts.js use it too). */
+export const typing = (t) => Boolean(t && (t.isContentEditable || /^(INPUT|SELECT|TEXTAREA)$/.test(t.tagName)));
 
 export function createKeys(ctx, { base = 36, velocity = 100 } = {}) {
   let qwertyOn = false;

@@ -14,12 +14,16 @@
 // the schema, the live state and the S-1 arrive over /api and /ws/state). Otherwise the page is
 // static: the schema comes from core/schema.json and the browser twin is the only sound.
 // The twin is twin/audio.js (W-twin) whenever it loads, else the stand-in core/twin-stub.js.
+// The sequence's transport (core/transport.js) and the keyboard shortcuts (core/shortcuts.js) live for
+// the page's life as ctx.transport and ctx.shortcuts, so a pattern keeps playing across the views.
 
 import { NAME, TAGLINE, DISCLAIMER, REPO_URL } from "./design/brand.js";
 import { createCtx } from "./core/ctx.js";
 import { probe, api, wsURL, connectState, createEchoFilter, serverTransport } from "./core/server.js";
 import { loadStatic, loadStaticCurves } from "./core/static.js";
 import { createKeys } from "./core/keys.js";
+import { createTransport } from "./core/transport.js";
+import { createShortcuts } from "./core/shortcuts.js";
 import { readHash } from "./core/flags.js";
 import { sendPatch } from "./core/actions.js";
 
@@ -199,7 +203,8 @@ function router(ctx, hints) {
     }
     if (view.id !== "synth") document.documentElement.classList.remove("developing");
     hints.view = view.id;
-    hints(false);
+    hints.items = v && Array.isArray(v.hints) ? v.hints : null;
+    hints();
   }
   window.addEventListener("hashchange", go);
   return go();
@@ -232,14 +237,15 @@ async function boot() {
   const demo = flags.get("demo") === "connected";
   const echo = createEchoFilter();
   let link = null;
-  const transport = server ? serverTransport({
+  const upstream = server ? serverTransport({
     link: { send: (m) => (link ? link.send(m) : false) },
     echo,
     onError: (e) => toast(`A change did not reach the cockpit: ${e.message}`),
   }) : null;
-  const ctx = createCtx({ schema, twin, transport, server, toast });
+  const ctx = createCtx({ schema, twin, transport: upstream, server, toast });
   ctx.twinInfo = info;
   ctx.keys = createKeys(ctx);
+  ctx.transport = createTransport(ctx);   // before the socket opens: it follows the app from the hello on
   // In the connected demo the S-1's link is pretend: the server's own word for it is ignored.
   const setStatus = (patch) => {
     if (demo) { const { sync: _s, port: _p, server: _v, ...rest } = patch; patch = rest; }
@@ -263,13 +269,22 @@ async function boot() {
     $("send").disabled = false;
   });
 
-  const hints = (drawerOpen) => {
+  // The KeyHint bar: Esc while a drawer or the list of keys is open; else the view's own `hints`
+  // export, or the one key every view has. The Synth view shows no bar: on the one-screen plate its
+  // corner is the keyboard, so the plate carries its hints inline (ROUND2.md §2).
+  const overlayOpen = () => document.body.classList.contains("drawer-open") || Boolean(ctx.shortcuts?.sheet.open);
+  const hints = (overlay = overlayOpen()) => {
     if (!window.KeyHint) return;
-    if (drawerOpen) window.KeyHint.set([{ key: "Esc", label: "Close" }]);
-    else if (hints.view === "synth") window.KeyHint.set([{ key: "A – K", label: "Play" }, { key: "Z  X", label: "Octave" }]);
-    else window.KeyHint.hide();
+    if (overlay) window.KeyHint.set([{ key: "Esc", label: "Close" }]);
+    else if (hints.view === "synth") window.KeyHint.hide();
+    else window.KeyHint.set(hints.items && hints.items.length ? hints.items : [{ key: "?", label: "Keys" }]);
   };
   const drawer = drawers(ctx, hints);
+  ctx.shortcuts = createShortcuts(ctx, {
+    go: (id) => { location.hash = `#${id}`; },
+    view: () => hints.view,
+    onSheet: () => hints(),
+  });
   await router(ctx, hints);
   for (const name of Object.keys(DRAWERS)) if (flags.has(name)) { await drawer.open(name, null, { focus: false, instant: true }); break; }
 }

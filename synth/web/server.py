@@ -1043,6 +1043,16 @@ async def ws_state(websocket: WebSocket) -> None:
         engine.unsubscribe(push)
 
 
+# ── routers owned by the cyanotype build (docs/design/BUILD.md §2.5) ──
+from synth.web import eartest as _eartest  # noqa: E402
+from synth.web import match_ws as _match_ws  # noqa: E402
+from synth.web import plate_routes as _plate_routes  # noqa: E402
+
+app.include_router(_plate_routes.router)
+app.include_router(_match_ws.router)
+app.include_router(_eartest.router)
+
+
 # ── static frontend (mounted last so /api wins) ──────────────
 if STATIC_DIR.exists():
     app.mount("/", StaticFiles(directory=str(STATIC_DIR), html=True), name="static")

@@ -43,6 +43,7 @@ dev = [
 ]
 
 [project.scripts]
+s1 = "synth.__main__:main"       # the name the README teaches
 synth = "synth.__main__:main"
 synth-match = "synth.match.cli:main"
 synth-prm = "synth.prm_cli:main"

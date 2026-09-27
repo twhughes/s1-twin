@@ -80,8 +80,8 @@ export const PLATE = [
     [14],
     [19, 20, 21, 23],
     { wide: true, items: [22, 78] },
-    [15, 16, 13],
     { more: "Draw and chop", rows: [[107], [102, 103, 104]] },
+    [15, 16, 13],   // last row: the LFO/Env leaders to Pulse width and Vibrato rise without crossing text
   ] },
   { id: "filter", kind: "stage", title: "Filter", well: "Waveform after the filter", rows: [
     [74, { pair: [71, 26] }],

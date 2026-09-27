@@ -524,7 +524,9 @@ class Plate {
       const r = this.reveal(4, now);
       const level = top ? 0.3 + 0.7 * Math.sqrt(this.levelAt(tNote)) : 1;
       const twin = (live && live.out) || (st && st.plume);
-      const plume = (s, lv) => draw.plumePts(w, h, s.data, s.spc, { from: s.from, cycles: 1, level: lv });
+      // one period plus one sample: the fold tiles the cycle, so the extra sample is the first one
+      // again and the loop closes (a square's edge left a visible gap otherwise)
+      const plume = (s, lv) => draw.plumePts(w, h, s.data, s.spc, { from: s.from, cycles: 1 + 1 / s.spc, level: lv });
       if (this.hardware()) {
         const real = this.ctx.status.demo ? st && st.fake : this.real;
         if (real) draw.stroke(c, plume(real, level), { color: draw.BRONZE, width: 1.7, glow: 10, halo, reveal: r, w, h });

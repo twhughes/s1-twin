@@ -53,7 +53,8 @@ export function mount(el, context) {
   if (!server) {
     el.append(h("p", { text: "The library needs the cockpit running on your Mac: saved patches, Save to S-1 and Load from S-1 all live there." }));
   } else {
-    el.append(...patchesSection(), ...saveSection(), ...loadSection(), ...patternSection());
+    // Switching the S-1's playing pattern is a performance action: its one home is the Sequencer view.
+    el.append(...patchesSection(), ...saveSection(), ...loadSection());
   }
   el.append(prmSection());
   ctx.on("param", ({ source }) => {
@@ -295,26 +296,6 @@ async function uploadPattern() {
       `/api/import/upload?load_patch=${ui.impPatch.checked}&load_sequence=${ui.impSeq.checked}`, fd, { form: true }));
   } catch (e) { say(`${f.name} did not load: ${e.message}`); }
   ui.file.value = "";
-}
-
-// ── the S-1's stored patterns (Program Change) ──────────────────────────────
-function patternSection() {
-  ui.pcBank = h("select", { "aria-label": "Pattern bank" }, ...options(4));
-  ui.pcSlot = h("select", { "aria-label": "Pattern slot" }, ...options(16));
-  ui.switchBtn = h("button", { class: "pill", type: "button", text: "Switch pattern", onclick: switchPattern });
-  return [
-    h("h3", { text: "Patterns on the S-1" }),
-    h("p", { text: "Switch the S-1 to one of its 64 stored patterns. Nothing is written." }),
-    h("div", { class: "slotrow" }, h("label", {}, "Bank ", ui.pcBank), h("label", {}, "Slot ", ui.pcSlot), ui.switchBtn),
-  ];
-}
-
-async function switchPattern() {
-  if (ctx.soundSource !== "s1") { say("The S-1 is not connected. Plug it in to switch its pattern."); return; }
-  try {
-    const r = await ctx.server.api("POST", "/api/device/pattern", { bank: Number(ui.pcBank.value), slot: Number(ui.pcSlot.value) });
-    say(`The S-1 now plays pattern ${r.bank}-${r.slot}.`);
-  } catch (e) { say(`The pattern did not switch: ${e.message}`); }
 }
 
 // ── the pattern-file-only tier ─────────────────────────────────────────────

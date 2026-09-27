@@ -1,44 +1,111 @@
-# Twin — a software twin for the Roland S-1
+<p align="center">
+  <img src="synth/web/static/design/favicon.svg" width="72" height="72" alt="">
+</p>
 
-*Working title; the name will change. Not affiliated with Roland Corporation. Roland and S-1 are
-trademarks of Roland Corporation, used here only to say what this works with.*
+<h1 align="center">Twin</h1>
 
-![The Synth view: the S-1's signal chain drawn stage by stage, a held A2 tinting the chain](docs/images/synth.png)
+<p align="center">
+  A software twin of the Roland S-1 synthesizer. Play it in your browser, see inside every stage<br>
+  of the sound, and watch it learn a sound by gradient descent.
+</p>
 
-A differentiable model of the Roland S-1, the small SH-101-style synth, that you can play, look
-inside, and teach. Play it in the browser. Drop in a sound and watch gradient descent turn its
-knobs until it sounds like the sound. Plug in a real S-1 and it syncs: every knob, both ways.
+<p align="center">
+  <a href="https://tylerwhughes.com/s1-twin/"><b>Play it in your browser</b></a><br>
+  <sub>or <a href="#install">install it</a> to sync a real S-1 and match your own sounds</sub>
+</p>
 
-**Try it in your browser:** [tylerwhughes.com/s1-twin](https://tylerwhughes.com/s1-twin/)
+<br>
 
-## What it does
+![The Synth view: the S-1's signal chain drawn stage by stage, with a held A2 tinting every window](docs/images/synth.png)
 
-- **Play the twin.** The browser runs the same equations as the Python model: band-limited
-  saw, pulse, sub and noise into a 4-pole ladder filter, an envelope, an LFO. Every stage has a
-  window, so you see what each knob does to the wave. The output is drawn as a *plume*: each
-  loop is one cycle of the sound, and sharper turns mean a brighter tone. Play it with A–K on
-  your computer keyboard or a MIDI keyboard (Chrome).
-- **Match a sound.** Give it a recording of one note or a chord of up to four. The matcher
-  descends the model's gradient (Adam over 18 continuous knobs, plus the 3 switches tried in
-  turn) against a multi-resolution spectral and envelope loss, and streams every step so the
-  knobs move as it learns. A quick search takes seconds; a thorough one, a couple of minutes.
-  It finds a patch that *sounds like* the target, not always the patch that made it.
-- **Sync a real S-1.** Plug the S-1 in over USB and the page becomes its front panel: every
-  knob and menu setting live in both directions, the S-1's audio on your speakers with no DAW,
-  a sequencer with MIDI clock, a patch library, and **Save to S-1** for patterns. When the S-1
-  is connected, the output window draws its real signal in bronze with the twin's prediction
-  dotted over it, so you can see how close the twin is.
+The S-1 is Roland's small SH-101-style synthesizer. Twin is a model of it that you can
+differentiate. The same equations run in Python, for gradient descent, and in your browser, for
+playing, and a test checks on every run that the two agree. Plug a real S-1 into the computer and
+the page becomes its front panel.
+
+## Play it
+
+Every stage of the sound has a window: the oscillator, the filter, the amplifier, the effects and
+the output. Turn a knob and the windows redraw, so you see what the knob does to the wave. The
+output is drawn as a *plume*: each loop is one cycle of the sound, and sharper turns mean a brighter
+tone. A held note colors the chain by its pitch.
+
+The whole synth fits one laptop screen. Play it from your computer keyboard or a MIDI keyboard
+(Chrome). A piano-roll sequencer keeps playing while you turn the knobs.
+
+| Key | What it does |
+|---|---|
+| <kbd>A</kbd> to <kbd>K</kbd> | Play (the row above plays the black keys) |
+| <kbd>Z</kbd> <kbd>X</kbd> | Octave down, octave up |
+| <kbd>Space</kbd> | Play or pause the sequence, from any view |
+| <kbd>Shift</kbd> <kbd>Space</kbd> | Stop |
+| <kbd>1</kbd> <kbd>2</kbd> <kbd>3</kbd> | Synth, Sequencer, Match |
+| <kbd>?</kbd> | Show every key |
+
+## Teach it
+
+Give the matcher a sound: drop in a file, record one from a microphone or the S-1, or let it test
+itself on the synth's current sound. It turns the twin's knobs by gradient descent until the twin
+sounds the same, and you watch every step.
+
+![The matcher at work: the loss falls over four starts, the guess (dotted) closes on the target (solid), and the knobs turn until the match is done](docs/images/match.gif)
+
+The self-test is the honest one. The synth plays a note with settings the matcher never sees, and
+the matcher starts from scratch. In the run above, it brought back all 14 settings that shape the
+sound to within 10 (on the knobs' 0 to 127 scale), in about 80 seconds on a laptop:
+
+![How close it came back: 14 of 14 settings within 10, each with its true value and the value the matcher found](docs/images/recovery.png)
+
+## Sync a real S-1
+
+Plug the S-1 in over USB and the page becomes its front panel:
+
+- every knob and menu setting, live in both directions;
+- the S-1's audio on your speakers, with no DAW;
+- the sequencer, with MIDI clock;
+- a patch library, and **Save to S-1** for patterns.
+
+While the S-1 is connected, the output window draws its real signal in bronze, with the twin's
+prediction dotted over it, so you can see how close the twin is.
+
+## How the twin works
+
+```mermaid
+flowchart LR
+  osc["Oscillator<br>saw, pulse, sub, noise"] --> filter["Filter<br>4-pole ladder"]
+  filter --> amp["Amplifier<br>envelope or gate"] --> fx["Effects<br>browser only"] --> out(("Output"))
+  lfo["LFO"] -.-> osc
+  lfo -.-> filter
+  env["Envelope"] -.-> filter
+  env -.-> amp
+```
+
+- **Oscillators** are additive Fourier series: band-limited, and differentiable in every knob,
+  pulse width included.
+- **The filter** is the transfer function of an analog 4-pole ladder,
+  H(s) = (1 + k) / ((1 + s)⁴ + k), applied in the frequency domain. A moving cutoff is an
+  overlap-add of short frames, each with its own ladder, which keeps the gradient cheap.
+- **From knob to sound.** Each knob's 0 to 127 maps to a physical unit (hertz, seconds, a ratio)
+  through a curve. The curves are what a calibration run fits to a real S-1.
+- **The matcher** runs Adam on 18 continuous knobs and tries the 3 switches (sub octave, LFO wave,
+  volume shape) in turn. The loss is a log-mel distance, plus a multi-resolution spectrogram term
+  and an envelope term, on loudness-normalized audio. Quick is one descent of 45 steps. Thorough
+  is four random starts of 160 steps each, and it keeps the best.
+- **The browser twin** is the same model in an AudioWorklet. Every test run checks it against the
+  Python: 0.001 log-mel apart offline and 0.07 in real time, where two different patches are at
+  least 1.9 apart.
 
 ## Status, honestly
 
-- **The twin is not yet calibrated against real hardware.** Its knob-to-sound curves are
-  informed guesses. A calibration run fits them from a few hundred recorded probes of a real
-  S-1, and an ear test checks that the matcher's idea of "closer" agrees with a listener.
-  Until that session runs, a match is only as true as the twin.
-- The browser twin matches the Python model to 0.001 log-mel offline and 0.07 in real time
-  (two different patches are at least 1.9 apart), checked on every test run.
-- Delay, reverb, chorus and the voice modes are browser extras outside the model: they sound,
-  but the matcher does not fit them. Draw and Chop need the real S-1.
+- **The twin is not yet calibrated against real hardware.** Its knob-to-sound curves are informed
+  guesses. A calibration run fits them from a few hundred recorded notes of a real S-1, and an ear
+  test checks that the matcher's idea of "closer" agrees with a listener. Until that session runs,
+  a match is only as true as the twin.
+- On the twin's own sounds the matcher brings the settings back (the self-test above). On sounds
+  from elsewhere, the published runs reach 33 to 50% closeness, and closeness is not yet checked by
+  ear.
+- Delay, reverb, chorus and the voice modes are browser extras outside the model: they sound, but
+  the matcher does not fit them. Draw and Chop need the real S-1.
 - Tested in Chrome. Safari is untested.
 
 ## Install
@@ -51,7 +118,16 @@ python3.12 -m venv .venv
 .venv/bin/s1            # opens the page; plug in an S-1 any time
 ```
 
-## How sync works (and why)
+```bash
+s1                  # the page (opens the browser); same as `synth`
+s1 --no-browser     # just the server, on 127.0.0.1:8766
+s1 --list-ports     # the MIDI ports the computer sees
+synth-match         # the matcher's command line
+synth-prm           # read and write .PRM pattern files
+```
+
+<details>
+<summary><b>How sync works, and why</b></summary>
 
 The S-1 has **no SysEx**: its state cannot be read back. The only live signals are CCs: knobs
 transmit when moved, and the synth accepts CCs in. So the app treats **its own state as the
@@ -61,11 +137,14 @@ stream in and win over the page. Unplug and replug freely; it reconnects and re-
 The S-1 **is** class-compliant USB audio over the same cable (a 2-in "S-1" device in CoreAudio).
 The app routes it to the default output, which is how you hear it with no DAW.
 
-## Save to S-1 (patterns into the hardware)
+</details>
+
+<details>
+<summary><b>Save to S-1: patterns into the hardware</b></summary>
 
 Patterns transfer through USB disk mode, not MIDI. The Library builds a device-ready
-`S1_PTN<bank>-<slot>.PRM` from the live patch and sequence (the format is community-decoded
-plain text; the writer templates off a real device dump so it never invents keys):
+`S1_PTN<bank>-<slot>.PRM` from the live patch and sequence (the format is community-decoded plain
+text; the writer templates off a real device dump so it never invents keys):
 
 1. Power the S-1 off. Hold **Play** while you power it on.
 2. Wait one to two minutes for a drive named `S-1` (the app notices, and can write the file into
@@ -75,27 +154,22 @@ plain text; the writer templates off a real device dump so it never invents keys
 It also reads the other way: **Load from the S-1** lists the mounted device's saved patterns and
 loads one, patch and sequence, live and editable.
 
-## The agent door
+</details>
+
+<details>
+<summary><b>The agent door: everything is an endpoint</b></summary>
 
 Everything the page does is a documented endpoint (interactive docs at
 `http://127.0.0.1:8766/docs`): read or set any parameter, patches, sequences, transport, notes,
-device patterns, `.prm` export, and the twin matcher over `/ws/match`. Live state, including
-physical knob twists, streams over `/ws/state`.
+device patterns, `.prm` export, a test note from the S-1, and the twin matcher over `/ws/match`.
+Live state, including physical knob twists, streams over `/ws/state`.
 
 ```bash
 curl -X PUT localhost:8766/api/params/74 -H 'content-type: application/json' -d '{"value": 90}'
 curl -X POST localhost:8766/api/notes -H 'content-type: application/json' -d '{"note": 60, "on": true}'
 ```
 
-## Commands
-
-```bash
-s1                  # the page (opens the browser); same as `synth`
-s1 --no-browser     # just the server, on 127.0.0.1:8766
-s1 --list-ports     # the MIDI ports the Mac sees
-synth-match         # the matcher's command line
-synth-prm           # read and write .PRM pattern files
-```
+</details>
 
 ## Development
 
@@ -112,10 +186,11 @@ Layout: `synth/schema.py` and `synth/data/s1.json` (every parameter, audited aga
 MIDI chart), `synth/engine.py` (port watcher, sync, keyboards), `synth/audio.py` (S-1 USB audio to
 speakers), `synth/match/twin.py` (the differentiable model), `synth/match/twin_session.py` (the
 streaming matcher), `synth/web/` (FastAPI) and `synth/web/static/` (the one front-end: the design
-kit in `design/`, the browser twin in `twin/`, views in `views/`). The design direction lives in
-`docs/design/`.
+kit in `design/`, the browser twin in `twin/`, the transport and keys in `core/`, views in `views/`).
+The design direction lives in `docs/design/`.
 
 ## Credits
 
-MIT licensed. Fonts: Old Standard TT and Libre Franklin, under the SIL Open Font License (texts in
-`synth/web/static/design/fonts/`).
+MIT licensed. Twin is a working title. Not affiliated with Roland Corporation; Roland and S-1 are
+trademarks of Roland Corporation, used here only to say what this works with. Fonts: Old Standard TT
+and Libre Franklin, under the SIL Open Font License (texts in `synth/web/static/design/fonts/`).

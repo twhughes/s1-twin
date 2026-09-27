@@ -1,5 +1,5 @@
 # STATUS — synth
-*updated 2026-09-27 (**the cyanotype build is integrated on branch `cyanotype` and ready to publish on Tyler's go** — see the "built and integrated" bullet; 816 tests)); 2026-09-07 (**venv rebuilt, 638/638 green on Python 3.12, `MERGE-REVIEW.md` written — `chassis-hardening` is 6 commits ahead of `main`, fast-forwardable, waiting on Tyler's merge OK**; before that 2026-08-08 **standalone playable soft synth + differentiable visual sound-matcher** at `soft/` :8816 — drop a note/chord, seed the keys, watch the knobs gradient-descend a match; **638 tests**; before that same day **the differentiable digital twin** — `match/twin.py`, autograd, gradcheck-exact, self-consistent twin-guided match, **615 tests**; before that 2026-08-07 chassis build + hardening: M1/M2/M4 + matcher Phase 0/A scaffolding + a 5-group contract-hardening sweep, **601 tests**; chassis spec `docs/chassis-spec.md`; before that 2026-08-01 canonical `data/s1.json` + listen-only connect + `SYNTH_PORT`)*
+*updated 2026-09-27 night (**Tyler's first-use fixes are in (round 2): one-screen plate, global transport + shortcuts, record + self-test in Match; 840 tests; README rebuilt** — see the round-2 bullet); earlier 2026-09-27 (the cyanotype build integrated); 2026-09-07 (venv rebuilt, merge prep); 2026-08-08 (soft synth + twin); 2026-08-07 (chassis build); 2026-08-01 (canonical s1.json)*
 
 - **state:** active
 - **what:** The Roland S-1 hardware synth, fully present in software: one `s1` command starts a local web cockpit (FastAPI) with every panel knob and menu setting live-synced both directions, a piano-roll sequencer with MIDI clock out, auto-monitored USB audio with a live oscilloscope (drift-servo resampled passthrough, ~35 ms, glitch-free), MIDI-keyboard forwarding, .PRM export ("Save to S-1") *and* import (the librarian), synesthesia note-coloring, and a full REST/WS agent API. The Textual TUI is retired. Plus the CMA-ES sound-matching engine behind `[studio]` and now a differentiable digital twin (`match/twin.py`, autograd, `[twin]`). 615 tests. A standalone headless twin of the monitor+forwarding lives at `music/tools/s1_rig.py` (launch: `music/rig.sh`).
@@ -13,6 +13,20 @@
   launcher convention: **`synth`** (`bin/synth`) runs the venv's `synth --no-browser`
   detached, waits on `/api/status`, opens the cockpit — `synth off` stops it. Appears on the
   HQ control panel (:8800).
+- **2026-09-27 (night) — round 2, Tyler's first-use fixes (contract `docs/design/ROUND2.md`):** Tyler played the
+  build and asked for sequencer shortcuts, a Synth view that fits one screen at 100% (he had to zoom out), recording
+  in Match, and a test on the synth's current sound. **Built:** (1) the one-screen plate — switches share lines,
+  44 px dials, 670 px tall at its 1470 px design width, so it fits his 13-inch MacBook Air (viewport ~1470×760)
+  unscaled; smaller windows scale it evenly (floor 0.7), below 1180 px it stacks; (2) `core/transport.js` (one
+  transport for the page: a pattern keeps sounding on the twin while you switch views; voices through `ctx.note`,
+  so keys light) + `core/shortcuts.js` (Space play/pause, ⇧Space stop, 1/2/3 views, ? list, −/= tempo, Delete);
+  (3) Match: Record (browser inputs, S-1 preferred, raw PCM → WAV in `core/wav.js`) and "Match the synth's current
+  sound" (twin: `renderStages().amp`; S-1: new `POST /api/match/record-note` on `SynthDriver.probe(None)`), always
+  Thorough from scratch, then a recovery report. **Result on a saw+square test patch: 14 of 14 settings back within
+  10, 71% closeness, ~78 s** (Quick from scratch: 7 of 14 — it trades Saw for Square + Sub). Parallel workers
+  `r2/keys`, `r2/rec` + lead `r2/fit`, merged. **Checks:** 840 pytest, ruff clean, 10 node-check files green.
+  README rebuilt around three real captures (`docs/images/`: the plate, the match GIF, the recovery table).
+  Not shown in the README on purpose: the connected view — the only capture is the demo flag's fake signal.
 - **2026-09-27 (end of day) — built and integrated, NOT published (branch `cyanotype`, local only):**
   one front-end in `synth/web/static/` that runs three ways — cockpit + S-1, cockpit with the **browser
   twin** (AudioWorklet port of `twin.py`, parity-gated: offline ≤ 0.001 log-mel, real-time ≤ 0.07; different

@@ -425,3 +425,17 @@ def test_dropped_notes_field_defaults_zero_and_is_surfaced():
     which importers surface the count (never swallowed)."""
     seq = Sequence(notes=[Note(step=0, pitch=60)], steps=16)
     assert seq.dropped_notes == 0
+
+
+# ── triplet grids (the S-1's SCALE 3–5) ──────────────────────
+def test_triplet_resolutions_are_two_thirds_of_straight():
+    from synth.sequence import parse_resolution
+    from synth.sequencer_engine import step_duration_seconds
+
+    assert parse_resolution("8t") == (1, 12)
+    assert parse_resolution("16t") == (1, 24)
+    assert parse_resolution("32t") == (1, 48)
+    for straight, trip in (("1/8", "8t"), ("1/16", "16t"), ("1/32", "32t")):
+        ratio = step_duration_seconds(120, trip) / step_duration_seconds(120, straight)
+        assert abs(ratio - 2 / 3) < 1e-9, (trip, ratio)
+    assert parse_resolution("nonsense") == (1, 4)  # the fallback still holds

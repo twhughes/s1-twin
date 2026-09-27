@@ -94,8 +94,15 @@ class Sequence:
 def parse_resolution(resolution: str) -> tuple[int, int]:
     """Parse a resolution string like '1/16' into (numerator, denominator).
 
+    Triplets ('8t', '16t', '32t' — the S-1's SCALE values, see prm.py) are 2/3 of the
+    straight value: '8t' is 1/12, '16t' is 1/24. Before this, they fell through to the
+    quarter-note fallback and played three times too slow.
     Falls back to a quarter note (1, 4) on anything unparseable.
     """
+    if resolution.endswith("t") and resolution[:-1].isdigit():
+        n = int(resolution[:-1])
+        if n > 0 and n % 2 == 0:
+            return 1, 3 * n // 2
     parts = resolution.split("/")
     if len(parts) == 2:
         try:

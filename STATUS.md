@@ -1,5 +1,5 @@
 # STATUS — synth
-*updated 2026-09-27 night (**Tyler's first-use fixes are in (round 2): one-screen plate, global transport + shortcuts, record + self-test in Match; 840 tests; README rebuilt** — see the round-2 bullet); earlier 2026-09-27 (the cyanotype build integrated); 2026-09-07 (venv rebuilt, merge prep); 2026-08-08 (soft synth + twin); 2026-08-07 (chassis build); 2026-08-01 (canonical s1.json)*
+*updated 2026-09-27 late night (**published: github.com/twhughes/s1-twin, tylerwhughes.com/s1-twin/, CI green**); 2026-09-27 night (**Tyler's first-use fixes are in (round 2): one-screen plate, global transport + shortcuts, record + self-test in Match; 840 tests; README rebuilt** — see the round-2 bullet); earlier 2026-09-27 (the cyanotype build integrated); 2026-09-07 (venv rebuilt, merge prep); 2026-08-08 (soft synth + twin); 2026-08-07 (chassis build); 2026-08-01 (canonical s1.json)*
 
 - **state:** active
 - **what:** The Roland S-1 hardware synth, fully present in software: one `s1` command starts a local web cockpit (FastAPI) with every panel knob and menu setting live-synced both directions, a piano-roll sequencer with MIDI clock out, auto-monitored USB audio with a live oscilloscope (drift-servo resampled passthrough, ~35 ms, glitch-free), MIDI-keyboard forwarding, .PRM export ("Save to S-1") *and* import (the librarian), synesthesia note-coloring, and a full REST/WS agent API. The Textual TUI is retired. Plus the CMA-ES sound-matching engine behind `[studio]` and now a differentiable digital twin (`match/twin.py`, autograd, `[twin]`). 615 tests. A standalone headless twin of the monitor+forwarding lives at `music/tools/s1_rig.py` (launch: `music/rig.sh`).
@@ -13,6 +13,14 @@
   launcher convention: **`synth`** (`bin/synth`) runs the venv's `synth --no-browser`
   detached, waits on `/api/status`, opens the cockpit — `synth off` stops it. Appears on the
   HQ control panel (:8800).
+- **2026-09-27 (late night) — PUBLISHED (Tyler: "we can publish this changes. both in github and put on my
+  website too"):** GitHub repo renamed `s1tui` → **`twhughes/s1-twin`** (old URL redirects), `main` pushed
+  (a3e7821 → e064442, 56 + round-2 commits, history scanned: no secrets, same author identity as before), page
+  deployed to `gh-pages` → **tylerwhughes.com/s1-twin/** (live, headless check: no console errors, fits
+  1470×760), repo description + homepage + topics set, **CI green** on Python 3.10 and 3.12 (the workflow now
+  installs the `twin` extra and Node 22). Tyler's site: "S-1 twin" is first in Side projects (pushed as d3e54be
+  after rebasing twice onto another session's pushes). **Still open:** the product name (brand.js `NAME`), the
+  ~90-min S-1 + ears session (`docs/hardware-session.md`), then re-deploy with calibrated curves.
 - **2026-09-27 (night) — round 2, Tyler's first-use fixes (contract `docs/design/ROUND2.md`):** Tyler played the
   build and asked for sequencer shortcuts, a Synth view that fits one screen at 100% (he had to zoom out), recording
   in Match, and a test on the synth's current sound. **Built:** (1) the one-screen plate — switches share lines,

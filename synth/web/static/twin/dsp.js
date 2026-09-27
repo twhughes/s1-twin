@@ -291,11 +291,11 @@ function hanning(M) {
   return w;
 }
 
-/** twin._ladder_tv: overlap-add of per-frame static ladders (Hann, 50% overlap, nfft = 2*win). */
+/** twin._ladder_tv: overlap-add of per-frame static ladders (Hann, 50% overlap, nfft = 4*win, so long ringing never wraps). */
 function ladderTV(x, fcT, k, sr, block) {
   const n = x.length;
   block = Math.trunc(Math.max(8, block));
-  const win = 2 * block, hop = block, nfft = 2 * win, pad = hop;
+  const win = 2 * block, hop = block, nfft = 4 * win, pad = hop;
   const nFrames = 1 + Math.ceil((pad + n) / hop);
   const total = (nFrames - 1) * hop + win;
   const xp = new Float64Array(total);

@@ -366,15 +366,17 @@ def _ladder_static(x: Any, fc: Any, k: Any, sr: float) -> Any:
 def _ladder_tv(x: Any, fc_t: Any, k: Any, sr: float, block: int) -> Any:
     """Time-varying-cutoff 4-pole lowpass: overlap-add of per-frame static ladders.
 
-    Hann window at 50% overlap (COLA-exact), FFT size 2*win so each frame keeps its
-    convolution tail. Each frame uses its *mean* cutoff — itself differentiable, so
+    Hann window at 50% overlap, FFT size 4*win so each frame keeps its convolution tail
+    (at 2*win, resonant ringing longer than one window wrapped onto the frame's start —
+    up to 0.48 logmel on modulated low notes; found by the browser-twin parity work,
+    2026-09-27). Each frame uses its *mean* cutoff — itself differentiable, so
     gradients reach env_to_cutoff / lfo_to_cutoff through the modulation signal.
     This is the frequency-domain stand-in for a per-sample recurrence, exactly so
     autograd's tape stays shallow (credit: modules.ladder4)."""
     n = x.shape[-1]
     block = int(max(8, block))
     win, hop = 2 * block, block
-    nfft = 2 * win
+    nfft = 4 * win
     pad = hop
     n_frames = 1 + -(-(pad + n) // hop)
     total = (n_frames - 1) * hop + win

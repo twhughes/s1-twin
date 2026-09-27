@@ -18,6 +18,8 @@
 //   ctx.on("note", fn)    fn({note, on, velocity, sound}) for every note from any key source
 //   ctx.on("server", fn)  fn(msg) for every raw /ws/state message (transport, position, sequence, …)
 //   ctx.keys              the keyboard service (core/keys.js), attached by the shell
+//   ctx.transport         the sequence's transport (core/transport.js), attached by the shell
+//   ctx.shortcuts         the keyboard shortcuts (core/shortcuts.js), attached by the shell
 //
 // Status words. The server's sync states map onto three: "synced" (Send patch to S-1 has run: the
 // S-1 and the plate agree), "pending" (the S-1 is plugged in and listened to, knob moves flow both

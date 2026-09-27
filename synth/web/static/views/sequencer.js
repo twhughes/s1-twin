@@ -148,14 +148,11 @@ export function unmount() {
 }
 
 /** The KeyHint bar on this view (app.js shows it): the transport's keys, then the roll's. */
+// One row in the KeyHint bar: the roll's own keys are in the caption under the roll and in the ? list.
 export const hints = [
   { key: "Space", label: "Play/pause" },
   { key: "⇧ Space", label: "Stop" },
   { key: "− =", label: "Tempo" },
-  { key: "← ↑ → ↓", label: "Move" },
-  { key: "Enter", label: "Add" },
-  { key: "Delete", label: "Remove" },
-  { key: "[ ]", label: "Length" },
   { key: "?", label: "Keys" },
 ];
 

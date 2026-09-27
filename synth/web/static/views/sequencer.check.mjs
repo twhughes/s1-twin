@@ -68,7 +68,7 @@ ok(Array.isArray(S.hints) && S.hints.every((x) => typeof x.key === "string" && x
 ok(S.default.hints === S.hints, "the default export carries them too");
 const hint = Object.fromEntries(S.hints.map((x) => [x.key, x.label]));
 ok(hint.Space === "Play/pause" && hint["⇧ Space"] === "Stop" && hint["?"] === "Keys", "Space Play/pause, ⇧ Space Stop, ? Keys");
-ok(hint.Enter && hint.Delete && hint["[ ]"] && hint["− ="], "plus the roll's keys and the tempo keys");
+ok(hint["− ="] === "Tempo" && S.hints.length === 4, "plus the tempo keys, and no more: one row (the roll's keys are in its caption and the ? list)");
 ok(S.hints.every((x) => /^[A-Z]/.test(x.label) && !/→/.test(x.label)), "labels in sentence case, no arrows");
 
 console.log(`sequencer view: ${checks} checks passed`);

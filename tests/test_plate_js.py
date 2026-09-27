@@ -12,7 +12,8 @@ from pathlib import Path
 import pytest
 
 STATIC = Path(__file__).resolve().parent.parent / "synth" / "web" / "static"
-CHECKS = ["core/layout.check.mjs", "core/ctx.check.mjs"]
+CHECKS = ["core/layout.check.mjs", "core/ctx.check.mjs", "core/transport.check.mjs",
+          "core/shortcuts.check.mjs", "views/sequencer.check.mjs"]
 
 
 @pytest.mark.parametrize("check", CHECKS)

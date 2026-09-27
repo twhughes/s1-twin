@@ -66,6 +66,7 @@ __all__ = [
     "calibrate",
     "CalibrationReport",
     "midi_to_hz",
+    "export_curves",
 ]
 
 MAX_HARMONICS = 64
@@ -941,3 +942,72 @@ def _feature_error(a: np.ndarray, b: np.ndarray, sr: int) -> float:
     fa = extract(prepare(AudioClip(np.asarray(a, np.float32), sr)))
     fb = extract(prepare(AudioClip(np.asarray(b, np.float32), sr)))
     return plain_loss(fb, fa, Weights(), scales=reference_scales(fb))
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Browser export — the constants the in-browser twin (synth/web/static/twin/)
+# runs, so the page plays THIS model, not a look-alike. A drift test
+# (tests/test_twin_curves.py) pins the committed curves.json to this function.
+# ─────────────────────────────────────────────────────────────────────────────
+def export_curves(
+    mapping: Mapping | None = None,
+    *,
+    calibrated: bool = False,
+    source: str | None = None,
+) -> dict[str, Any]:
+    """Everything the browser twin needs to run this model, as JSON-native data.
+
+    ``curves`` carries one ``{"lo", "hi", "kind", "unit"}`` entry per k param —
+    the calibration unit. A calibration run writes the same ``curves`` sub-schema
+    with ``calibrated=True`` (pass its fitted ``mapping``); the browser merges such
+    a file over the defaults, so it may carry ``curves`` alone.
+
+    The rest is the model's structure, read from the objects ``render`` uses:
+    the k/s CC tables, the discrete option maps, the render defaults (sr,
+    seconds, gate fraction), and ``cc_ranges`` — ``[min, max, default]`` for every
+    S-1 CC from ``s1.json``, which ``cc_to_k`` needs to normalize a CC map and the
+    browser needs for the controls it plays itself (voice mode, glide, effects).
+    """
+    from ..schema import S1_PARAMS
+
+    mp = mapping or DEFAULT_MAPPING
+    tw = Twin(mapping=mp)
+    return {
+        "version": 1,
+        "calibrated": bool(calibrated),
+        "source": source or ("twin.DEFAULT_CURVES" if mapping is None else mp.name),
+        "sr": tw.sr,
+        "seconds": tw.seconds,
+        "gate_fraction": tw.gate_fraction,
+        "max_harmonics": MAX_HARMONICS,
+        "curves": {
+            name: {"lo": c.lo, "hi": c.hi, "kind": c.kind, "unit": c.unit}
+            for name, c in mp.curves.items()
+        },
+        "k_params": [[p.name, p.cc] for p in K_PARAMS],
+        "s_params": [[p.name, p.cc, list(p.choices)] for p in S_PARAMS],
+        "sub_octave": {str(i): [shift, duty] for i, (shift, duty) in _SUB_OCTAVE.items()},
+        "lfo_shape": {str(i): name for i, name in _LFO_SHAPE_NAME.items()},
+        "default_s": _default_s(),
+        "cc_ranges": {str(p.cc): [p.min_val, p.max_val, p.default] for p in S1_PARAMS},
+    }
+
+
+if __name__ == "__main__":  # pragma: no cover - thin CLI over export_curves()
+    import argparse
+    import json
+    import sys
+
+    _ap = argparse.ArgumentParser(
+        prog="python -m synth.match.twin",
+        description="Write the browser twin's curves.json (export_curves()).",
+    )
+    _ap.add_argument("--export-curves", metavar="PATH", required=True,
+                     help="output path, or '-' for stdout")
+    _args = _ap.parse_args()
+    _text = json.dumps(export_curves(), indent=2) + "\n"
+    if _args.export_curves == "-":
+        sys.stdout.write(_text)
+    else:
+        with open(_args.export_curves, "w", encoding="utf-8") as _fh:
+            _fh.write(_text)

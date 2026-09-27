@@ -1,0 +1,104 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Design kit</title>
+<link rel="icon" href="favicon.svg">
+<link rel="stylesheet" href="tokens.css">
+<style>
+  main { position: relative; z-index: 1; max-width: 1100px; margin: 0 auto; padding: 32px var(--gutter) 60px; }
+  .lockup { display: flex; align-items: center; gap: 12px; color: var(--ink); }
+  .lockup img { width: 38px; height: 38px; }
+  .lockup span { font: italic 400 34px/1 var(--serif); }
+  section { margin-top: 40px; }
+  .wells { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 24px; }
+  .wells canvas { height: 150px; }
+  @media (max-width: 760px) { .wells { grid-template-columns: 1fr; } }
+</style>
+</head>
+<body>
+<main>
+  <div class="lockup"><img src="mark.svg" alt=""><span id="name"></span></div>
+  <p class="note" id="tagline"></p>
+
+  <section>
+    <h2 class="heading">Knobs</h2>
+    <div class="row" id="knobs"></div>
+  </section>
+  <section>
+    <h2 class="heading">Switches</h2>
+    <div class="row" id="segs" style="gap: 14px 30px"></div>
+  </section>
+  <section>
+    <h2 class="heading">Wells</h2>
+    <div class="wells">
+      <div><canvas class="well" id="w-wave"></canvas><h3 class="caption">Waveform<span class="note">A held note lends its pitch color as a halo.</span></h3></div>
+      <div><canvas class="well" id="w-hatch"></canvas><h3 class="caption">A note over time<span class="note">Engraving hatch, with the key-up mark.</span></h3></div>
+      <div><canvas class="well" id="w-plume"></canvas><h3 class="caption">The plume<span class="note">Bronze is the S-1; the dotted line is the twin.</span></h3></div>
+    </div>
+  </section>
+  <section>
+    <button class="pill" id="toast-btn">Show a toast</button>
+    <button class="quiet">A quiet button</button>
+    <button class="linkish">A text link</button>
+  </section>
+</main>
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
+<script type="module">
+  import { NAME, TAGLINE } from "./brand.js";
+  import { knob } from "./knob.js";
+  import { seg, GLYPHS } from "./seg.js";
+  import { rgbOf } from "./colors.js";
+  import * as draw from "./draw.js";
+
+  document.getElementById("name").textContent = NAME;
+  document.getElementById("tagline").textContent = TAGLINE;
+  const K = document.getElementById("knobs");
+  K.append(
+    knob({ label: "Cutoff", value: 50, def: 127, size: 88 }).el,
+    knob({ label: "Resonance", value: 74 }).el,
+    knob({ label: "Fine tune", value: 70, def: 64, bipolar: true }).el,
+  );
+  const hw = knob({ label: "Moved by the S-1", value: 40 });
+  K.append(hw.el);
+  hw.set(58, { source: "midi" }); hw.set(76, { source: "midi" });
+  const dim = knob({ label: "Chop comb", value: 30 });
+  dim.modeled(false);
+  K.append(dim.el);
+
+  const S = document.getElementById("segs");
+  S.append(
+    seg({ label: "Range", value: 2, options: ["64′", "32′", "16′", "8′", "4′", "2′"].map((l, i) => ({ value: i, label: l })) }).el,
+    seg({ label: "Wave", value: 2, options: [["saw", "Saw"], ["isaw", "Inverse saw"], ["tri", "Triangle"], ["sq", "Square"], ["rnd", "Random"], ["noise", "Noise"]].map(([g, l], i) => ({ value: i, label: l, glyph: GLYPHS[g] })) }).el,
+  );
+
+  // sample signals: a resonant-ish saw, an envelope, a plume pair
+  const spc = 128, n = spc * 4;
+  const raw = Float32Array.from({ length: n * 4 }, (_, i) => 2 * ((i / spc) % 1) - 1);
+  const x = new Float32Array(n); let s1 = 0, s2 = 0;
+  for (let i = 0; i < raw.length; i++) { s1 += .18 * (raw[i] - s1 - 1.6 * (s2 - s1) * .5); s2 += .18 * (s1 - s2); if (i >= raw.length - n) x[i - (raw.length - n)] = s2; }
+  {
+    const [ctx, w, h] = draw.fit(document.getElementById("w-wave")); draw.axis(ctx, w, h);
+    draw.stroke(ctx, draw.wavePts(w, h, x, { len: spc * 3 }), { halo: rgbOf(9) });
+  }
+  {
+    const [ctx, w, h] = draw.fit(document.getElementById("w-hatch")); draw.axis(ctx, w, h);
+    const cols = Math.floor(w), top = new Float32Array(cols);
+    for (let i = 0; i < cols; i++) { const t = i / cols * 1.5; top[i] = t < .62 ? (t < .01 ? t / .01 : .34 + .66 * Math.exp(-(t - .01) / .2)) : .34 * Math.exp(-(t - .62) / .12); }
+    draw.hatchShape(ctx, w, h, top); draw.keyUpMark(ctx, w, h, .62 / 1.5);
+  }
+  {
+    const [ctx, w, h] = draw.fit(document.getElementById("w-plume")); draw.axis(ctx, w, h, { cross: true });
+    const real = Float32Array.from(x, (v, i) => v * .97 + .02 * Math.sin(i * .7));
+    draw.stroke(ctx, draw.plumePts(w, h, real, spc, { cycles: 1 }), { color: draw.BRONZE, width: 1.7, glow: 10 });
+    draw.stroke(ctx, draw.plumePts(w, h, x, spc, { cycles: 1 }), { color: draw.INK, width: 1.2, dash: [1.5, 4] });
+  }
+  const toast = document.getElementById("toast");
+  document.getElementById("toast-btn").addEventListener("click", () => {
+    toast.textContent = "Patch sent to S-1."; toast.classList.add("on");
+    setTimeout(() => toast.classList.remove("on"), 2400);
+  });
+</script>
+</body>
+</html>

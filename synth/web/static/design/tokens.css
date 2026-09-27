@@ -1,0 +1,134 @@
+/* The cyanotype design kit: tokens and shared classes.
+   The ONE home of the look (docs/design/DIRECTION.md). Colors are defined only here;
+   draw.js mirrors the few it needs for canvas, and kit.check.mjs asserts they agree.
+   Rules: color means pitch (colors.js); bronze means the hardware; everything else is ink on the field. */
+
+@font-face { font-family: "Old Standard TT"; font-style: normal; font-weight: 400; font-display: swap;
+  src: url("fonts/OldStandardTT-normal-400.woff2") format("woff2"); }
+@font-face { font-family: "Old Standard TT"; font-style: italic; font-weight: 400; font-display: swap;
+  src: url("fonts/OldStandardTT-italic-400.woff2") format("woff2"); }
+@font-face { font-family: "Libre Franklin"; font-style: normal; font-weight: 300 700; font-display: swap;
+  src: url("fonts/LibreFranklin-normal-300-700.woff2") format("woff2"); }
+@font-face { font-family: "Libre Franklin"; font-style: italic; font-weight: 300 700; font-display: swap;
+  src: url("fonts/LibreFranklin-italic-300-700.woff2") format("woff2"); }
+
+:root {
+  --field: #0E2A52;       /* Prussian blue: the exposed paper */
+  --deep: #081C3A;        /* wells, the keyboard bed */
+  --lift: #13335F;        /* drawers, toasts */
+  --ink: #EEF3FA;         /* paper white: lines and text */
+  --ink-2: #A3B9DA;       /* faded print: secondary text, idle options */
+  --ink-3: rgba(238, 243, 250, 0.26);
+  --ink-4: rgba(238, 243, 250, 0.11);
+  --bronze: #E6A94F;      /* the hardware's hand, and nothing else */
+  --serif: "Old Standard TT", "Iowan Old Style", Palatino, Georgia, serif;
+  --sans: "Libre Franklin", "Helvetica Neue", Helvetica, Arial, sans-serif;
+  --gutter: 40px;
+  --gap: 44px;
+}
+
+* { box-sizing: border-box; }
+html, body { margin: 0; }
+body {
+  background: var(--field);
+  color: var(--ink);
+  font: 400 14px/1.45 var(--sans);
+  -webkit-font-smoothing: antialiased;
+  min-height: 100vh;
+}
+/* Sun-print mottling: uneven exposure plus paper tooth. Static, painted once. */
+body::before {
+  content: ""; position: fixed; inset: 0; pointer-events: none; z-index: 0;
+  background-image:
+    url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='900' height='900'><filter id='m'><feTurbulence type='fractalNoise' baseFrequency='.0035' numOctaves='3' seed='11' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 1  0 0 0 0 1  0 0 0 0 1  0 0 0 .9 -.28'/></filter><rect width='100%' height='100%' filter='url(%23m)'/></svg>"),
+    url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='240' height='240'><filter id='g'><feTurbulence type='fractalNoise' baseFrequency='.85' numOctaves='2' seed='3' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 1  0 0 0 0 1  0 0 0 0 1  0 0 0 .5 -.18'/></filter><rect width='100%' height='100%' filter='url(%23g)'/></svg>");
+  opacity: .16;
+  mix-blend-mode: soft-light;
+}
+button { font: inherit; color: inherit; }
+:focus-visible { outline: 1.5px dashed var(--ink); outline-offset: 3px; border-radius: 2px; }
+canvas { max-width: 100%; }
+
+/* ---------- type ---------- */
+.caption { font: italic 400 22px/1.15 var(--serif); margin: 14px 0 0; }
+.caption .note, .note { display: block; margin-top: 5px; font: 400 13px/1.45 var(--sans); color: var(--ink-2); font-style: normal; max-width: 44ch; }
+h2.heading, h3.heading { font: italic 400 22px/1.15 var(--serif); margin: 0 0 14px; }
+
+/* ---------- wells: where the signal is drawn ---------- */
+.well { display: block; width: 100%; background: var(--deep); border-radius: 3px; position: relative; z-index: 1; }
+
+/* ---------- rows ---------- */
+.row { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 14px 10px; }
+.pair { display: grid; gap: 14px; }
+
+/* ---------- buttons and links ---------- */
+.quiet { background: none; border: 0; padding: 5px 0; cursor: pointer; color: var(--ink-2); font-size: 14px; }
+.quiet:hover { color: var(--ink); }
+.pill {
+  background: transparent; cursor: pointer; color: var(--ink);
+  border: 1.25px solid var(--ink-3); border-radius: 999px;
+  padding: 9px 17px; font-size: 13.5px; font-weight: 500;
+}
+.pill:hover { border-color: var(--ink); }
+.pill:disabled { opacity: .45; cursor: default; }
+.linkish { background: none; border: 0; padding: 0; cursor: pointer; color: var(--ink); text-decoration: underline; text-underline-offset: 3px; text-decoration-thickness: 1px; font-size: 13.5px; }
+
+/* ---------- knobs (design/knob.js) ---------- */
+.knob { display: flex; flex-direction: column; align-items: center; width: 58px; text-align: center; user-select: none; -webkit-user-select: none; }
+.knob.hero { width: 96px; }
+.knob svg { display: block; overflow: visible; cursor: ns-resize; touch-action: none; }
+.knob .tick { stroke: var(--ink-3); stroke-width: 1.2; vector-effect: non-scaling-stroke; stroke-linecap: round; }
+.knob .tick.on { stroke: var(--ink); }
+.knob .body { fill: none; stroke: var(--ink); stroke-width: 1.25; vector-effect: non-scaling-stroke; }
+.knob .ptr { stroke: var(--ink); stroke-width: 1.8; vector-effect: non-scaling-stroke; stroke-linecap: round; }
+.knob .trail { fill: none; stroke: var(--bronze); stroke-width: 2.2; vector-effect: non-scaling-stroke; stroke-linecap: round; opacity: 0; transition: opacity 1600ms ease; }
+.knob.hw .trail { opacity: 1; transition: none; }
+.knob.hw .ptr { stroke: var(--bronze); }
+.knob.unmodeled { opacity: .45; }
+.k-label { margin-top: 5px; font-size: 12.5px; line-height: 1.25; }
+.k-val { font-size: 12px; color: var(--ink-2); font-variant-numeric: tabular-nums; }
+
+/* ---------- switches (design/seg.js): named options, the chosen one underlined ---------- */
+.seg { display: flex; flex-direction: column; gap: 4px; }
+.seg.unmodeled { opacity: .45; }
+.seg-opts { display: flex; flex-wrap: wrap; gap: 4px 11px; align-items: center; min-height: 26px; }
+.seg-opts button {
+  background: none; border: 0; cursor: pointer; padding: 3px 0 4px;
+  color: var(--ink-2); font-size: 13px; border-bottom: 1.5px solid transparent; line-height: 1.1;
+}
+.seg-opts button:hover { color: var(--ink); }
+.seg-opts button[aria-checked="true"] { color: var(--ink); border-bottom-color: var(--ink); }
+.seg-opts svg { display: block; width: 22px; height: 14px; fill: none; stroke: currentColor; stroke-width: 1.4; stroke-linejoin: round; stroke-linecap: round; }
+.seg .k-label { margin-top: 0; }
+
+/* ---------- drawers, scrim, toast ---------- */
+.scrim { position: fixed; inset: 0; background: rgba(4, 14, 32, .5); opacity: 0; pointer-events: none; transition: opacity 220ms ease; z-index: 8; }
+.scrim.on { opacity: 1; pointer-events: auto; }
+.drawer {
+  position: fixed; top: 0; right: 0; height: 100%; width: min(420px, 100%); z-index: 9;
+  background: var(--lift); border-left: 1px solid var(--ink-3);
+  transform: translateX(100%); transition: transform 260ms cubic-bezier(.2, .7, .2, 1);
+  padding: 28px 30px 40px; overflow-y: auto;
+}
+.drawer.open { transform: none; }
+.drawer h2 { font: italic 400 26px/1.1 var(--serif); margin: 0 0 20px; }
+.drawer h3 { font: italic 400 19px/1.2 var(--serif); margin: 30px 0 12px; }
+.drawer p { color: var(--ink-2); font-size: 13.5px; margin: 0 0 12px; max-width: 46ch; }
+.drawer input, .drawer select {
+  background: var(--deep); color: var(--ink); border: 1px solid var(--ink-3); border-radius: 3px;
+  padding: 8px 10px; font: 400 14px var(--sans);
+}
+.toast {
+  position: fixed; left: 50%; bottom: 28px; transform: translate(-50%, 12px); z-index: 10;
+  background: var(--lift); border: 1px solid var(--ink-3); border-radius: 999px;
+  padding: 10px 18px; font-size: 13.5px; opacity: 0; pointer-events: none;
+  transition: opacity 200ms ease, transform 200ms ease; max-width: calc(100% - 32px);
+}
+.toast.on { opacity: 1; transform: translate(-50%, 0); }
+
+@media (max-width: 640px) {
+  :root { --gutter: 16px; --gap: 20px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { transition: none !important; animation: none !important; }
+}

@@ -1,269 +1,62 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>S-1 COCKPIT</title>
-  <link rel="stylesheet" href="/style.css" />
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Loading</title>
+<meta name="description" content="A software twin of the Roland S-1: play it, watch every stage of the sound, and sync it to a real S-1.">
+<link rel="icon" href="design/favicon.svg">
+<link rel="stylesheet" href="design/tokens.css">
+<link rel="stylesheet" href="keyhint/keyhint.css">
+<link rel="stylesheet" href="core/app.css">
+<script>
+  // The page-load exposure (views/synth.js): the plate starts pale, like an undeveloped sun print,
+  // unless the page opens on another view or the reader asked for stillness. Runs before first paint.
+  (function () {
+    var parts = location.hash.replace(/^#/, "").split("&");
+    var still = parts.indexOf("still") >= 0 || matchMedia("(prefers-reduced-motion: reduce)").matches;
+    var view = ["synth", "sequencer", "match"].indexOf(parts[0]) >= 0 ? parts[0] : "synth";
+    if (!still && view === "synth") document.documentElement.classList.add("developing");
+  })();
+</script>
 </head>
 <body>
-  <header class="brand">
-    <div class="logo">◉ <span class="grad">S-1</span> COCKPIT</div>
-    <nav class="nav">
-      <button class="tab active" data-view="cockpit">COCKPIT</button>
-      <button class="tab" data-view="seq">SEQUENCER</button>
-      <button class="tab" data-view="studio">STUDIO</button>
-    </nav>
-    <div class="conn">
-      <button id="mode-chip" class="chip mode" title="Cockpit mode — click to toggle. In LOGIC, Logic owns notes, clock and audio; the cockpit suppresses forwarding, monitor and clock-out.">SOLO</button>
-      <span id="kbd-chip" class="chip kbd hidden" title="">⌨ <b id="kbd-count">0</b></span>
-      <span id="audio-chip" class="chip audio off" title="S-1 audio → speakers">
-        <button id="mute" class="mute-btn" title="mute/unmute">🔊</button>
-        <span class="mini-bar"><span id="mini-fill"></span></span>
-      </span>
-      <span id="sync-chip" class="chip sync off"><span class="dot"></span><span id="sync-label">DISCONNECTED</span></span>
-      <button id="push-all" class="btn tiny ghost" disabled
-              title="Send the whole app state to the S-1 (overwrites the patch it is holding)">PUSH TO S-1</button>
-    </div>
-  </header>
+<header class="top">
+  <a class="brand" id="brand" href="#synth">
+    <!-- The mark (design/mark.svg, drawn in currentColor): the lyrebird's tail in display, read as a lyre whose strings are the S-1's waves. -->
+    <svg class="mark" viewBox="0 0 32 32" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+      <path d="M16 28.6C10.6 28.6 6.8 23.8 6.9 17.2 7 12.4 8.9 9.2 9.6 6.8 10.1 5.1 8.9 3.7 7.5 4.2 6.3 4.6 6.2 6.2 7.4 6.6"/>
+      <path d="M16 28.6C21.4 28.6 25.2 23.8 25.1 17.2 25 12.4 23.1 9.2 22.4 6.8 21.9 5.1 23.1 3.7 24.5 4.2 25.7 4.6 25.8 6.2 24.6 6.6"/>
+      <path d="M12.8 26c-1-2 1-3.2 0-5.2s1-3.2 0-5.2 1-3.2 0-5.2"/>
+      <path d="M16 26.8v-2.2l1.1-2.6H16l1.1-2.6H16l1.1-2.6H16l1.1-2.6H16l1.1-2.6H16v-1.6"/>
+      <path d="M19.2 26v-2.9h1v-2.9h-1v-2.9h1v-2.9h-1v-2.9h1"/>
+    </svg>
+    <span class="wordmark" id="wordmark"></span>
+  </a>
+  <nav class="views" id="nav" aria-label="Views">
+    <a href="#synth" data-view="synth">Synth</a>
+    <a href="#sequencer" data-view="sequencer">Sequencer</a>
+    <a href="#match" data-view="match">Match</a>
+  </nav>
+  <div class="actions">
+    <button class="quiet" type="button" data-open="library">Library</button>
+    <button class="quiet" type="button" data-open="settings">Settings</button>
+    <span class="sync" id="sync" role="status"><i class="dot" aria-hidden="true"></i><span id="sync-text">Looking for the S-1</span></span>
+    <button class="pill" type="button" id="send">Send patch to S-1</button>
+  </div>
+</header>
 
-  <!-- ════════════════ COCKPIT ════════════════ -->
-  <section id="view-cockpit" class="view active">
-    <div class="scope-strip">
-      <canvas id="live-scope" height="72"></canvas>
-      <span id="scope-label" class="scope-label">NO SIGNAL</span>
-    </div>
-    <div class="cockpit">
-      <div id="sections" class="sections"><!-- faceplate cards generated from /api/schema --></div>
-      <aside class="side">
-        <section class="card" data-accent="cyan">
-          <h2>SETTINGS MENU</h2>
-          <div id="menu-params"></div>
-        </section>
-        <section class="card" data-accent="muted">
-          <h2>MIDI CONTROL</h2>
-          <div id="midi-params"></div>
-        </section>
-        <section class="card bank" data-accent="lime">
-          <h2>PATCH BANK</h2>
-          <div class="save-row">
-            <input id="patch-name" placeholder="patch name" />
-            <button id="patch-save" class="btn primary">SAVE</button>
-          </div>
-          <ul id="patch-list" class="patch-list"></ul>
-        </section>
-        <section class="card" data-accent="magenta">
-          <h2>SAVE TO S-1</h2>
-          <div class="row">
-            <label>Bank
-              <select id="prm-bank"><option>1</option><option>2</option><option>3</option><option>4</option></select>
-            </label>
-            <label>Slot <select id="prm-slot"></select></label>
-          </div>
-          <div class="actions" style="margin-top:12px">
-            <button id="prm-write" class="btn primary" disabled>WRITE TO S-1</button>
-            <a id="prm-download" class="btn" href="/api/export/prm?bank=1&slot=1" download>⭳ DOWNLOAD .PRM</a>
-          </div>
-          <div id="prm-status" class="hint">checking for a mounted S-1…</div>
-          <details class="guide" style="margin-top:10px">
-            <summary>the disk-mode ritual</summary>
-            <ol>
-              <li>Power the S-1 <b>off</b>.</li>
-              <li>Hold <b>[PLAY]</b> while powering on — keep holding until the display shows the USB icon.</li>
-              <li>Wait 1–2 min for a drive named <b>S-1</b> to mount (this page will notice).</li>
-              <li>Click <b>WRITE TO S-1</b> (or copy the downloaded file into <code>RESTORE/</code>).</li>
-              <li>Press <b>[HOLD]</b> on the S-1 and wait for <b>dOnE</b>.</li>
-              <li>Power-cycle. Your pattern lives in the hardware.</li>
-            </ol>
-          </details>
-        </section>
-        <section class="card" data-accent="gold">
-          <h2>LOAD FROM S-1</h2>
-          <p class="hint">Read the hardware's own patterns back into the app — patch + sequence, live and editable.</p>
-          <div class="row import-flags">
-            <label class="check"><input id="imp-patch" type="checkbox" checked /> patch</label>
-            <label class="check"><input id="imp-seq" type="checkbox" checked /> sequence</label>
-            <button id="imp-upload" class="btn tiny">⭱ .PRM FILE…</button>
-            <input id="imp-file" type="file" accept=".prm,.PRM" hidden />
-          </div>
-          <div id="imp-device-status" class="hint">S-1 not in disk mode — patterns from <code>~/.synth/backups</code> below.</div>
-          <ul id="imp-list" class="patch-list"></ul>
-        </section>
-        <section class="card" data-accent="muted">
-          <details class="guide">
-            <summary>PRM-only parameters (disk mode tier)</summary>
-            <p class="hint">These live only in .PRM pattern files — no MIDI CC exists. The exporter carries them from a real device dump; full editing is the librarian milestone.</p>
-            <div id="prm-params" class="prm-tier"></div>
-          </details>
-        </section>
-      </aside>
-    </div>
+<main class="view-host" id="view"></main>
 
-    <section class="card keys-card" data-accent="violet">
-      <h2>PLAY <span class="h2-hint">A–K rows = keys · W E T Y U = sharps · Z/X octave · click works too</span></h2>
-      <div class="keys-row">
-        <div class="oct-ctl">
-          <button id="oct-down" class="btn tiny">−</button>
-          <span id="oct-label">C4</span>
-          <button id="oct-up" class="btn tiny">+</button>
-        </div>
-        <div id="keyboard" class="keyboard"></div>
-        <label class="vel-ctl">VEL <input id="qwerty-vel" type="range" min="1" max="127" value="100" /></label>
-        <label class="colors-ctl" title="color notes by name — Tyler's synesthesia palette, or a rationalized hue wheel (A stays red)">COLORS
-          <select id="note-colors">
-            <option value="true">synesthesia</option>
-            <option value="legible">legible</option>
-            <option value="off">off</option>
-          </select>
-        </label>
-      </div>
-    </section>
-  </section>
+<footer class="foot" id="foot"></footer>
 
-  <!-- ════════════════ SEQUENCER ════════════════ -->
-  <section id="view-seq" class="view">
-    <section class="card" data-accent="magenta">
-      <h2>TRANSPORT</h2>
-      <div class="row transport-row">
-        <button id="t-play" class="btn primary">▶ PLAY</button>
-        <button id="t-pause" class="btn">❚❚ PAUSE</button>
-        <button id="t-stop" class="btn danger">■ STOP</button>
-        <label>BPM <input id="t-bpm" type="number" min="20" max="300" step="0.5" value="120" /></label>
-        <label>Grid
-          <select id="t-res">
-            <option>1/8</option><option selected>1/16</option><option>1/32</option>
-            <option>8t</option><option>16t</option><option>32t</option>
-          </select>
-        </label>
-        <label>Steps <input id="t-steps" type="number" min="1" max="64" value="16" /></label>
-        <label class="check"><input id="t-clock" type="checkbox" checked /> MIDI clock</label>
-        <span id="t-pos" class="t-pos">—</span>
-      </div>
-      <div class="row perf-row">
-        <label>GATE <input id="t-gate" type="range" min="5" max="100" value="100" /></label>
-        <label>SHUFFLE <input id="t-shuffle" type="range" min="0" max="75" value="0" /></label>
-        <label>PROBABILITY <input id="t-prob" type="range" min="0" max="100" value="100" /></label>
-      </div>
-      <div id="poly-warning" class="poly-warning hidden"></div>
-    </section>
+<aside class="drawer" id="drawer-library" aria-label="Library" aria-hidden="true" inert></aside>
+<aside class="drawer" id="drawer-settings" aria-label="Settings" aria-hidden="true" inert></aside>
+<div class="scrim" id="scrim"></div>
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
+<div class="veil" aria-hidden="true"></div>
 
-    <section class="card" data-accent="cyan">
-      <h2>PIANO ROLL <span class="h2-hint">click = add · drag right = length · click note = select · double-click = delete</span></h2>
-      <div id="roll-wrap" class="roll-wrap"><canvas id="roll"></canvas></div>
-      <div id="note-inspector" class="note-inspector hidden">
-        <span id="ni-label">—</span>
-        <label>VEL <input id="ni-vel" type="range" min="1" max="127" /></label>
-        <label>LEN <input id="ni-len" type="number" min="1" max="64" style="width:64px" /></label>
-        <button id="ni-del" class="btn tiny danger">DELETE</button>
-      </div>
-    </section>
-
-    <div class="grid2">
-      <section class="card bank" data-accent="lime">
-        <h2>SEQUENCE BANK</h2>
-        <div class="save-row">
-          <input id="seq-name" placeholder="sequence name" />
-          <button id="seq-save" class="btn primary">SAVE</button>
-        </div>
-        <ul id="seq-list" class="patch-list"></ul>
-      </section>
-      <section class="card" data-accent="gold">
-        <h2>DEVICE PATTERN <span class="h2-hint">switch the S-1's internal pattern live (PC)</span></h2>
-        <div class="row">
-          <label>Bank
-            <select id="pc-bank"><option>1</option><option>2</option><option>3</option><option>4</option></select>
-          </label>
-          <label>Slot <select id="pc-slot"></select></label>
-          <button id="pc-send" class="btn primary">SEND</button>
-        </div>
-        <p class="hint">Program Change 0–63 on the PC channel (device default 16). Patterns written via disk mode are selected here without touching the hardware.</p>
-      </section>
-    </div>
-  </section>
-
-  <!-- ════════════════ STUDIO (match) ════════════════ -->
-  <section id="view-studio" class="view">
-    <div id="studio-unavailable" class="studio-status hidden">
-      match studio needs the heavy extras — <code>pip install "synth[studio]"</code>
-    </div>
-    <div class="grid">
-      <section class="card match" data-accent="magenta">
-        <h2>MATCH A SOUND</h2>
-        <div id="drop" class="drop">
-          <input id="file" type="file" accept="audio/*" hidden />
-          <div class="drop-inner">
-            <strong>drop a target sound</strong>
-            <span>or click to choose · wav / aiff / flac</span>
-          </div>
-        </div>
-        <div class="scopes">
-          <figure>
-            <figcaption>TARGET</figcaption>
-            <canvas id="spec-target" width="320" height="128"></canvas>
-            <button class="btn tiny" data-clip="target" disabled>▸ listen</button>
-          </figure>
-          <figure>
-            <figcaption>BEST MATCH</figcaption>
-            <canvas id="spec-best" width="320" height="128"></canvas>
-            <button class="btn tiny" data-clip="best" disabled>▸ listen</button>
-          </figure>
-        </div>
-        <div class="meter">
-          <div class="meter-head"><span>CLOSENESS</span><span id="closeness-val">0.0%</span></div>
-          <div class="bar"><div id="bar-fill" class="bar-fill"></div></div>
-          <div class="counters">
-            <span>iter <b id="iter">0</b>/<span id="maxiter">0</span></span>
-            <span>evals <b id="evals">0</b></span>
-            <span id="state-label">idle</span>
-          </div>
-        </div>
-        <figure class="curve-wrap">
-          <figcaption>OPTIMIZATION · <span class="dot-mag">●</span> candidate &nbsp; <span class="dot-lime">▬</span> best so far</figcaption>
-          <canvas id="curve" width="640" height="180"></canvas>
-        </figure>
-        <div class="controls">
-          <label>Mode
-            <select id="mode">
-              <option value="auto">Automated</option>
-              <option value="interactive">Interactive (listen each step)</option>
-            </select>
-          </label>
-          <label>Optimizer
-            <select id="optimizer">
-              <option value="cma">CMA-ES</option>
-              <option value="random">Random</option>
-            </select>
-          </label>
-          <label>Iterations <input id="iters" type="number" min="1" value="40" /></label>
-          <label class="check"><input id="fx" type="checkbox" checked /> Effects</label>
-          <label class="check"><input id="calib" type="checkbox" checked /> Calibrate</label>
-        </div>
-        <div class="actions">
-          <button id="start" class="btn primary" disabled>START</button>
-          <button id="pause" class="btn" disabled>PAUSE</button>
-          <button id="resume" class="btn" disabled>RESUME</button>
-          <button id="stop" class="btn danger" disabled>STOP</button>
-          <button class="btn ghost tiny" data-clip="last" disabled>▸ last candidate</button>
-        </div>
-      </section>
-      <section class="card bank" data-accent="lime">
-        <h2>MATCH RESULT</h2>
-        <p class="hint">The winning patch can be saved into the bank (it's already live on the synth while matching).</p>
-        <div class="save-row">
-          <input id="match-save-name" placeholder="patch name" />
-          <button id="match-save" class="btn primary" disabled>SAVE BEST</button>
-        </div>
-        <h2 style="margin-top:22px">RECORD A TAKE</h2>
-        <div class="row">
-          <label>Take name <input id="rec-name" type="text" value="s1-take" /></label>
-          <label class="check"><input id="rec-target" type="checkbox" /> use as match target</label>
-          <button id="record" class="btn">● RECORD</button>
-        </div>
-      </section>
-    </div>
-  </section>
-
-  <div id="toast" class="toast"></div>
-  <script src="/app.js"></script>
+<script src="keyhint/keyhint.js"></script>
+<script type="module" src="app.js"></script>
 </body>
 </html>

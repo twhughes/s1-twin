@@ -320,6 +320,19 @@ class AudioMonitor:
             for chunk in np.array_split(data, points)
         ]
 
+    def scope_raw(self, n: int = 2048) -> list[float]:
+        """The last ``n`` input samples, oldest first, at the device rate and
+        unprocessed — the plate's live plume (GET /api/monitor/raw). Copies out
+        of the servo ring under its lock, so the audio path is untouched.
+        Returns fewer samples if fewer have arrived; empty while stopped."""
+        with self._block:
+            buf, w = self._buf, self._w
+            if buf is None or self._in is None or w <= 0:
+                return []
+            n = max(1, min(int(n), len(buf), w))
+            out = buf[np.arange(w - n, w) % len(buf)]
+        return out.astype(np.float64).tolist()
+
     @property
     def peak_db(self) -> float:
         import math

@@ -116,6 +116,10 @@ Routers are pre-wired in `server.py` (lead): `plate_routes.router` (W-plate), `m
 additive `AudioMonitor.scope_raw(n)` in `synth/audio.py`, and `GET /api/twin/curves` serving the curves the
 twin should use (calibrated if `~/.synth/twin/curves.calibrated.json` exists, else the defaults).
 
+W-rec (round 2) adds `POST /api/match/record-note` in `match_ws.router`: `{note, velocity, hold, tail}` →
+`audio/wav`, one note of the S-1's current sound from the running monitor (`SynthDriver.probe(None)`); 409 and
+a plain `detail` when the S-1 cannot play it now.
+
 ## 3. Design rules (from DIRECTION.md, restated as checks)
 
 1. Colors come only from `tokens.css`. Hues appear only for pitch (`colors.js`) and the hardware (`--bronze`).

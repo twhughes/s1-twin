@@ -831,7 +831,7 @@ function createView(root, ctx) {
     run = initialRun(); recorded = false;
     drop.classList.add("loaded");
     dropFile.textContent = name;
-    goNote.textContent = test ? `The test gives the matcher its note (${test.notes.map(noteName).join(" + ")}) and starts from scratch.` : "";
+    goNote.textContent = test ? `The test gives the matcher its note (${test.notes.map(noteName).join(" + ")}), starts from scratch, and searches thoroughly, so it takes a minute or two.` : "";
     syncControls();
     renderAll();
     try {
@@ -1060,6 +1060,10 @@ function createView(root, ctx) {
     making = false;
     if (destroyed) return;
     await loadTarget(bytes, `${from === "s1" ? "The S-1's" : "The twin's"} current sound, ${noteName(note)}`, info);
+    // A test searches thoroughly: from scratch, one Quick descent often stops in a wrong valley
+    // (Saw traded for Square and Sub), which would grade the matcher on bad luck, not on the model.
+    quality = "thorough";
+    qualitySeg.set("thorough");
     startMatch();
   }
   const plain = (msg) => Object.assign(new Error(msg), { plain: true });

@@ -1,5 +1,5 @@
 # STATUS — synth
-*updated 2026-09-27 (**redesign direction APPROVED (cyanotype; comp + brief in `docs/design/`); name parked — Menura/Lyrebird/Plume/Sunprint all declined; **scope set: publish the synth first** (S-1 twin + autodiff matching; trainer later; chordbox/loopbox out) — plan in `docs/design/DIRECTION.md`); 2026-09-07 (**venv rebuilt, 638/638 green on Python 3.12, `MERGE-REVIEW.md` written — `chassis-hardening` is 6 commits ahead of `main`, fast-forwardable, waiting on Tyler's merge OK**; before that 2026-08-08 **standalone playable soft synth + differentiable visual sound-matcher** at `soft/` :8816 — drop a note/chord, seed the keys, watch the knobs gradient-descend a match; **638 tests**; before that same day **the differentiable digital twin** — `match/twin.py`, autograd, gradcheck-exact, self-consistent twin-guided match, **615 tests**; before that 2026-08-07 chassis build + hardening: M1/M2/M4 + matcher Phase 0/A scaffolding + a 5-group contract-hardening sweep, **601 tests**; chassis spec `docs/chassis-spec.md`; before that 2026-08-01 canonical `data/s1.json` + listen-only connect + `SYNTH_PORT`)*
+*updated 2026-09-27 (**the cyanotype build is integrated on branch `cyanotype` and ready to publish on Tyler's go** — see the "built and integrated" bullet; 816 tests)); 2026-09-07 (**venv rebuilt, 638/638 green on Python 3.12, `MERGE-REVIEW.md` written — `chassis-hardening` is 6 commits ahead of `main`, fast-forwardable, waiting on Tyler's merge OK**; before that 2026-08-08 **standalone playable soft synth + differentiable visual sound-matcher** at `soft/` :8816 — drop a note/chord, seed the keys, watch the knobs gradient-descend a match; **638 tests**; before that same day **the differentiable digital twin** — `match/twin.py`, autograd, gradcheck-exact, self-consistent twin-guided match, **615 tests**; before that 2026-08-07 chassis build + hardening: M1/M2/M4 + matcher Phase 0/A scaffolding + a 5-group contract-hardening sweep, **601 tests**; chassis spec `docs/chassis-spec.md`; before that 2026-08-01 canonical `data/s1.json` + listen-only connect + `SYNTH_PORT`)*
 
 - **state:** active
 - **what:** The Roland S-1 hardware synth, fully present in software: one `s1` command starts a local web cockpit (FastAPI) with every panel knob and menu setting live-synced both directions, a piano-roll sequencer with MIDI clock out, auto-monitored USB audio with a live oscilloscope (drift-servo resampled passthrough, ~35 ms, glitch-free), MIDI-keyboard forwarding, .PRM export ("Save to S-1") *and* import (the librarian), synesthesia note-coloring, and a full REST/WS agent API. The Textual TUI is retired. Plus the CMA-ES sound-matching engine behind `[studio]` and now a differentiable digital twin (`match/twin.py`, autograd, `[twin]`). 615 tests. A standalone headless twin of the monitor+forwarding lives at `music/tools/s1_rig.py` (launch: `music/rig.sh`).
@@ -13,6 +13,23 @@
   launcher convention: **`synth`** (`bin/synth`) runs the venv's `synth --no-browser`
   detached, waits on `/api/status`, opens the cockpit — `synth off` stops it. Appears on the
   HQ control panel (:8800).
+- **2026-09-27 (end of day) — built and integrated, NOT published (branch `cyanotype`, local only):**
+  one front-end in `synth/web/static/` that runs three ways — cockpit + S-1, cockpit with the **browser
+  twin** (AudioWorklet port of `twin.py`, parity-gated: offline ≤ 0.001 log-mel, real-time ≤ 0.07; different
+  patches ≥ 1.9 apart), and the **static page** (`tools/build_site.py` → `site/`, served from a subfolder with
+  zero console errors). Views: Synth (the plate), Sequencer, Match (twin matcher over `/ws/match`,
+  `twin_session.py`); Library + Settings drawers; ear test at `/eartest`; `synth-calibrate` (dry run recovers all
+  18 hidden curves: held-out gap 0.449 → 0.070, S-1 repeat floor 0.037) + `synth-eartest-report`;
+  `docs/hardware-session.md` (the 90-minute script). **Fixes found on the way:** `_ladder_tv` wrapped long
+  ringing (nfft 2·win → 4·win); CC15 pulse width was inverted (0 now = 50% square); triplet grids played 3×
+  too slow; `s1` wasn't an installed command; the ear-test report wasn't in the package. **Recorded matches**
+  for the page (`matches/`, thinned): recovery of a twin-made patch 62% (envelope + resonance recovered almost
+  exactly; noise invented), square lead 50%, pluck 36%, acid bass 33% — honest numbers; the ear test decides
+  what they mean. **Tyler's personal site:** the entry ("S-1 twin", first in Side projects) is committed on a
+  local branch `synth-entry` in `~/Documents/career/twhughes.github.io`, not pushed.
+  **Waiting on Tyler (one decision):** publish as `tylerwhughes.com/s1-twin/` — rename the GitHub repo
+  `s1tui` → `s1-twin`, merge `cyanotype` → `main` and push, `tools/deploy_site.sh` (gh-pages) + turn on Pages,
+  then push the site entry. Still open after that: the product name (brand.js `NAME`), the S-1 session.
 - **2026-09-27 (later) — the cyanotype build is underway (Tyler: "go for it"):** `main` fast-forwarded to
   `chassis-hardening` (f37cdd0; 638 green; local only, nothing pushed). Work branch **`cyanotype`** (the name
   `redesign` collides with the old `redesign/synthwave-neon`). Contract `docs/design/BUILD.md` (one UI in three

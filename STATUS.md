@@ -1,5 +1,5 @@
 # STATUS — synth
-*updated 2026-09-07 (**venv rebuilt, 638/638 green on Python 3.12, `MERGE-REVIEW.md` written — `chassis-hardening` is 6 commits ahead of `main`, fast-forwardable, waiting on Tyler's merge OK**; before that 2026-08-08 **standalone playable soft synth + differentiable visual sound-matcher** at `soft/` :8816 — drop a note/chord, seed the keys, watch the knobs gradient-descend a match; **638 tests**; before that same day **the differentiable digital twin** — `match/twin.py`, autograd, gradcheck-exact, self-consistent twin-guided match, **615 tests**; before that 2026-08-07 chassis build + hardening: M1/M2/M4 + matcher Phase 0/A scaffolding + a 5-group contract-hardening sweep, **601 tests**; chassis spec `docs/chassis-spec.md`; before that 2026-08-01 canonical `data/s1.json` + listen-only connect + `SYNTH_PORT`)*
+*updated 2026-09-27 (**redesign direction APPROVED (cyanotype; comp + brief in `docs/design/`); name parked — Menura/Lyrebird/Plume/Sunprint all declined; **scope set: publish the synth first** (S-1 twin + autodiff matching; trainer later; chordbox/loopbox out) — plan in `docs/design/DIRECTION.md`); 2026-09-07 (**venv rebuilt, 638/638 green on Python 3.12, `MERGE-REVIEW.md` written — `chassis-hardening` is 6 commits ahead of `main`, fast-forwardable, waiting on Tyler's merge OK**; before that 2026-08-08 **standalone playable soft synth + differentiable visual sound-matcher** at `soft/` :8816 — drop a note/chord, seed the keys, watch the knobs gradient-descend a match; **638 tests**; before that same day **the differentiable digital twin** — `match/twin.py`, autograd, gradcheck-exact, self-consistent twin-guided match, **615 tests**; before that 2026-08-07 chassis build + hardening: M1/M2/M4 + matcher Phase 0/A scaffolding + a 5-group contract-hardening sweep, **601 tests**; chassis spec `docs/chassis-spec.md`; before that 2026-08-01 canonical `data/s1.json` + listen-only connect + `SYNTH_PORT`)*
 
 - **state:** active
 - **what:** The Roland S-1 hardware synth, fully present in software: one `s1` command starts a local web cockpit (FastAPI) with every panel knob and menu setting live-synced both directions, a piano-roll sequencer with MIDI clock out, auto-monitored USB audio with a live oscilloscope (drift-servo resampled passthrough, ~35 ms, glitch-free), MIDI-keyboard forwarding, .PRM export ("Save to S-1") *and* import (the librarian), synesthesia note-coloring, and a full REST/WS agent API. The Textual TUI is retired. Plus the CMA-ES sound-matching engine behind `[studio]` and now a differentiable digital twin (`match/twin.py`, autograd, `[twin]`). 615 tests. A standalone headless twin of the monitor+forwarding lives at `music/tools/s1_rig.py` (launch: `music/rig.sh`).
@@ -13,6 +13,17 @@
   launcher convention: **`synth`** (`bin/synth`) runs the venv's `synth --no-browser`
   detached, waits on `/api/status`, opens the cockpit — `synth off` stops it. Appears on the
   HQ control panel (:8800).
+- **2026-09-27 — rename + redesign, proposal stage (Claude as art director, Tyler's ask):** name **Menura**
+  (the lyrebird's genus: it copies any sound it hears); direction = **cyanotype specimen plate** (Prussian-blue
+  field, paper-white line art; color means pitch, bronze means the hardware). Signature pieces: the signal line
+  with a waveform window per stage, and **the plume** (output as a phase portrait; real vs. twin overlaid when
+  connected). Interactive comp `docs/design/menura-comp.html` (file://, no server), brief
+  `docs/design/DIRECTION.md`. Nothing in the app changed. Also found: the public GitHub repo `twhughes/s1tui`
+  still shows the retired TUI (last push 2026-02-24; local `main` is 22 commits ahead, `chassis-hardening` 6 more).
+  **Tyler, same day:** direction approved ("otherwise it's awesome"); none of the names landed. **Waiting on Tyler:**
+  ~~the scope call~~ → decided: synth first (twin + autodiff matching). Next: merge `chassis-hardening`
+  (twin + `soft/` live only there), the ~90-min hardware + ears session (calibration is the claim "twin" rests
+  on), then the build, a name, and the push.
 - **2026-09-07 — venv rebuild + merge prep (no merge):** `.venv` was missing (the 638 tests were unrunnable).
   Recreated with **`/usr/local/bin/python3.12 -m venv .venv && .venv/bin/pip install -e ".[studio,twin,dev]"`**
   (recorded in README; Homebrew `python3` is 3.14 — don't use it). Full suite: **638 passed, 0 failed, ruff clean**

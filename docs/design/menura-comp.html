@@ -1,0 +1,981 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Menura</title>
+<meta name="description" content="Design comp for Menura, the software twin of the Roland S-1. Cyanotype direction.">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%230E2A52'/%3E%3Cg fill='none' stroke='%23EEF3FA' stroke-width='1.7' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M16 28.6C10.6 28.6 6.8 23.8 6.9 17.2 7 12.4 8.9 9.2 9.6 6.8 10.1 5.1 8.9 3.7 7.5 4.2 6.3 4.6 6.2 6.2 7.4 6.6'/%3E%3Cpath d='M16 28.6C21.4 28.6 25.2 23.8 25.1 17.2 25 12.4 23.1 9.2 22.4 6.8 21.9 5.1 23.1 3.7 24.5 4.2 25.7 4.6 25.8 6.2 24.6 6.6'/%3E%3Cpath d='M12.8 26c-1-2 1-3.2 0-5.2s1-3.2 0-5.2 1-3.2 0-5.2'/%3E%3Cpath d='M16 26.8v-2.2l1.1-2.6H16l1.1-2.6H16l1.1-2.6H16l1.1-2.6H16l1.1-2.6H16v-1.6'/%3E%3Cpath d='M19.2 26v-2.9h1v-2.9h-1v-2.9h1v-2.9h-1v-2.9h1'/%3E%3C/g%3E%3C/svg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Libre+Franklin:ital,wght@0,300..700;1,300..700&family=Old+Standard+TT:ital,wght@0,400;0,700;1,400&display=swap" rel="stylesheet">
+<style>
+/* Menura design comp, cyanotype direction (2026-09-27).
+   Rules: color means pitch; bronze means the hardware; everything else is ink on the field.
+   Fonts are Google-hosted here for the comp only; the build vendors both (OFL). */
+:root {
+  --field: #0E2A52;       /* Prussian blue: the exposed paper */
+  --deep: #081C3A;        /* wells, the keyboard bed */
+  --lift: #13335F;        /* drawers, toasts */
+  --ink: #EEF3FA;         /* paper white: lines and text */
+  --ink-2: #A3B9DA;       /* faded print: secondary text */
+  --ink-3: rgba(238, 243, 250, 0.26);
+  --ink-4: rgba(238, 243, 250, 0.11);
+  --bronze: #E6A94F;      /* the hardware's hand, and nothing else */
+  --serif: "Old Standard TT", "Iowan Old Style", Palatino, Georgia, serif;
+  --sans: "Libre Franklin", "Helvetica Neue", Helvetica, Arial, sans-serif;
+  --gutter: 40px;
+  --gap: 44px;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; }
+body {
+  background: var(--field);
+  color: var(--ink);
+  font: 400 14px/1.45 var(--sans);
+  -webkit-font-smoothing: antialiased;
+  min-height: 100vh;
+  transition: background-color 1200ms cubic-bezier(.2, .7, .2, 1);
+}
+html.developing body { background-color: #4271AC; transition: none; }
+/* Sun-print mottling: uneven exposure plus paper tooth. Static, painted once. */
+body::before {
+  content: ""; position: fixed; inset: 0; pointer-events: none; z-index: 0;
+  background-image:
+    url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='900' height='900'><filter id='m'><feTurbulence type='fractalNoise' baseFrequency='.0035' numOctaves='3' seed='11' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 1  0 0 0 0 1  0 0 0 0 1  0 0 0 .9 -.28'/></filter><rect width='100%' height='100%' filter='url(%23m)'/></svg>"),
+    url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='240' height='240'><filter id='g'><feTurbulence type='fractalNoise' baseFrequency='.85' numOctaves='2' seed='3' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 1  0 0 0 0 1  0 0 0 0 1  0 0 0 .5 -.18'/></filter><rect width='100%' height='100%' filter='url(%23g)'/></svg>");
+  opacity: .16;
+  mix-blend-mode: soft-light;
+}
+button { font: inherit; color: inherit; }
+:focus-visible { outline: 1.5px dashed var(--ink); outline-offset: 3px; border-radius: 2px; }
+
+/* ---------- header ---------- */
+.top {
+  position: relative; z-index: 2;
+  display: flex; align-items: center; gap: 40px;
+  max-width: 1480px; margin: 0 auto; padding: 22px var(--gutter) 0;
+}
+.brand { display: flex; align-items: center; gap: 10px; color: var(--ink); text-decoration: none; }
+.mark { width: 34px; height: 34px; flex: none; }
+.wordmark { font: italic 400 31px/1 var(--serif); letter-spacing: .01em; padding-bottom: 3px; }
+.views { display: flex; gap: 24px; }
+.views a {
+  color: var(--ink-2); text-decoration: none; font-size: 14.5px;
+  padding: 5px 0; border-bottom: 1.5px solid transparent;
+}
+.views a:hover { color: var(--ink); }
+.views a[aria-current="page"] { color: var(--ink); border-bottom-color: var(--ink); }
+.actions { margin-left: auto; display: flex; align-items: center; gap: 22px; }
+.quiet {
+  background: none; border: 0; padding: 5px 0; cursor: pointer;
+  color: var(--ink-2); font-size: 14px;
+}
+.quiet:hover { color: var(--ink); }
+.sync { display: inline-flex; align-items: center; gap: 9px; color: var(--ink-2); font-size: 13.5px; }
+.sync .dot { width: 9px; height: 9px; border-radius: 50%; border: 1.5px solid var(--ink-2); }
+.connected .sync { color: var(--ink); }
+.connected .sync .dot { background: var(--bronze); border-color: var(--bronze); box-shadow: 0 0 0 4px rgba(230, 169, 79, .16); }
+.send {
+  background: transparent; cursor: pointer;
+  border: 1.25px solid var(--ink-3); border-radius: 999px;
+  padding: 9px 17px; font-size: 13.5px; font-weight: 500;
+}
+.send:hover { border-color: var(--ink); }
+
+/* ---------- the plate ---------- */
+.plate {
+  position: relative; z-index: 1;
+  max-width: 1480px; margin: 0 auto; padding: 30px var(--gutter) 56px;
+}
+.overlay { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; overflow: visible; }
+.grid {
+  position: relative;
+  display: grid; grid-template-columns: minmax(0, 1.5fr) minmax(0, 1fr) minmax(0, .7fr) minmax(0, 1fr) minmax(0, 1.4fr);
+  column-gap: var(--gap); row-gap: 46px; align-items: start;
+}
+#mod-lfo { grid-column: 1; grid-row: 2; }
+#mod-env { grid-column: 2 / span 2; grid-row: 2; }
+#keys { grid-column: 4 / span 2; grid-row: 2; }
+.stage, .mod { position: relative; min-width: 0; }
+canvas { max-width: 100%; }
+.well-wrap { height: 214px; display: flex; align-items: center; }
+.well { display: block; width: 100%; height: 118px; background: var(--deep); border-radius: 3px; position: relative; z-index: 1; }
+.out .well { height: 214px; }
+.caption { font: italic 400 22px/1.15 var(--serif); margin: 14px 0 0; }
+.caption .note { display: block; margin-top: 5px; font: 400 13px/1.45 var(--sans); color: var(--ink-2); max-width: 40ch; }
+.controls { margin-top: 18px; display: grid; gap: 18px; justify-items: start; }
+.row { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 14px 10px; }
+.pair { display: grid; gap: 14px; }
+
+/* knobs */
+.knob { display: flex; flex-direction: column; align-items: center; width: 58px; text-align: center; user-select: none; -webkit-user-select: none; }
+.knob.hero { width: 96px; }
+.knob svg { display: block; overflow: visible; cursor: ns-resize; touch-action: none; }
+.knob .tick { stroke: var(--ink-3); stroke-width: 1.2; vector-effect: non-scaling-stroke; stroke-linecap: round; }
+.knob .tick.on { stroke: var(--ink); }
+.knob .body { fill: none; stroke: var(--ink); stroke-width: 1.25; vector-effect: non-scaling-stroke; }
+.knob .ptr { stroke: var(--ink); stroke-width: 1.8; vector-effect: non-scaling-stroke; stroke-linecap: round; }
+.knob .trail { fill: none; stroke: var(--bronze); stroke-width: 2.2; vector-effect: non-scaling-stroke; stroke-linecap: round; opacity: 0; transition: opacity 1600ms ease; }
+.knob.hw .trail { opacity: 1; transition: none; }
+.knob.hw .ptr { stroke: var(--bronze); }
+.k-label { margin-top: 5px; font-size: 12.5px; line-height: 1.25; }
+.k-val { font-size: 12px; color: var(--ink-2); font-variant-numeric: tabular-nums; }
+
+/* switches: a row of named options, the chosen one underlined */
+.seg { display: flex; flex-direction: column; gap: 4px; }
+.seg-opts { display: flex; gap: 11px; align-items: center; min-height: 26px; }
+.seg-opts button {
+  background: none; border: 0; cursor: pointer; padding: 3px 0 4px;
+  color: var(--ink-2); font-size: 13px; border-bottom: 1.5px solid transparent; line-height: 1.1;
+}
+.seg-opts button:hover { color: var(--ink); }
+.seg-opts button[aria-checked="true"] { color: var(--ink); border-bottom-color: var(--ink); }
+.seg-opts svg { display: block; width: 22px; height: 14px; fill: none; stroke: currentColor; stroke-width: 1.4; stroke-linejoin: round; stroke-linecap: round; }
+.seg .k-label { margin-top: 0; }
+
+details.more { margin-top: -2px; }
+details.more summary { cursor: pointer; color: var(--ink-2); font-size: 13px; list-style: none; }
+details.more summary::-webkit-details-marker { display: none; }
+details.more summary::before { content: "+"; display: inline-block; width: 1em; }
+details.more[open] summary::before { content: "\2212"; }
+details.more .row { margin-top: 12px; }
+
+/* ---------- modulators + voices ---------- */
+.mod h3 { font: italic 400 22px/1.15 var(--serif); margin: 0 0 14px; display: inline-block; }
+.mod .note { font-size: 13px; color: var(--ink-2); margin: -8px 0 14px; }
+#voices { margin-top: 30px; }
+.adsr { display: block; width: 100%; height: 92px; margin-bottom: 14px; }
+
+/* ---------- keyboard ---------- */
+.keys-hint { color: var(--ink-2); font-size: 13px; margin: -6px 0 14px; }
+.keyboard { position: relative; height: 78px; display: flex; background: var(--deep); border-radius: 3px; padding: 0; user-select: none; -webkit-user-select: none; touch-action: none; }
+.wk { position: relative; flex: 1; border-right: 1px solid var(--ink-4); cursor: pointer; display: flex; align-items: flex-end; justify-content: center; padding-bottom: 7px; font-size: 10.5px; color: var(--ink-3); }
+.wk:last-child { border-right: 0; }
+.bk { position: absolute; top: 0; height: 46px; background: var(--field); border: 1px solid var(--ink-3); border-top: 0; border-radius: 0 0 2px 2px; cursor: pointer; z-index: 2; display: flex; align-items: flex-end; justify-content: center; padding-bottom: 5px; font-size: 10px; color: var(--ink-3); }
+.wk.down, .bk.down { background: rgb(var(--pc)); color: var(--on-pc); box-shadow: inset 0 0 0 1.5px var(--ink); }
+
+/* ---------- drawers, toast, comp controls ---------- */
+.scrim { position: fixed; inset: 0; background: rgba(4, 14, 32, .5); opacity: 0; pointer-events: none; transition: opacity 220ms ease; z-index: 8; }
+.drawer {
+  position: fixed; top: 0; right: 0; height: 100%; width: min(420px, 100%); z-index: 9;
+  background: var(--lift); border-left: 1px solid var(--ink-3);
+  transform: translateX(100%); transition: transform 260ms cubic-bezier(.2, .7, .2, 1);
+  padding: 28px 30px 40px; overflow-y: auto;
+}
+.drawer.open { transform: none; }
+.drawer.open ~ .scrim, .scrim.on { opacity: 1; pointer-events: auto; }
+.drawer h2 { font: italic 400 26px/1.1 var(--serif); margin: 0 0 20px; }
+.drawer h3 { font: italic 400 19px/1.2 var(--serif); margin: 30px 0 12px; }
+.drawer p { color: var(--ink-2); font-size: 13.5px; margin: 0 0 12px; max-width: 46ch; }
+.drawer .close { position: absolute; top: 26px; right: 26px; }
+.patches { list-style: none; margin: 0; padding: 0; }
+.patches li button { background: none; border: 0; cursor: pointer; padding: 7px 0; font-size: 14.5px; color: var(--ink-2); text-align: left; width: 100%; border-bottom: 1px solid var(--ink-4); }
+.patches li button:hover { color: var(--ink); }
+.patches li button[aria-current="true"] { color: var(--ink); }
+.patches li button[aria-current="true"]::after { content: "  in use"; color: var(--ink-2); font-size: 12px; }
+.saverow { display: flex; gap: 10px; margin-top: 14px; }
+.saverow input, .drawer select {
+  background: var(--deep); color: var(--ink); border: 1px solid var(--ink-3); border-radius: 3px;
+  padding: 8px 10px; font: 400 14px var(--sans);
+}
+.saverow input { flex: 1; min-width: 0; }
+.steps { margin: 0 0 16px; padding-left: 1.3em; color: var(--ink-2); font-size: 13.5px; }
+.steps li { margin-bottom: 7px; padding-left: 4px; }
+.steps li::marker { font: italic 400 15px var(--serif); color: var(--ink); }
+.slotrow { display: flex; gap: 12px; align-items: center; margin-bottom: 14px; color: var(--ink-2); font-size: 13px; }
+.linkish { background: none; border: 0; padding: 0; cursor: pointer; color: var(--ink); text-decoration: underline; text-underline-offset: 3px; text-decoration-thickness: 1px; font-size: 13.5px; }
+.toast {
+  position: fixed; left: 50%; bottom: 28px; transform: translate(-50%, 12px); z-index: 10;
+  background: var(--lift); border: 1px solid var(--ink-3); border-radius: 999px;
+  padding: 10px 18px; font-size: 13.5px; opacity: 0; pointer-events: none;
+  transition: opacity 200ms ease, transform 200ms ease; max-width: calc(100% - 32px);
+}
+.toast.on { opacity: 1; transform: translate(-50%, 0); }
+.comp {
+  position: fixed; right: 18px; bottom: 18px; z-index: 7;
+  display: flex; align-items: center; gap: 10px;
+  border: 1px dashed var(--ink-3); border-radius: 999px; padding: 7px 8px 7px 14px;
+  background: rgba(8, 28, 58, .85); font-size: 12px; color: var(--ink-2);
+}
+.comp button { background: none; border: 1px solid var(--ink-3); border-radius: 999px; padding: 5px 11px; cursor: pointer; font-size: 12px; color: var(--ink); }
+.foot { max-width: 1480px; margin: 0 auto; padding: 0 var(--gutter) 40px; color: var(--ink-2); font-size: 12.5px; position: relative; z-index: 1; }
+
+/* ---------- smaller screens: the chain stacks, the line steps aside ---------- */
+@media (max-width: 1180px) {
+  .grid { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); row-gap: 36px; }
+  .stage.out { grid-column: 1 / -1; order: -1; }
+  #mod-lfo, #mod-env, #keys { grid-row: auto; grid-column: auto; }
+  #keys { grid-column: 1 / -1; }
+  .overlay { display: none; }
+  .well-wrap { height: auto; }
+}
+@media (max-width: 640px) {
+  :root { --gutter: 16px; --gap: 20px; }
+  .top { flex-wrap: wrap; gap: 12px 18px; padding-top: 16px; }
+  .views { order: 3; width: 100%; }
+  .actions { order: 4; margin-left: 0; width: 100%; flex-wrap: wrap; gap: 10px 18px; }
+  .grid { grid-template-columns: minmax(0, 1fr); }
+  .keyboard { overflow-x: auto; }
+  .comp { left: 16px; right: 16px; justify-content: space-between; }
+}
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { transition: none !important; animation: none !important; }
+}
+</style>
+</head>
+<body>
+<header class="top" id="top">
+  <a class="brand" href="#" aria-label="Menura home">
+    <!-- The mark: the lyrebird's tail in display, read as a lyre whose strings are the S-1's waves (sine, saw, square). -->
+    <svg class="mark" viewBox="0 0 32 32" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+      <path d="M16 28.6C10.6 28.6 6.8 23.8 6.9 17.2 7 12.4 8.9 9.2 9.6 6.8 10.1 5.1 8.9 3.7 7.5 4.2 6.3 4.6 6.2 6.2 7.4 6.6"/>
+      <path d="M16 28.6C21.4 28.6 25.2 23.8 25.1 17.2 25 12.4 23.1 9.2 22.4 6.8 21.9 5.1 23.1 3.7 24.5 4.2 25.7 4.6 25.8 6.2 24.6 6.6"/>
+      <path d="M12.8 26c-1-2 1-3.2 0-5.2s1-3.2 0-5.2 1-3.2 0-5.2"/>
+      <path d="M16 26.8v-2.2l1.1-2.6H16l1.1-2.6H16l1.1-2.6H16l1.1-2.6H16l1.1-2.6H16v-1.6"/>
+      <path d="M19.2 26v-2.9h1v-2.9h-1v-2.9h1v-2.9h-1v-2.9h1"/>
+    </svg>
+    <span class="wordmark">Menura</span>
+  </a>
+  <nav class="views" aria-label="Views">
+    <a href="#" aria-current="page">Synth</a>
+    <a href="#">Sequencer</a>
+    <a href="#">Match</a>
+  </nav>
+  <div class="actions">
+    <button class="quiet" data-open="library">Library</button>
+    <button class="quiet" data-open="settings">Settings</button>
+    <span class="sync" id="sync" role="status"><i class="dot" aria-hidden="true"></i><span id="sync-text">S-1 not connected</span></span>
+    <button class="send" id="send">Send patch to S-1</button>
+  </div>
+</header>
+
+<main class="plate" id="plate">
+  <svg class="overlay" id="overlay" aria-hidden="true"></svg>
+
+  <section class="grid" id="grid" aria-label="The synth, in signal order">
+    <div class="stage" id="st-osc">
+      <div class="well-wrap"><canvas class="well" id="w-osc" aria-label="Oscillator waveform"></canvas></div>
+      <h2 class="caption">Oscillator</h2>
+      <div class="controls">
+        <div class="s" data-cc="14" data-label="Range" data-opts="64′,32′,16′,8′,4′,2′"></div>
+        <div class="row">
+          <div class="k" data-cc="19" data-label="Square"></div>
+          <div class="k" data-cc="20" data-label="Saw"></div>
+          <div class="k" data-cc="21" data-label="Sub"></div>
+          <div class="k" data-cc="23" data-label="Noise"></div>
+        </div>
+        <div class="row" style="gap:14px 26px">
+          <div class="s" data-cc="22" data-label="Sub octave" data-opts="−1,−2,−2 asym" data-values="2,1,0"></div>
+          <div class="s" data-cc="78" data-label="Noise color" data-opts="Pink,White"></div>
+        </div>
+        <div class="row">
+          <div class="k" data-cc="15" data-label="Pulse width"></div>
+          <div class="s" data-cc="16" data-label="Width set by" data-opts="Knob,LFO,Envelope" data-values="1,2,0"></div>
+          <div class="k" data-cc="13" data-label="Vibrato"></div>
+        </div>
+        <details class="more">
+          <summary>Draw and chop</summary>
+          <div class="row">
+            <div class="s" data-cc="107" data-label="Draw" data-opts="Off,Step,Slope"></div>
+          </div>
+          <div class="row">
+            <div class="k" data-cc="102" data-label="Multiply"></div>
+            <div class="k" data-cc="103" data-label="Overtone"></div>
+            <div class="k" data-cc="104" data-label="Comb"></div>
+          </div>
+        </details>
+      </div>
+    </div>
+
+    <div class="stage" id="st-flt">
+      <div class="well-wrap"><canvas class="well" id="w-flt" aria-label="Waveform after the filter"></canvas></div>
+      <h2 class="caption">Filter</h2>
+      <div class="controls">
+        <div class="row">
+          <div class="k" data-cc="74" data-label="Cutoff" data-size="88"></div>
+          <div class="pair">
+            <div class="k" data-cc="71" data-label="Resonance"></div>
+            <div class="k" data-cc="26" data-label="Key follow"></div>
+          </div>
+        </div>
+        <div class="row">
+          <div class="k" data-cc="24" data-label="Env amount"></div>
+          <div class="k" data-cc="25" data-label="LFO amount"></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="stage" id="st-amp">
+      <div class="well-wrap"><canvas class="well" id="w-amp" aria-label="Volume over one note"></canvas></div>
+      <h2 class="caption">Amplifier</h2>
+      <div class="controls">
+        <div class="s" data-cc="28" data-label="Volume shape" data-opts="Gate,Envelope"></div>
+      </div>
+    </div>
+
+    <div class="stage" id="st-fx">
+      <div class="well-wrap"><canvas class="well" id="w-fx" aria-label="Note with delay and reverb"></canvas></div>
+      <h2 class="caption">Effects</h2>
+      <div class="controls">
+        <div class="row">
+          <div class="k" data-cc="92" data-label="Delay"></div>
+          <div class="k" data-cc="90" data-label="Delay time"></div>
+        </div>
+        <div class="row">
+          <div class="k" data-cc="91" data-label="Reverb"></div>
+          <div class="k" data-cc="89" data-label="Reverb time"></div>
+        </div>
+        <div class="s" data-cc="93" data-label="Chorus" data-opts="Off,1,2,3,4"></div>
+      </div>
+    </div>
+
+    <div class="stage out" id="st-out">
+      <div class="well-wrap"><canvas class="well" id="w-out" aria-label="Output, drawn as a plume"></canvas></div>
+      <h2 class="caption">Output<span class="note" id="out-note"></span></h2>
+      <div class="mod" id="voices">
+        <h3>Voices</h3>
+        <div class="row" style="gap:14px 24px">
+          <div class="s" data-cc="80" data-label="Polyphony" data-opts="Mono,Unison,Poly,Chord"></div>
+        </div>
+        <div class="row" style="gap:14px 14px; margin-top:14px">
+          <div class="s" data-cc="31" data-label="Glide" data-opts="Off,Auto,On"></div>
+          <div class="k" data-cc="5" data-label="Glide time"></div>
+          <div class="k" data-cc="77" data-label="Transpose" data-bipolar></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="mod" id="mod-lfo">
+      <h3 id="h-lfo">LFO</h3>
+      <div class="controls" style="margin-top:0">
+        <div class="row" style="gap:14px 22px">
+          <div class="k" data-cc="3" data-label="Rate"></div>
+          <div class="s" data-cc="12" data-label="Wave" data-glyphs="saw,isaw,tri,sq,rnd,noise" data-opts="Saw,Inverse saw,Triangle,Square,Random,Noise"></div>
+        </div>
+        <div class="row" style="gap:14px 24px">
+          <div class="s" data-cc="79" data-label="Speed" data-opts="Normal,Fast"></div>
+          <div class="s" data-cc="106" data-label="Tempo sync" data-opts="Off,On"></div>
+          <div class="s" data-cc="105" data-label="Restart on key" data-opts="Off,On"></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="mod" id="mod-env">
+      <h3 id="h-env">Envelope</h3>
+      <canvas class="adsr" id="adsr" aria-label="Envelope shape"></canvas>
+      <div class="row">
+        <div class="k" data-cc="73" data-label="Attack"></div>
+        <div class="k" data-cc="75" data-label="Decay"></div>
+        <div class="k" data-cc="30" data-label="Sustain"></div>
+        <div class="k" data-cc="72" data-label="Release"></div>
+        <div class="s" data-cc="29" data-label="Triggered by" data-opts="Gate + trig,Gate,LFO" data-values="2,1,0" style="margin-left:14px"></div>
+      </div>
+    </div>
+
+    <div class="mod" id="keys" aria-label="Keyboard">
+      <h3>Keys</h3>
+      <p class="keys-hint" id="keys-hint">Play with A to K on your keyboard. Z and X change the octave.</p>
+      <div class="keyboard" id="kbd"></div>
+    </div>
+  </section>
+
+</main>
+
+<p class="foot">Design comp, 2026-09-27. The waveforms come from a small model of the S-1's signal chain written for this page; nothing here talks to hardware.</p>
+
+<aside class="drawer" id="drawer-library" aria-label="Library" aria-hidden="true">
+  <button class="quiet close" data-close>Close</button>
+  <h2>Library</h2>
+  <h3 style="margin-top:0">Patches</h3>
+  <ul class="patches">
+    <li><button aria-current="true">Round bass</button></li>
+    <li><button>Glass lead</button></li>
+    <li><button>Sub drone</button></li>
+    <li><button>Init</button></li>
+  </ul>
+  <div class="saverow"><input aria-label="Patch name" placeholder="Name this patch"><button class="send">Save patch</button></div>
+  <h3>Save to the S-1</h3>
+  <p>The S-1 takes patterns over USB disk mode. Menura writes the file; the S-1 needs your hands for the rest.</p>
+  <ol class="steps">
+    <li>Power the S-1 off. Hold Play while you power it on.</li>
+    <li>Wait one to two minutes for a drive named S-1 to appear.</li>
+    <li>Pick a bank and slot below, then write the pattern.</li>
+    <li>Press Hold on the S-1, wait for dOnE, then power-cycle it.</li>
+  </ol>
+  <div class="slotrow">
+    <label>Bank <select><option>1</option><option>2</option><option>3</option><option>4</option></select></label>
+    <label>Slot <select><option>1</option><option>2</option><option>3</option><option>4</option><option>5</option><option>6</option><option>7</option><option>8</option></select></label>
+  </div>
+  <div class="saverow" style="align-items:center; gap:18px"><button class="send" id="write">Write to S-1</button><button class="linkish">Download the .prm file</button></div>
+  <h3>Load from the S-1</h3>
+  <p>No drive named S-1 is mounted. Put the S-1 in disk mode to list its saved patterns here.</p>
+</aside>
+
+<aside class="drawer" id="drawer-settings" aria-label="Settings" aria-hidden="true">
+  <button class="quiet close" data-close>Close</button>
+  <h2>Settings</h2>
+  <h3 style="margin-top:0">Tuning</h3>
+  <div class="row">
+    <div class="k" data-cc="76" data-label="Fine tune" data-bipolar></div>
+  </div>
+  <h3>Wheels and bend</h3>
+  <div class="row">
+    <div class="k" data-cc="17" data-label="Mod wheel to LFO"></div>
+    <div class="k" data-cc="18" data-label="Bend to pitch"></div>
+    <div class="k" data-cc="27" data-label="Bend to cutoff"></div>
+  </div>
+  <h3>Chord voices</h3>
+  <p>In Chord mode, each extra voice plays at its own offset from the key you press.</p>
+  <div class="row">
+    <div class="k" data-cc="85" data-label="Voice 2" data-bipolar></div>
+    <div class="k" data-cc="86" data-label="Voice 3" data-bipolar></div>
+    <div class="k" data-cc="87" data-label="Voice 4" data-bipolar></div>
+  </div>
+  <h3>MIDI</h3>
+  <div class="row">
+    <div class="k" data-cc="1" data-label="Mod wheel"></div>
+    <div class="k" data-cc="10" data-label="Pan" data-bipolar></div>
+    <div class="k" data-cc="11" data-label="Expression"></div>
+    <div class="s" data-cc="64" data-label="Damper" data-opts="Off,On" data-values="0,127"></div>
+  </div>
+</aside>
+<div class="scrim" id="scrim"></div>
+
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
+<div class="comp" aria-label="Mockup controls">Mockup<button id="sim">Simulate S-1 connected</button></div>
+
+<script>
+"use strict";
+// ---------------------------------------------------------------------------
+// Parameters: a faithful subset of synth/data/s1.json (cc: [min, max, default]).
+// The starting patch is a made-up "Round bass" so every stage has something to show.
+// ---------------------------------------------------------------------------
+const RANGE = {
+  3: [0, 127, 60], 12: [0, 5, 2], 79: [0, 1, 0], 106: [0, 1, 0], 105: [0, 1, 0],
+  14: [0, 5, 2], 13: [0, 127, 0], 19: [0, 127, 127], 20: [0, 127, 0], 21: [0, 127, 0],
+  23: [0, 127, 0], 15: [0, 127, 0], 16: [0, 2, 2], 76: [0, 127, 64], 22: [0, 2, 2],
+  78: [0, 1, 0], 107: [0, 2, 0], 102: [3, 127, 3], 103: [0, 127, 50], 104: [3, 127, 3],
+  74: [0, 127, 127], 71: [0, 127, 0], 25: [0, 127, 0], 24: [0, 127, 0], 26: [0, 127, 0],
+  28: [0, 1, 1], 73: [0, 127, 0], 75: [0, 127, 42], 30: [0, 127, 25], 72: [0, 127, 21],
+  29: [0, 2, 2], 92: [0, 127, 0], 90: [0, 127, 87], 91: [0, 127, 0], 89: [0, 127, 100],
+  93: [0, 4, 0], 80: [0, 3, 2], 31: [0, 2, 0], 5: [0, 127, 15], 77: [0, 127, 64],
+  17: [0, 127, 15], 18: [0, 127, 20], 27: [0, 127, 0], 85: [0, 127, 64], 86: [0, 127, 64],
+  87: [0, 127, 64], 1: [0, 127, 0], 10: [0, 127, 64], 11: [0, 127, 127], 64: [0, 127, 0],
+};
+const P = {};
+for (const cc in RANGE) P[cc] = RANGE[cc][2];
+Object.assign(P, {   // "Round bass"
+  3: 44, 13: 0, 19: 64, 20: 112, 21: 92, 23: 0, 15: 34, 16: 1, 22: 2,
+  74: 50, 71: 74, 25: 22, 24: 88, 26: 40, 28: 1,
+  73: 3, 75: 66, 30: 34, 72: 36, 29: 2,
+  92: 38, 90: 74, 91: 24, 89: 90, 80: 0, 31: 1, 5: 20,
+});
+
+// ---------------------------------------------------------------------------
+// Tyler's pitch colors. Vendored from hq/music/music/web/static/colors.js (the authority).
+// ---------------------------------------------------------------------------
+const BASE = { A: [235, 92, 92], B: [181, 141, 102], C: [236, 236, 238], D: [178, 192, 216], E: [57, 255, 20], F: [168, 24, 30], G: [36, 66, 168] };
+const PC_LETTER = [["C", 0], ["C", 1], ["D", 0], ["D", 1], ["E", 0], ["F", 0], ["F", 1], ["G", 0], ["G", 1], ["A", 0], ["A", 1], ["B", 0]];
+const PC_NAMES = ["C", "C♯", "D", "D♯", "E", "F", "F♯", "G", "G♯", "A", "A♯", "B"];
+function rgbOf(pc) {
+  const [letter, sharp] = PC_LETTER[((pc % 12) + 12) % 12];
+  let [r, g, b] = BASE[letter];
+  if (sharp) { r = Math.round(r + (255 - r) * .35); g = Math.round(g + (255 - g) * .35); b = Math.round(b + (255 - b) * .35); }
+  return [r, g, b];
+}
+const lum = ([r, g, b]) => (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255;
+
+// ---------------------------------------------------------------------------
+// A small model of the S-1 chain, for drawing only: mixed oscillator -> 4-pole ladder
+// -> envelope -> delay and reverb. It stands in for the real twin (synth/match/twin.py).
+// ---------------------------------------------------------------------------
+function mulberry32(a) { return function () { a |= 0; a = a + 0x6D2B79F5 | 0; let t = Math.imul(a ^ a >>> 15, 1 | a); t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; }; }
+const secs = (cc) => 0.002 * Math.pow(2500, P[cc] / 127);          // 2 ms .. 5 s
+const noteHz = (n) => 440 * Math.pow(2, (n - 69) / 12);
+function envAt(t, gateOff) {
+  const A = secs(73), D = secs(75), S = P[30] / 127, R = secs(72);
+  const held = (tt) => tt < A ? tt / A : S + (1 - S) * Math.exp(-(tt - A) / (D / 3.2));
+  if (gateOff == null || t < gateOff) return held(t);
+  return held(gateOff) * Math.exp(-(t - gateOff) / (R / 3.2));
+}
+function ampAt(t, gateOff) {
+  if (P[28] === 1) return envAt(t, gateOff);
+  if (gateOff != null && t >= gateOff) return Math.max(0, 1 - (t - gateOff) / 0.006);
+  return Math.min(1, t / 0.004);
+}
+function voice({ f0, envLevel = null, lfo = 0, real = false, cycles = 3 }) {
+  const spc = 256, warm = 12, n = (warm + cycles) * spc, dt = 1 / (f0 * spc);
+  const osc = new Float32Array(n), flt = new Float32Array(n);
+  const Lsq = P[19] / 127, Lsaw = P[20] / 127, Lsub = P[21] / 127, Ln = P[23] / 127;
+  const norm = Math.max(1, (Lsq + Lsaw + Lsub + Ln) * .85);
+  const pw = .5 - .46 * (P[15] / 127);
+  const subDiv = P[22] === 2 ? 2 : 4, subDuty = P[22] === 0 ? .25 : .5;
+  const lvl = envLevel == null ? (P[28] === 1 ? P[30] / 127 : 1) : envLevel;
+  let fc = 20 * Math.pow(1000, P[74] / 127);
+  fc *= Math.pow(2, (P[24] / 127) * 6 * lvl);
+  fc *= Math.pow(f0 / 110, (P[26] / 127) * .9);
+  fc *= Math.pow(2, (P[25] / 127) * 2.5 * lfo);
+  let g = Math.min(.995, 1 - Math.exp(-2 * Math.PI * fc * dt));
+  let k = 3.9 * (P[71] / 127);
+  if (real) { g *= .93; k *= 1.05; }
+  const rnd = mulberry32(real ? 29 : 7);
+  let pink = 0, s1 = 0, s2 = 0, s3 = 0, s4 = 0;
+  const ph0 = real ? .012 : 0;
+  for (let i = 0; i < n; i++) {
+    const ph = i / spc + ph0, p1 = ph % 1;
+    const sq = p1 < pw ? 1 : -1, saw = 2 * p1 - 1;
+    const sub = ((ph / subDiv) % 1) < subDuty ? 1 : -1;
+    const white = rnd() * 2 - 1;
+    pink = .96 * pink + .04 * white * 3;
+    const noise = P[78] === 0 ? pink : white;
+    let x = (sq * Lsq + saw * Lsaw + sub * Lsub + noise * Ln) / norm;
+    if (real) x += (rnd() - .5) * .02;
+    osc[i] = x;
+    const u = Math.tanh(x - k * s4);
+    s1 += g * (u - s1); s2 += g * (s1 - s2); s3 += g * (s2 - s3); s4 += g * (s3 - s4);
+    flt[i] = s4 * (1 + k * .45);
+  }
+  return { osc: osc.subarray(warm * spc), flt: flt.subarray(warm * spc), spc };
+}
+
+// ---------------------------------------------------------------------------
+// Drawing. Ink by default; a held note lends its pitch color as a halo; bronze is the S-1.
+// ---------------------------------------------------------------------------
+const INK = "#EEF3FA", INK2 = "#A3B9DA", BRONZE = "#E6A94F";
+const INK3 = "rgba(238,243,250,.26)", INK4 = "rgba(238,243,250,.11)";
+const rgba = (rgb, a) => `rgba(${rgb[0]},${rgb[1]},${rgb[2]},${a})`;
+function fit(canvas) {
+  const dpr = window.devicePixelRatio || 1, w = canvas.clientWidth, h = canvas.clientHeight;
+  if (canvas.width !== Math.round(w * dpr) || canvas.height !== Math.round(h * dpr)) { canvas.width = Math.round(w * dpr); canvas.height = Math.round(h * dpr); }
+  const ctx = canvas.getContext("2d");
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.clearRect(0, 0, w, h);
+  return [ctx, w, h];
+}
+function axis(ctx, w, h) {
+  ctx.strokeStyle = INK4; ctx.lineWidth = 1; ctx.setLineDash([]);
+  ctx.beginPath(); ctx.moveTo(0, h / 2 + .5); ctx.lineTo(w, h / 2 + .5); ctx.stroke();
+}
+function stroke(ctx, pts, { color = INK, width = 1.5, glow = 0, dash = null, halo = null, reveal = 1, w = 0, h = 0 } = {}) {
+  ctx.save();
+  ctx.beginPath(); ctx.rect(0, 0, w * reveal, h); ctx.clip();
+  ctx.lineJoin = "round"; ctx.lineCap = "round";
+  const path = () => { ctx.beginPath(); pts.forEach(([x, y], i) => i ? ctx.lineTo(x, y) : ctx.moveTo(x, y)); };
+  if (halo) {   // the held note's color, under the line
+    ctx.strokeStyle = rgba(halo, .5); ctx.lineWidth = width + 5; ctx.shadowColor = rgba(halo, .9); ctx.shadowBlur = 16;
+    path(); ctx.stroke(); ctx.shadowBlur = 0;
+  }
+  ctx.strokeStyle = color; ctx.lineWidth = width;
+  if (dash) ctx.setLineDash(dash);
+  if (glow) { ctx.shadowColor = color === INK ? "rgba(238,243,250,.55)" : "rgba(230,169,79,.6)"; ctx.shadowBlur = glow; }
+  path(); ctx.stroke();
+  ctx.restore();
+}
+function wavePts(w, h, data, len, gain, floor = 1e-6) {
+  let peak = floor; for (let i = 0; i < len; i++) peak = Math.max(peak, Math.abs(data[i]));
+  const sc = (h * gain) / peak, pad = 10, pts = [];
+  for (let i = 0; i < len; i++) pts.push([pad + (i / (len - 1)) * (w - pad * 2), h / 2 - data[i] * sc]);
+  return pts;
+}
+function plumePts(w, h, data, spc, level) {
+  // The output as a phase portrait: x = the signal, y = how fast it moves. One loop = one cycle.
+  const n = spc * 2, xs = new Float32Array(n), ys = new Float32Array(n);
+  let px = 1e-6, py = 1e-6;
+  for (let i = 1; i < n + 1; i++) {
+    xs[i - 1] = data[i]; ys[i - 1] = (data[i + 1] - data[i - 1]) * spc / (4 * Math.PI);
+    px = Math.max(px, Math.abs(xs[i - 1])); py = Math.max(py, Math.abs(ys[i - 1]));
+  }
+  const rx = (w / 2 - 18) * level, ry = (h / 2 - 16) * level, pts = [];
+  for (let i = 0; i < n; i++) pts.push([w / 2 + (xs[i] / px) * rx, h / 2 - (ys[i] / py) * ry]);
+  return pts;
+}
+function hatchShape(ctx, w, h, top, { step = 2, color = INK2, alpha = .55, edge = INK, reveal = 1 } = {}) {
+  const cy = h / 2, amp = h * .42, n = top.length, pad = 10;
+  const X = (i) => pad + (i / (n - 1)) * (w - pad * 2);
+  ctx.save();
+  ctx.beginPath(); ctx.rect(0, 0, w * reveal, h); ctx.clip();
+  ctx.strokeStyle = color; ctx.globalAlpha = alpha; ctx.lineWidth = 1;
+  ctx.beginPath();
+  for (let i = 0; i < n; i += step) { const a = top[i] * amp; if (a < .6) continue; ctx.moveTo(X(i) + .5, cy - a); ctx.lineTo(X(i) + .5, cy + a); }
+  ctx.stroke();
+  ctx.globalAlpha = 1; ctx.strokeStyle = edge; ctx.lineWidth = 1.25; ctx.lineJoin = "round";
+  for (const sgn of [-1, 1]) {
+    ctx.beginPath();
+    for (let i = 0; i < n; i++) { const x = X(i), y = cy + sgn * top[i] * amp; i ? ctx.lineTo(x, y) : ctx.moveTo(x, y); }
+    ctx.stroke();
+  }
+  ctx.restore();
+}
+function playhead(ctx, w, h, frac) {
+  const x = 10 + frac * (w - 20);
+  ctx.save(); ctx.strokeStyle = INK; ctx.lineWidth = 1.25; ctx.beginPath(); ctx.moveTo(x + .5, 6); ctx.lineTo(x + .5, h - 6); ctx.stroke(); ctx.restore();
+}
+function keyUpMark(ctx, w, h, frac, label = "key up") {
+  const gx = 10 + frac * (w - 20);
+  ctx.save(); ctx.strokeStyle = INK3; ctx.setLineDash([2, 3]); ctx.beginPath(); ctx.moveTo(gx + .5, 8); ctx.lineTo(gx + .5, h - 8); ctx.stroke(); ctx.restore();
+  ctx.fillStyle = INK2; ctx.font = "400 10.5px 'Libre Franklin', sans-serif"; ctx.fillText(label, gx + 5, 17);
+}
+
+const W = {};
+["osc", "flt", "amp", "fx", "out"].forEach((id) => W[id] = document.getElementById("w-" + id));
+const adsrCanvas = document.getElementById("adsr");
+
+let held = null;         // { note, t0 } while a key is down
+let released = null;     // { note, t0, off } after key up, while the tail rings
+let connected = false;
+let revealT0 = null;     // page-load exposure
+const AMP_T = 1.5, FX_T = 2.8, GATE = .62;
+
+function stageReveal(i, now) {
+  if (revealT0 == null) return 1;
+  return Math.max(0, Math.min(1, (now - revealT0 - 250 - i * 110) / 520));
+}
+
+function draw(now = performance.now()) {
+  const playing = held || released;
+  const note = playing ? playing.note : 45;                          // A2 when idle
+  const f0 = noteHz(note) * Math.pow(2, P[14] - 3);                  // 8′ = concert pitch
+  let tNote = null, gateOff = null;
+  if (held) tNote = (now - held.t0) / 1000;
+  if (released) { tNote = (now - released.t0) / 1000; gateOff = released.off; }
+  const envLevel = tNote == null ? null : envAt(tNote, gateOff);
+  const lfoHz = .08 * Math.pow(300, P[3] / 127) * (P[79] ? 8 : 1);
+  const lfo = playing ? Math.sin(2 * Math.PI * lfoHz * (now / 1000)) : 0;
+  const halo = playing ? rgbOf(note % 12) : null;
+  const tint = halo ? rgba(halo, .9) : INK2;
+
+  const v = voice({ f0, envLevel, lfo });
+  const spc = v.spc;
+
+  { const [ctx, w, h] = fit(W.osc); axis(ctx, w, h);
+    stroke(ctx, wavePts(w, h, v.osc, 3 * spc, .36), { halo, reveal: stageReveal(0, now), w, h }); }
+  { const [ctx, w, h] = fit(W.flt); axis(ctx, w, h);
+    stroke(ctx, wavePts(w, h, v.flt, 3 * spc, .36, .35), { halo, reveal: stageReveal(1, now), w, h }); }
+  { const [ctx, w, h] = fit(W.amp); axis(ctx, w, h);
+    const cols = Math.max(2, Math.floor(w)), top = new Float32Array(cols);
+    for (let i = 0; i < cols; i++) top[i] = ampAt((i / (cols - 1)) * AMP_T, GATE);
+    hatchShape(ctx, w, h, top, { color: tint, reveal: stageReveal(2, now) });
+    keyUpMark(ctx, w, h, GATE / AMP_T);
+    if (tNote != null && tNote < AMP_T) playhead(ctx, w, h, tNote / AMP_T); }
+  { const [ctx, w, h] = fit(W.fx); axis(ctx, w, h);
+    const cols = Math.max(2, Math.floor(w)), dry = new Float32Array(cols), wet = new Float32Array(cols);
+    const DT = .03 * Math.pow(33, P[90] / 127), DL = P[92] / 127, fb = .5;
+    const RL = P[91] / 127, RT = .3 * Math.pow(20, P[89] / 127);
+    const dtc = FX_T / (cols - 1), decay = Math.exp(-dtc / (RT / 4));
+    let rv = 0;
+    for (let i = 0; i < cols; i++) {
+      const t = i * dtc, d = ampAt(t, GATE);
+      let e = 0; for (let r = 1; r <= 8; r++) { const tr = t - r * DT; if (tr >= 0) e += DL * Math.pow(fb, r - 1) * ampAt(tr, GATE); }
+      rv = rv * decay + d * (1 - decay) * 6;
+      dry[i] = d; wet[i] = Math.min(1, d + e * .85 + rv * RL * .5);
+    }
+    hatchShape(ctx, w, h, wet, { step: 4, alpha: .45, color: tint, edge: INK2, reveal: stageReveal(3, now) });
+    hatchShape(ctx, w, h, dry, { step: 2, alpha: .6, color: tint, edge: INK, reveal: stageReveal(3, now) });
+    if (tNote != null && tNote < FX_T) playhead(ctx, w, h, tNote / FX_T); }
+  { const [ctx, w, h] = fit(W.out);
+    const r = stageReveal(4, now);
+    const level = playing ? .3 + .7 * Math.sqrt(Math.max(0, ampAt(tNote, gateOff))) : 1;
+    // faint crosshair: the plume's resting point
+    ctx.strokeStyle = INK4; ctx.lineWidth = 1; ctx.beginPath(); ctx.moveTo(0, h / 2 + .5); ctx.lineTo(w, h / 2 + .5); ctx.moveTo(w / 2 + .5, 10); ctx.lineTo(w / 2 + .5, h - 10); ctx.stroke();
+    if (connected) {
+      const vr = voice({ f0, envLevel, lfo, real: true });
+      stroke(ctx, plumePts(w, h, vr.flt, spc, level), { color: BRONZE, width: 1.7, glow: 10, halo, reveal: r, w, h });
+      stroke(ctx, plumePts(w, h, v.flt, spc, level), { color: INK, width: 1.2, dash: [1.5, 4], reveal: r, w, h });
+    } else {
+      stroke(ctx, plumePts(w, h, v.flt, spc, level), { color: INK, width: 1.7, glow: 12, halo, reveal: r, w, h });
+    } }
+  drawADSR();
+}
+function drawADSR() {
+  const [ctx, w, h] = fit(adsrCanvas);
+  const A = Math.sqrt(secs(73)), D = Math.sqrt(secs(75)), R = Math.sqrt(secs(72)), S = P[30] / 127;
+  const sus = .9, total = A + D + sus + R, pad = 8, usable = w - pad * 2;
+  const X = (u) => pad + (u / total) * usable, Y = (lv) => h - 10 - lv * (h - 22);
+  const pts = [[X(0), Y(0)], [X(A), Y(1)], [X(A + D), Y(S)], [X(A + D + sus), Y(S)], [X(total), Y(0)]];
+  ctx.strokeStyle = INK4; ctx.lineWidth = 1; ctx.beginPath(); ctx.moveTo(0, Y(0) + .5); ctx.lineTo(w, Y(0) + .5); ctx.stroke();
+  const curve = () => {
+    ctx.lineTo(pts[1][0], pts[1][1]);
+    for (let i = 1; i <= 24; i++) { const u = i / 24, x = pts[1][0] + u * (pts[2][0] - pts[1][0]); ctx.lineTo(x, Y(S + (1 - S) * Math.exp(-u * 4))); }
+    ctx.lineTo(pts[3][0], pts[3][1]);
+    for (let i = 1; i <= 24; i++) { const u = i / 24, x = pts[3][0] + u * (pts[4][0] - pts[3][0]); ctx.lineTo(x, Y(S * Math.exp(-u * 4) * (1 - u * .02))); }
+  };
+  ctx.save();
+  ctx.beginPath(); ctx.moveTo(pts[0][0], pts[0][1]); curve(); ctx.lineTo(pts[4][0], Y(0)); ctx.closePath(); ctx.clip();
+  ctx.strokeStyle = INK2; ctx.globalAlpha = .45; ctx.lineWidth = 1; ctx.beginPath();
+  for (let x = 0; x < w; x += 3) { ctx.moveTo(x + .5, 0); ctx.lineTo(x + .5, h); }
+  ctx.stroke(); ctx.restore();
+  ctx.strokeStyle = INK; ctx.lineWidth = 1.4; ctx.lineJoin = "round"; ctx.beginPath(); ctx.moveTo(pts[0][0], pts[0][1]); curve(); ctx.stroke();
+  for (const [x, y] of pts.slice(1, 4)) { ctx.beginPath(); ctx.arc(x, y, 3.4, 0, Math.PI * 2); ctx.fillStyle = "#0E2A52"; ctx.fill(); ctx.strokeStyle = INK; ctx.lineWidth = 1.25; ctx.stroke(); }
+  ctx.strokeStyle = INK3; ctx.setLineDash([2, 3]); ctx.beginPath(); ctx.moveTo(pts[3][0] + .5, 4); ctx.lineTo(pts[3][0] + .5, Y(0)); ctx.stroke(); ctx.setLineDash([]);
+  ctx.fillStyle = INK2; ctx.font = "400 10.5px 'Libre Franklin', sans-serif"; ctx.fillText("key up", pts[3][0] + 5, 12);
+}
+
+// ---------------------------------------------------------------------------
+// Controls: knobs and switches, built from the data-* placeholders
+// ---------------------------------------------------------------------------
+const knobs = {};
+const A0 = -135, A1 = 135;
+const polar = (r, deg) => { const a = (deg - 90) * Math.PI / 180; return [50 + r * Math.cos(a), 50 + r * Math.sin(a)]; };
+function arc(r, d0, d1) {
+  if (Math.abs(d1 - d0) < .5) return "";
+  const [x0, y0] = polar(r, d0), [x1, y1] = polar(r, d1);
+  return `M${x0.toFixed(2)} ${y0.toFixed(2)} A${r} ${r} 0 ${Math.abs(d1 - d0) > 180 ? 1 : 0} ${d1 > d0 ? 1 : 0} ${x1.toFixed(2)} ${y1.toFixed(2)}`;
+}
+function makeKnob(host) {
+  const cc = +host.dataset.cc, [min, max, def] = RANGE[cc];
+  const size = +(host.dataset.size || 50), bipolar = host.hasAttribute("data-bipolar");
+  const label = host.dataset.label;
+  host.className = "knob" + (size > 60 ? " hero" : "");
+  const NT = 21;
+  let ticks = "";
+  for (let i = 0; i < NT; i++) { const d = A0 + (A1 - A0) * i / (NT - 1); const [x0, y0] = polar(40, d), [x1, y1] = polar(i % 5 === 0 ? 47 : 45, d); ticks += `<line class="tick" x1="${x0.toFixed(2)}" y1="${y0.toFixed(2)}" x2="${x1.toFixed(2)}" y2="${y1.toFixed(2)}"/>`; }
+  host.innerHTML = `<svg viewBox="0 0 100 100" width="${size}" height="${size}" role="slider" tabindex="0" aria-label="${label}" aria-valuemin="${min}" aria-valuemax="${max}">
+      ${ticks}<path class="trail"/><circle class="body" cx="50" cy="50" r="31"/><line class="ptr" x1="50" y1="50" x2="50" y2="24"/></svg>
+      <span class="k-label">${label}</span><span class="k-val"></span>`;
+  const svg = host.querySelector("svg"), ptr = host.querySelector(".ptr"), val = host.querySelector(".k-val"), trail = host.querySelector(".trail");
+  const tickEls = [...host.querySelectorAll(".tick")];
+  const norm = (x) => (x - min) / (max - min);
+  const render = () => {
+    const x = P[cc], n = norm(x), deg = A0 + (A1 - A0) * n;
+    ptr.setAttribute("transform", `rotate(${deg} 50 50)`);
+    tickEls.forEach((t, i) => { const u = i / (NT - 1); const on = bipolar ? (n >= .5 ? (u >= .5 - 1e-6 && u <= n + 1e-6) : (u <= .5 + 1e-6 && u >= n - 1e-6)) : u <= n + 1e-6; t.classList.toggle("on", on); });
+    val.textContent = bipolar ? (x > 64 ? "+" : x < 64 ? "−" : "") + Math.abs(x - 64) : x;
+    svg.setAttribute("aria-valuenow", x); svg.setAttribute("aria-valuetext", val.textContent);
+  };
+  const set = (x) => { x = Math.max(min, Math.min(max, Math.round(x))); if (x === P[cc]) return; P[cc] = x; render(); changed(cc); };
+  let drag = null;
+  svg.addEventListener("pointerdown", (e) => { svg.setPointerCapture(e.pointerId); drag = { y: e.clientY, v: P[cc] }; e.preventDefault(); svg.focus(); });
+  svg.addEventListener("pointermove", (e) => { if (!drag) return; set(drag.v + (drag.y - e.clientY) * (e.shiftKey ? .12 : .55) * ((max - min) / 127)); });
+  const end = () => { drag = null; };
+  svg.addEventListener("pointerup", end); svg.addEventListener("pointercancel", end);
+  svg.addEventListener("dblclick", () => set(def));
+  svg.addEventListener("wheel", (e) => { e.preventDefault(); set(P[cc] + (e.deltaY < 0 ? 1 : -1) * (e.shiftKey ? 1 : 3)); }, { passive: false });
+  svg.addEventListener("keydown", (e) => {
+    const step = e.shiftKey ? 10 : 1;
+    const map = { ArrowUp: step, ArrowRight: step, ArrowDown: -step, ArrowLeft: -step, PageUp: 10, PageDown: -10 };
+    if (e.key in map) { set(P[cc] + map[e.key]); e.preventDefault(); }
+    else if (e.key === "Home") { set(min); e.preventDefault(); } else if (e.key === "End") { set(max); e.preventDefault(); }
+  });
+  render();
+  knobs[cc] = { host, render, trail, deg: (x) => A0 + (A1 - A0) * norm(x) };
+}
+const GLYPH = {
+  saw: "M1 12 L10 2 L10 12 L20 2 L20 12", isaw: "M1 2 L10 12 L10 2 L20 12 L20 2",
+  tri: "M1 12 L6 2 L11 12 L16 2 L21 12", sq: "M1 12 L1 2 L7 2 L7 12 L13 12 L13 2 L19 2 L19 12",
+  rnd: "M1 9 L4 9 L4 3 L8 3 L8 11 L12 11 L12 5 L16 5 L16 8 L21 8", noise: "M1 8 L3 3 L5 11 L6 5 L8 10 L10 2 L12 12 L13 6 L15 9 L17 3 L19 10 L21 6",
+};
+function makeSeg(host) {
+  const cc = +host.dataset.cc, opts = host.dataset.opts.split(",");
+  const values = host.dataset.values ? host.dataset.values.split(",").map(Number) : opts.map((_, i) => i);
+  const glyphs = host.dataset.glyphs ? host.dataset.glyphs.split(",") : null;
+  host.className = "seg";
+  host.innerHTML = `<div class="seg-opts" role="radiogroup" aria-label="${host.dataset.label}"></div><span class="k-label">${host.dataset.label}</span>`;
+  const box = host.querySelector(".seg-opts");
+  const btns = opts.map((o, i) => {
+    const b = document.createElement("button");
+    b.setAttribute("role", "radio");
+    if (glyphs) { b.innerHTML = `<svg viewBox="0 0 22 14"><path d="${GLYPH[glyphs[i]]}"/></svg>`; b.setAttribute("aria-label", o); b.title = o; }
+    else b.textContent = o;
+    b.addEventListener("click", () => { if (P[cc] !== values[i]) { P[cc] = values[i]; render(); changed(cc); } });
+    b.addEventListener("keydown", (e) => {
+      const d = { ArrowRight: 1, ArrowDown: 1, ArrowLeft: -1, ArrowUp: -1 }[e.key];
+      if (!d) return; e.preventDefault();
+      const j = (values.indexOf(P[cc]) + d + values.length) % values.length;
+      P[cc] = values[j]; render(); changed(cc); btns[j].focus();
+    });
+    box.appendChild(b); return b;
+  });
+  const render = () => btns.forEach((b, i) => { const on = P[cc] === values[i]; b.setAttribute("aria-checked", on); b.tabIndex = on ? 0 : -1; });
+  render();
+}
+document.querySelectorAll(".k[data-cc]").forEach(makeKnob);
+document.querySelectorAll(".s[data-cc]").forEach(makeSeg);
+
+// ---------------------------------------------------------------------------
+// The signal line and the modulation leaders (over the plate, never over a control)
+// ---------------------------------------------------------------------------
+const plate = document.getElementById("plate"), overlay = document.getElementById("overlay");
+function rel(el) { const r = el.getBoundingClientRect(), p = plate.getBoundingClientRect(); return { l: r.left - p.left, t: r.top - p.top, r: r.right - p.left, b: r.bottom - p.top, w: r.width, h: r.height }; }
+function leader(a, b, wgt) {
+  // a: the modulator block, b: the control it drives (always above it on the plate)
+  const tx = b.l + b.w / 2, ty = b.b + 6;
+  const sx = Math.max(a.l + 14, Math.min(a.r - 14, tx)), sy = a.t - 8;
+  const my = (sy + ty) / 2;
+  const d = Math.abs(sx - tx) < 1 ? `M${sx} ${sy} L${tx} ${ty}` : `M${sx} ${sy} C${sx} ${my} ${tx} ${my} ${tx} ${ty}`;
+  const op = (.22 + .6 * wgt).toFixed(2), sw = (1 + 1.1 * wgt).toFixed(2);
+  return `<path d="${d}" stroke="${INK}" stroke-opacity="${op}" stroke-width="${sw}" stroke-dasharray="1.5 5" stroke-linecap="round" fill="none"/><circle cx="${tx}" cy="${ty}" r="2.2" fill="${INK}" fill-opacity="${op}"/>`;
+}
+let signalPath = null;
+function drawOverlay() {
+  if (getComputedStyle(overlay).display === "none") return;
+  const wells = ["osc", "flt", "amp", "fx", "out"].map((id) => rel(W[id]));
+  const y = wells[0].t + wells[0].h / 2;
+  let line = "", heads = "";
+  for (let i = 0; i < wells.length - 1; i++) {
+    const x0 = wells[i].r, x1 = wells[i + 1].l, xm = x1 - 7;
+    line += `M${x0} ${y} L${x1} ${y} `;
+    heads += `M${xm - 5} ${y - 5} L${xm + 1} ${y} L${xm - 5} ${y + 5} `;
+  }
+  const src = { lfo: rel(document.getElementById("mod-lfo")), env: rel(document.getElementById("mod-env")) };
+  const knobAt = (cc) => rel(knobs[cc].host);
+  let leaders = "";
+  const links = [["lfo", 13, P[13] / 127], ["lfo", 25, P[25] / 127], ["env", 24, P[24] / 127]];
+  if (P[16] === 0) links.push(["env", 15, .55]);
+  if (P[16] === 2) links.push(["lfo", 15, .55]);
+  for (const [s, cc, wgt] of links) if (wgt > 0) leaders += leader(src[s], knobAt(cc), wgt);
+  if (P[28] === 1) leaders += leader(src.env, rel(document.querySelector('#st-amp .seg')), .5);
+  overlay.innerHTML = `<path id="sig" d="${line}" stroke="${INK2}" stroke-width="1.25" fill="none"/><path d="${heads}" stroke="${INK2}" stroke-width="1.25" fill="none" stroke-linecap="round" stroke-linejoin="round"/>${leaders}`;
+  signalPath = overlay.querySelector("#sig");
+}
+
+// ---------------------------------------------------------------------------
+// State changes, the render loop, and the hardware's hand
+// ---------------------------------------------------------------------------
+let needs = true;
+function changed(cc) { needs = true; if ([13, 25, 24, 16, 28].includes(cc)) drawOverlay(); }
+let hwAnim = null;
+function loop(now) {
+  const animating = held || released || (revealT0 != null && now - revealT0 < 1400) || hwAnim;
+  if (released && (now - released.t0) / 1000 > released.off + secs(72) * 1.5 + .2) { released = null; setNoteText(); needs = true; }
+  if (hwAnim) hwAnim(now);
+  if (needs || animating) { draw(now); needs = false; }
+  requestAnimationFrame(loop);
+}
+function showTrail(cc, from, to) {
+  const k = knobs[cc];
+  k.trail.setAttribute("d", arc(36, Math.min(k.deg(from), k.deg(to)), Math.max(k.deg(from), k.deg(to))));
+}
+function hardwareTwist(cc, delta, ms = 1500) {
+  const k = knobs[cc]; if (!k) return;
+  const from = P[cc], to = Math.max(0, Math.min(127, from + delta)), t0 = performance.now();
+  k.host.classList.add("hw");
+  hwAnim = (now) => {
+    const u = Math.min(1, (now - t0) / ms), e = u < .5 ? 2 * u * u : 1 - Math.pow(-2 * u + 2, 2) / 2;
+    P[cc] = Math.round(from + (to - from) * e); k.render(); needs = true; showTrail(cc, from, P[cc]);
+    if (u >= 1) { hwAnim = null; setTimeout(() => k.host.classList.remove("hw"), 900); }
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Keyboard: 25 keys from C2; A..K plays, Z and X move the octave
+// ---------------------------------------------------------------------------
+const kbd = document.getElementById("kbd");
+let base = 36;
+const KEYMAP = "awsedftgyhujk";
+const keyEls = {};
+function buildKeys() {
+  kbd.innerHTML = "";
+  const whites = [];
+  for (let n = base; n <= base + 24; n++) if (![1, 3, 6, 8, 10].includes(n % 12)) whites.push(n);
+  whites.forEach((n) => { const d = document.createElement("div"); d.className = "wk"; d.dataset.n = n; kbd.appendChild(d); keyEls[n] = d; });
+  const ww = 100 / whites.length;
+  for (let n = base; n <= base + 24; n++) {
+    if (![1, 3, 6, 8, 10].includes(n % 12)) continue;
+    const left = whites.indexOf(n - 1);
+    const d = document.createElement("div"); d.className = "bk"; d.dataset.n = n;
+    d.style.left = `calc(${(left + 1) * ww}% - ${ww * .31}%)`; d.style.width = `${ww * .62}%`;
+    kbd.appendChild(d); keyEls[n] = d;
+  }
+  [...KEYMAP].forEach((ch, i) => { const el = keyEls[base + 12 + i]; if (el) el.textContent = ch.toUpperCase(); });
+}
+buildKeys();
+const noteName = (n) => PC_NAMES[n % 12] + (Math.floor(n / 12) - 1);
+function light(n, on) {
+  const el = keyEls[n]; if (!el) return;
+  if (on) { const rgb = rgbOf(n % 12); el.style.setProperty("--pc", rgb.join(",")); el.style.setProperty("--on-pc", lum(rgb) > .55 ? "#0E2A52" : "#EEF3FA"); }
+  el.classList.toggle("down", on);
+}
+function keyDown(n, t0 = performance.now()) {
+  if (held && held.note === n) return;
+  if (held) keyUp(held.note, true);
+  held = { note: n, t0 }; released = null; light(n, true); setNoteText();
+}
+function keyUp(n, silent) {
+  if (!held || held.note !== n) return;
+  released = { note: n, t0: held.t0, off: (performance.now() - held.t0) / 1000 }; held = null;
+  light(n, false); if (!silent) setNoteText();
+}
+function setNoteText() {
+  const playing = held || released;
+  const who = connected
+    ? "From the S-1, live. The dotted line is the twin's prediction."
+    : "Each loop is one cycle of the sound. Sharper turns mean a brighter tone. The twin draws it until the S-1 is connected.";
+  document.getElementById("out-note").textContent = playing ? `${noteName(playing.note)}. ${who}` : who;
+}
+kbd.addEventListener("pointerdown", (e) => { const n = +e.target.dataset.n; if (!n) return; kbd.setPointerCapture(e.pointerId); keyDown(n); });
+kbd.addEventListener("pointerup", () => held && keyUp(held.note));
+kbd.addEventListener("pointercancel", () => held && keyUp(held.note));
+const down = new Set();
+window.addEventListener("keydown", (e) => {
+  if (e.metaKey || e.ctrlKey || e.altKey || e.target.matches("input, select, textarea")) return;
+  const k = e.key.toLowerCase();
+  if (k === "z" || k === "x") { base = Math.max(12, Math.min(84, base + (k === "z" ? -12 : 12))); buildKeys(); return; }
+  const i = KEYMAP.indexOf(k); if (i < 0 || down.has(k)) return;
+  down.add(k); keyDown(base + 12 + i);
+});
+window.addEventListener("keyup", (e) => {
+  const k = e.key.toLowerCase(), i = KEYMAP.indexOf(k); if (i < 0) return;
+  down.delete(k); keyUp(base + 12 + i);
+});
+
+// ---------------------------------------------------------------------------
+// Header actions, drawers, toast, and the mockup's connect switch
+// ---------------------------------------------------------------------------
+const toastEl = document.getElementById("toast"); let toastT;
+function toast(msg) { toastEl.textContent = msg; toastEl.classList.add("on"); clearTimeout(toastT); toastT = setTimeout(() => toastEl.classList.remove("on"), 2600); }
+document.getElementById("send").addEventListener("click", () => toast(connected ? "Patch sent to S-1." : "Connect the S-1 and Menura sends this patch by itself."));
+document.getElementById("write").addEventListener("click", () => toast("No drive named S-1 is mounted. Do steps 1 and 2 first."));
+const scrim = document.getElementById("scrim");
+function openDrawer(name) {
+  document.querySelectorAll(".drawer").forEach((d) => { const on = d.id === "drawer-" + name; d.classList.toggle("open", on); d.setAttribute("aria-hidden", !on); });
+  scrim.classList.add("on");
+  const d = document.getElementById("drawer-" + name); if (d) d.querySelector("[data-close]").focus();
+}
+function closeDrawers() { document.querySelectorAll(".drawer").forEach((d) => { d.classList.remove("open"); d.setAttribute("aria-hidden", "true"); }); scrim.classList.remove("on"); }
+document.querySelectorAll("[data-open]").forEach((b) => b.addEventListener("click", () => openDrawer(b.dataset.open)));
+document.querySelectorAll("[data-close]").forEach((b) => b.addEventListener("click", closeDrawers));
+scrim.addEventListener("click", closeDrawers);
+window.addEventListener("keydown", (e) => { if (e.key === "Escape") closeDrawers(); });
+
+const sim = document.getElementById("sim");
+function setConnected(on, twist = true) {
+  connected = on;
+  document.body.classList.toggle("connected", on);
+  document.getElementById("sync-text").textContent = on ? "In sync with S-1" : "S-1 not connected";
+  sim.textContent = on ? "Simulate unplug" : "Simulate S-1 connected";
+  setNoteText(); needs = true;
+  if (on && twist) setTimeout(() => hardwareTwist(74, 26), 650);
+}
+sim.addEventListener("click", () => setConnected(!connected));
+
+// ---------------------------------------------------------------------------
+// Boot: the plate develops like a sun print (once), then waits for hands.
+// Hash flags for review: #still #play #connected #trail #library #settings
+// ---------------------------------------------------------------------------
+const flags = new Set(location.hash.slice(1).split("&").filter(Boolean));
+const still = flags.has("still") || matchMedia("(prefers-reduced-motion: reduce)").matches;
+function boot() {
+  setNoteText();
+  if (flags.has("connected")) setConnected(true, !still);
+  if (flags.has("trail")) { const from = P[74]; P[74] = from + 26; knobs[74].render(); knobs[74].host.classList.add("hw"); showTrail(74, from, P[74]); }
+  if (flags.has("play")) keyDown(45, performance.now() - 2600);
+  drawOverlay();
+  if (flags.has("library")) openDrawer("library");
+  if (flags.has("settings")) openDrawer("settings");
+  if (!still) {
+    revealT0 = performance.now();
+    requestAnimationFrame(() => document.documentElement.classList.remove("developing"));
+    if (signalPath) {
+      const L = signalPath.getTotalLength();
+      signalPath.animate([{ strokeDasharray: `${L} ${L}`, strokeDashoffset: L }, { strokeDasharray: `${L} ${L}`, strokeDashoffset: 0 }], { duration: 1000, easing: "cubic-bezier(.3,.6,.2,1)" });
+    }
+  }
+  requestAnimationFrame(loop);
+}
+if (!still) document.documentElement.classList.add("developing");
+(document.fonts && document.fonts.ready ? document.fonts.ready : Promise.resolve()).then(boot);
+let rz; window.addEventListener("resize", () => { clearTimeout(rz); rz = setTimeout(() => { drawOverlay(); needs = true; }, 60); });
+</script>
+</body>
+</html>

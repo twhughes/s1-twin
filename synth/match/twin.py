@@ -154,7 +154,11 @@ DEFAULT_CURVES: dict[str, Curve] = {
     "square_lvl": Curve(0.0, 1.0, "linear", "amp"),
     "sub_lvl": Curve(0.0, 1.0, "linear", "amp"),
     "noise_lvl": Curve(0.0, 0.5, "linear", "amp"),
-    "pulse_width": Curve(0.05, 0.5, "linear", "duty"),
+    # CC15 = 0 is a plain 50% square (SH-101 convention, and s1.json: CC15 is the static width in
+    # Manual mode or the PWM depth under LFO/Env, the S-1 default). Higher narrows the pulse.
+    # It was 0.05 -> 0.5, which rendered the S-1's init patch as a 5% sliver and would send
+    # CC15=127 to the hardware for a matched square. Calibration confirms the far end.
+    "pulse_width": Curve(0.5, 0.05, "linear", "duty"),
     "cutoff": Curve(30.0, 12000.0, "exp", "Hz"),
     "resonance": Curve(0.0, 3.8, "linear", "ladder k (4==self-osc)"),
     "env_to_cutoff": Curve(0.0, 6.0, "linear", "octaves"),

@@ -75,6 +75,7 @@ from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, JSONResponse
 
 from synth.match import twin_session as session
+from synth.match.twin import DEFAULT_MAPPING
 from synth.match.twin_session import (  # noqa: F401  (re-exported: this module's old names)
     DEFAULT_QUALITY,
     LR,
@@ -138,7 +139,8 @@ def _k_to_page(k: Any, s: dict[str, int]) -> dict[str, Any]:
     return {
         "saw": kv["saw_lvl"], "pulse": kv["square_lvl"], "sub": kv["sub_lvl"],
         "noise": kv["noise_lvl"],
-        "pw": min(0.98, max(0.02, 0.05 + 0.45 * kv["pulse_width"])),  # model duty 0.05..0.5
+        # duty from the twin's curve (the one authority on duty <-> k)
+        "pw": min(0.98, max(0.02, float(DEFAULT_MAPPING("pulse_width", kv["pulse_width"])))),
         "cutoff": kv["cutoff"], "res": kv["resonance"],
         "envAmt": kv["env_to_cutoff"], "keytrack": kv["key_follow"],
         "atk": kv["attack"], "dec": kv["decay"], "sus": kv["sustain"], "rel": kv["release"],
@@ -171,8 +173,9 @@ def _page_to_k(params: dict[str, Any]) -> np.ndarray:
             except (TypeError, ValueError):
                 pass
     if "pw" in params:
-        try:  # page pw = 0.05 + 0.45 * k_pulse_width
-            k[idx["pulse_width"]] = min(1.0, max(0.0, (float(params["pw"]) - 0.05) / 0.45))
+        try:  # page pw is a duty; the twin's curve is the one authority on duty <-> k
+            k_pw = DEFAULT_MAPPING.curve("pulse_width").invert(float(params["pw"]))
+            k[idx["pulse_width"]] = min(1.0, max(0.0, float(k_pw)))
         except (TypeError, ValueError):
             pass
     target = params.get("lfoTarget")

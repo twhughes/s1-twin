@@ -1,6 +1,6 @@
 # BUILD.md — the cyanotype build contract (v1: the S-1 twin you can play and teach)
 
-*Written 2026-09-27 by the lead (Claude, art director). Read `DIRECTION.md` first: it is the design law.
+*Written 2026-09-27 by the lead (Claude, art director); updated the same day after integration. Read `DIRECTION.md` first: it is the design law.
 This file is the engineering law for the parallel build. Where they disagree, ask the lead; do not guess.*
 
 ## 0. What we are building
@@ -28,7 +28,7 @@ hardware accuracy.
 | **lead** | `docs/design/*`, `synth/web/static/design/**`, the router `include` lines in `synth/web/server.py`, integration merges | — |
 | **W-twin** | `synth/web/static/twin/**`, `tools/twin_render.mjs`, `tests/test_twin_parity.py`, `tests/test_twin_curves.py`, one new function `export_curves()` in `synth/match/twin.py` (additive only) | the rest of `twin.py`, anything else |
 | **W-plate** | `synth/web/static/{index.html,app.js}`, `synth/web/static/core/**`, `synth/web/static/views/synth.js`, `synth/web/static/drawers/**`, `synth/web/static/keyhint/**`, `synth/web/plate_routes.py`, additive methods in `synth/audio.py`, `tests/test_plate_*.py`, `tools/export_schema.py` | `views/match.js`, `views/sequencer.js`, `twin/**`, `design/**` |
-| **W-match** | `synth/match/session.py` (new), `synth/web/match_ws.py`, `soft/server.py` (refactor onto `session.py`), `synth/web/static/views/{match.js,sequencer.js}`, `tests/test_match_session.py`, `tests/test_match_ws.py` | `index.html`, `app.js`, `core/**`, `design/**` |
+| **W-match** | `synth/match/twin_session.py` (new; `session.py` is the hardware CMA-ES matcher), `synth/web/match_ws.py`, `soft/server.py` (refactor onto `session.py`), `synth/web/static/views/{match.js,sequencer.js}`, `tests/test_match_session.py`, `tests/test_match_ws.py` | `index.html`, `app.js`, `core/**`, `design/**` |
 | **W-hardware** | `synth/match/calibrate_cli.py` (new), `synth/web/eartest.py`, `synth/web/static/eartest/**`, `tools/eartest_report.py`, `tests/test_calibrate_cli.py`, `tests/test_eartest.py`, `[project.scripts]` lines for its two commands in `pyproject.toml` | everything else |
 
 If you need a change in a file you don't own, write it down in your final report as a **request** with the
@@ -78,8 +78,10 @@ twin.set(cc, v) / twin.setAll({cc: v})       // CC space 0..127 — the same num
 twin.noteOn(note, vel) / twin.noteOff(note) / twin.allOff()
 twin.resume()                                // call from a user gesture
 twin.taps                                    // {osc, filter, amp, fx, out}: AnalyserNode per stage (live windows)
-await twin.renderStages({note, seconds, gate}) // {sr, osc, filter, amp, fx, out}: Float32Array, deterministic
-twin.modeled(cc)                             // true if the twin models this CC (the UI dims the rest in twin mode)
+await twin.renderStages({note, seconds, gate}) // {sr, osc, filter, amp, fx, out}: deterministic; gate = key-up time in s
+twin.modeled(cc)                             // true if twin.py models this CC (what the matcher can fit)
+twin.audible(cc)                             // true if it changes what the browser twin plays; the UI dims only !audible
+twin.support(cc)                             // 'model' | 'voice' | 'extra' | null
 twin.level()                                 // output RMS 0..1
 ```
 
@@ -100,9 +102,11 @@ Same phases and frame schema as `soft/server.py` documents, with one change: eve
 params as today (`throttle`, `notes`, `quality`, `init` — `init` becomes a CC map). `soft/server.py` keeps its
 page-unit frames by converting from the shared session, and its tests stay green.
 
-**Recorded match format** (for the static page, later): `matches/<slug>.json` =
+Frames also carry `wave` (the candidate's cycle, for the plume) on every frame and `target_wave` on
+pitch and done. **Recorded match format** (for the static page): `matches/<slug>.json` =
 `{"title", "target_url", "notes", "frames": [<the exact WS frames>], "recorded": "<ISO date>", "engine": "twin <git sha>"}`.
-`views/match.js` must be able to replay one of these with no server.
+`views/match.js` must be able to replay one of these with no server. `matches/index.json` lists them:
+`[{"slug", "title", "notes", "recorded", "closeness"}]` (ship `[]` when there are none).
 
 ### 2.5 New server routes
 

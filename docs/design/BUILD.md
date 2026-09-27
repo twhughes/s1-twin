@@ -130,7 +130,7 @@ twin should use (calibrated if `~/.synth/twin/curves.calibrated.json` exists, el
 
 ## 4. Verification — every worker, before reporting
 
-- `cd <your worktree> && /Users/twhughes/Documents/hq/synth/.venv/bin/python -m pytest -q` → all green
+- `cd <your worktree> && <repo>/.venv/bin/python -m pytest -q` → all green
   (the 638 existing tests plus yours). Run it from your worktree root so your code shadows the editable install.
 - Pure JS modules get node checks: `*.check.mjs` next to the module, run by `node <file>`, exit code 0 = pass.
 - UI work: start the cockpit on **your** port (`SYNTH_PORT=<port> …/.venv/bin/synth --no-browser`, or
@@ -139,7 +139,7 @@ twin should use (calibrated if `~/.synth/twin/curves.calibrated.json` exists, el
   --window-size=1440,1000 --virtual-time-budget=5000 --screenshot=out.png http://127.0.0.1:<port>/`
   (wrap it in `perl -e 'alarm 45; exec @ARGV'` — headless Chrome can hang on open sockets — and kill leftovers).
   Ports: W-twin 18101, W-plate 18102, W-match 18103, W-hardware 18104.
-- **Never** open Brave, never open a browser window for Tyler, never push, never touch `main`.
+- **Never** open a visible browser window, never push, never touch `main`.
 - Commit on your branch with a message ending `Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>`.
 
 ## 5. Report back (final message, short)

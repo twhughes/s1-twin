@@ -8,6 +8,7 @@
 //                          bronze knob trail. Nothing is sent to a server or a device.
 //   &still                 no page-load animation (reduced motion does the same)
 //   &library, &settings    open that drawer
+//   #match&replay=<slug>  on the static page, start that recorded match (see matches/index.json)
 //
 // Contexts (BUILD.md §0): when GET /api/status answers, the cockpit server is here (server mode:
 // the schema, the live state and the S-1 arrive over /api and /ws/state). Otherwise the page is

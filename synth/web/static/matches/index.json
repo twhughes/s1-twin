@@ -1,1 +1,38 @@
-[]
+[
+ {
+  "slug": "a-patch-the-twin-made-then-forgot",
+  "title": "A patch the twin made, then forgot",
+  "notes": [
+   45
+  ],
+  "recorded": "2026-09-27",
+  "closeness": 62.09
+ },
+ {
+  "slug": "a-soft-square-lead-with-vibrato",
+  "title": "A soft square lead with vibrato",
+  "notes": [
+   60
+  ],
+  "recorded": "2026-09-27",
+  "closeness": 50.27
+ },
+ {
+  "slug": "a-plucked-string",
+  "title": "A plucked string",
+  "notes": [
+   45
+  ],
+  "recorded": "2026-09-27",
+  "closeness": 35.51
+ },
+ {
+  "slug": "an-acid-bass-from-another-synth",
+  "title": "An acid bass from another synth",
+  "notes": [
+   45
+  ],
+  "recorded": "2026-09-27",
+  "closeness": 33.03
+ }
+]

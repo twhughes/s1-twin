@@ -63,6 +63,15 @@ eq(s.notes, [60, 67], "the final note set");
 ok(states[0].seeded === false && states[0].targetWave === wave, "pitch frame: seeded flag and the target's cycles");
 ok(M.expectedSteps(states[1]) === 5, "the x axis holds the announced steps (pitch + 4)");
 ok(M.expectedSteps(states[6]) === 7, "…and grows when the note search announces its steps");
+ok(M.expectedSteps({ points: new Array(130), total: 640, frameCount: 130 }) === 130, "a thinned recording fills the axis");
+{ // the plume's loop: averaged, 4x finer, closed, and still the same wave
+  const spc = 64, y = Array.from({ length: 132 }, (_, i) => Math.sin(2 * Math.PI * i / spc));
+  const L = M.smoothLoop({ spc, y });
+  ok(L && L.spc === 256 && L.y.length === 768 && L.from === 256, "smoothLoop tiles one 4x cycle three times");
+  const err = Math.max(...Array.from({ length: 256 }, (_, i) => Math.abs(L.y[256 + i] - Math.sin(2 * Math.PI * i / 256))));
+  ok(err < 0.05, `smoothLoop keeps a clean sine (max error ${err.toFixed(3)})`);
+  ok(M.smoothLoop({ spc: 64, y: [0, 1] }) === null, "no full cycle, no loop");
+}
 const err = M.reduceFrame(states[2], { phase: "error", detail: "Could not read that file as audio." });
 ok(err.phase === "error" && err.error.includes("audio") && err.points.length === states[2].points.length, "an error frame keeps the curve");
 ok(M.reduceFrame(start, null) === start && M.reduceFrame(start, "x") === start, "junk frames are ignored");
@@ -75,11 +84,11 @@ ok(word(states[0]) === "Finding the notes" && M.phaseText(states[0]).detail === 
 const seededPitch = M.reduceFrame(start, { ...frames[0], seeded: true, notes: [55, 59, 62], chord_name: "G3+B3+D4" });
 ok(M.phaseText(seededPitch).detail === "Marked: G3 + B3 + D4", "pitch, seeded, chord spelled with spaces");
 ok(word(states[1]) === "Descending" && M.phaseText(states[1]).detail === "Step 1 of 4", "gd words");
-ok(M.phaseText(states[3]).detail === "Step 3 of 4 · start 2", "gd names the start after the first");
+ok(M.phaseText(states[3]).detail === "Step 3 of 4, start 2", "gd names the start after the first");
 const lastSeeded = M.reduceFrame(M.reduceFrame(start, { ...frames[0], seeded: true }), frames[4]);
 ok(M.phaseText(lastSeeded).detail.endsWith("choosing the switches"), "the silent switch sweep after the last step is named");
-ok(word(states[5]) === "Trying nearby notes" && M.phaseText(states[6]).detail.startsWith("C4 + G4 · closer"), "note-search words");
-ok(word(s) === "Done" && M.phaseText(s).detail === "C4 + G4 · 12.3 s · 25 steps", "done words");
+ok(word(states[5]) === "Trying nearby notes" && M.phaseText(states[6]).detail.startsWith("C4 + G4, closer"), "note-search words");
+ok(word(s) === "Done" && M.phaseText(s).detail === "C4 + G4, 12.3 s, 25 steps", "done words");
 ok(word({ ...s, phase: "stopped" }) === "Stopped" && word(err) === "Could not match", "stopped and error words");
 ok(M.prettyChord("C#4+F#4") === "C♯4 + F♯4", "sharps print as ♯");
 ok(M.fmtSeconds(7.25) === "7.3 s" && M.fmtSeconds(135) === "2 min 15 s" && M.fmtSeconds(NaN) === "", "durations");

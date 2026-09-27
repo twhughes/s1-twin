@@ -8,6 +8,7 @@ import { knob } from "../design/knob.js";
 import { seg, GLYPHS } from "../design/seg.js";
 import * as draw from "../design/draw.js";
 import { rgbOf, lum, noteName } from "../design/colors.js";
+import { readHash } from "../core/flags.js";
 
 export const id = "match";
 export const title = "Match";
@@ -91,16 +92,16 @@ export function phaseText(s, { staticMode = false, loaded = false } = {}) {
     case "pitch": return { word: "Finding the notes", detail: (s.seeded ? "Marked: " : "Found: ") + s.chord };
     case "gd": {
       const last = s.total && s.iter >= s.total && s.seeded;
-      return { word: "Descending", detail: `Step ${s.iter} of ${s.total}` + (s.restart ? ` · start ${s.restart + 1}` : "")
-        + (last ? " · choosing the switches" : "") };
+      return { word: "Descending", detail: `Step ${s.iter} of ${s.total}` + (s.restart ? `, start ${s.restart + 1}` : "")
+        + (last ? ", choosing the switches" : "") };
     }
     case "note-search": {
       const last = s.nsTotal && s.iter >= s.nsTotal;
-      return { word: "Trying nearby notes", detail: s.chord + (s.improved ? " · closer" : "")
-        + (last ? " · choosing the switches" : "") };
+      return { word: "Trying nearby notes", detail: s.chord + (s.improved ? ", closer" : "")
+        + (last ? ", choosing the switches" : "") };
     }
-    case "done": return { word: "Done", detail: (s.chord ? `${s.chord} · ` : "")
-      + (s.done ? `${fmtSeconds(s.done.seconds)} · ${s.done.steps} steps` : "") };
+    case "done": return { word: "Done", detail: (s.chord ? `${s.chord}, ` : "")
+      + (s.done ? `${fmtSeconds(s.done.seconds)}, ${s.done.steps} steps` : "") };
     case "stopped": return { word: "Stopped", detail: s.bestCC ? "The best patch so far is on the knobs." : "" };
     case "error": return { word: "Could not match", detail: s.error || "" };
     default: return { word: "", detail: "" };
@@ -125,6 +126,9 @@ export function lossDomain(points) {
 
 /** How many steps the curve's x axis should hold: what has arrived, or what the run announced. */
 export function expectedSteps(s) {
+  // A recorded run may be thinned (tools/thin_match.py): its x axis is the frames it kept, not the
+  // steps the live run announced, or 130 kept frames would crowd into a fifth of the well.
+  if (s.frameCount) return Math.max(s.points.length, s.frameCount, 2);
   return Math.max(s.points.length, 1 + (s.total || 0) + (s.nsTotal || 0), 2);
 }
 
@@ -149,6 +153,32 @@ export function plumeLevels(target, cand) {
   const t = target ? Math.max(0, target.level || 0) : 0, c = cand ? Math.max(0, cand.level || 0) : 0;
   const top = Math.max(t, c, 1e-6), f = (v) => Math.max(0.12, Math.min(1, v / top));
   return { target: target ? f(t) : 0, cand: cand ? f(c) : 0 };
+}
+
+/** A frame's wave (~64 samples a cycle) as a smooth closed loop for the plume: average the whole
+ *  cycles it holds, upsample 4x with a periodic Catmull-Rom, then a light circular smoothing (as the
+ *  Synth view's plume does). Returns the cycle tiled three times with {from, spc} on the middle copy,
+ *  so drawing one period plus one sample closes the loop; null when there is not a full cycle. */
+export function smoothLoop(wave, up = 4) {
+  const y = wave?.y, spc = Math.round(wave?.spc || 0);
+  if (!y || spc < 8 || y.length < spc) return null;
+  const k = Math.max(1, Math.floor(y.length / spc));
+  const cyc = new Float32Array(spc);
+  for (let c = 0; c < k; c++) for (let j = 0; j < spc; j++) cyc[j] += y[c * spc + j] / k;
+  const n = spc * up, fine = new Float32Array(n);
+  for (let i = 0; i < n; i++) {
+    const t = i / up, j = Math.floor(t), u = t - j;
+    const p0 = cyc[(j - 1 + spc) % spc], p1 = cyc[j % spc], p2 = cyc[(j + 1) % spc], p3 = cyc[(j + 2) % spc];
+    fine[i] = 0.5 * (2 * p1 + (p2 - p0) * u + (2 * p0 - 5 * p1 + 4 * p2 - p3) * u * u + (3 * p1 - p0 - 3 * p2 + p3) * u * u * u);
+  }
+  const tmp = new Float32Array(n);
+  for (let m = 0; m < 3; m++) {
+    for (let i = 0; i < n; i++) tmp[i] = 0.25 * fine[(i - 1 + n) % n] + 0.5 * fine[i] + 0.25 * fine[(i + 1) % n];
+    fine.set(tmp);
+  }
+  const tiled = new Float32Array(n * 3);
+  tiled.set(fine, 0); tiled.set(fine, n); tiled.set(fine, 2 * n);
+  return { y: tiled, spc: n, from: n };
 }
 
 /** The recorded-runs index: a list of rows (or {matches: [...]}) → [{slug, title, …}]. */
@@ -351,7 +381,7 @@ function createView(root, ctx) {
       h("h3", { class: "mx-sub", text: "Recorded runs" }),
       recList, recNote,
       h("p", { class: "note" }, "To match your own sounds, run the app on your computer. In its repository folder, run ",
-        h("code", { text: 'pip install -e ".[studio,twin]"' }), ", then ", h("code", { text: "synth" }), "."),
+        h("code", { text: 'pip install -e ".[studio,twin]"' }), ", then ", h("code", { text: "s1" }), "."),
     );
   }
 
@@ -513,7 +543,7 @@ function createView(root, ctx) {
     renderAll();
     try {
       targetBuffer = await ac().decodeAudioData(fileBytes.slice(0));
-      dropFile.textContent = `${f.name} · ${targetBuffer.duration.toFixed(1)} s`;
+      dropFile.textContent = `${f.name}, ${targetBuffer.duration.toFixed(1)} s`;
       playTargetEarly.disabled = false;
       earlyRow.classList.remove("mx-hidden");
     } catch (_) {
@@ -649,8 +679,12 @@ function createView(root, ctx) {
     recList.replaceChildren(...recordedRows.map((row) => h("li", {},
       h("button", { type: "button", "data-slug": row.slug, onclick: () => playRecorded(row) },
         h("span", { text: row.title }),
-        h("small", { text: [row.notes.map(noteName).join(" + "), row.closeness != null ? `${Math.round(row.closeness)}%` : ""].filter(Boolean).join(" · ") })))));
+        h("small", { text: [row.notes.map(noteName).join(" + "), row.closeness != null ? `${Math.round(row.closeness)}% close` : ""].filter(Boolean).join(", ") })))));
     recNote.textContent = recordedRows.length ? "Choose one to watch the matcher work." : "No recorded runs are published here yet.";
+    // #match&replay=<slug> starts that run at once: a link that says "watch it find this sound"
+    const want = readHash().flags.get("replay");
+    const row = typeof want === "string" && recordedRows.find((r) => r.slug === want);
+    if (row) playRecorded(row);
   }
   async function playRecorded(row) {
     stopRun();
@@ -672,7 +706,7 @@ function createView(root, ctx) {
     if (!frames.length) { setError("That recorded run has no frames."); return; }
     stopSound();
     decoded.target = decoded.match = null;
-    run = initialRun();
+    run = { ...initialRun(), frameCount: frames.length };
     recorded = true;
     showRunNotes = true;
     setRunning(true);
@@ -744,9 +778,13 @@ function createView(root, ctx) {
     draw.axis(c, w, hh, { cross: true });
     const tw = run.targetWave, cw = run.phase === "stopped" ? run.bestWave || run.wave : run.wave;
     const lv = plumeLevels(tw, cw);
-    if (tw && tw.y?.length) draw.stroke(c, draw.plumePts(w, hh, tw.y, tw.spc, { cycles: 2, level: lv.target }), { color: draw.INK, width: 1.5 });
-    if (cw && cw.y?.length) draw.stroke(c, draw.plumePts(w, hh, cw.y, cw.spc, { cycles: 2, level: lv.cand }),
-      { color: draw.INK, width: 1.3, dash: [1.5, 4], glow: running ? 8 : 0 });
+    const loop = (wv, level) => {
+      const L = smoothLoop(wv);
+      return L ? draw.plumePts(w, hh, L.y, L.spc, { from: L.from, cycles: 1 + 1 / L.spc, level })
+        : draw.plumePts(w, hh, wv.y, wv.spc, { cycles: 2, level });
+    };
+    if (tw && tw.y?.length) draw.stroke(c, loop(tw, lv.target), { color: draw.INK, width: 1.5 });
+    if (cw && cw.y?.length) draw.stroke(c, loop(cw, lv.cand), { color: draw.INK, width: 1.3, dash: [1.5, 4], glow: running ? 8 : 0 });
   }
   function renderAll() {
     const t = phaseText(run, { staticMode, loaded: !!fileBytes });
@@ -755,7 +793,7 @@ function createView(root, ctx) {
     tag.classList.toggle("mx-hidden", !(recorded && currentRec));
     if (recorded && currentRec) {
       tag.replaceChildren(h("b", { text: "Recorded run" }),
-        [currentRec.title, currentRec.recorded ? `recorded ${currentRec.recorded}` : "", currentRec.engine || ""].filter(Boolean).join(" · "));
+        [currentRec.title, currentRec.recorded ? `recorded ${currentRec.recorded}` : "", currentRec.engine || ""].filter(Boolean).join(", "));
     }
     const cc = run.phase === "stopped" ? run.bestCC : run.phase === "done" ? run.done?.cc : run.cc;
     if (cc && run.phase !== "idle" && run.phase !== "error") showCC(cc);

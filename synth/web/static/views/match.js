@@ -3,12 +3,16 @@
 // Server mode streams a live match from /ws/match; static mode (ctx.server === null) replays
 // recorded runs from matches/index.json with the same visuals. The pure helpers below
 // (reduceFrame, phaseText, replaySchedule, lossDomain, …) run in node: views/match.check.mjs.
+// Round 2 (docs/design/ROUND2.md §3), server mode only: a target can also be recorded from a
+// browser input, or made from the synth's current sound (one note, played by the twin or the
+// S-1) as a test, which ends with a report of how many settings the matcher found again.
 
 import { knob } from "../design/knob.js";
 import { seg, GLYPHS } from "../design/seg.js";
 import * as draw from "../design/draw.js";
 import { rgbOf, lum, noteName } from "../design/colors.js";
 import { readHash } from "../core/flags.js";
+import { encodeWav, joinChunks, normalize, peakOf, trimToOnset } from "../core/wav.js";
 
 export const id = "match";
 export const title = "Match";
@@ -82,10 +86,12 @@ export function reduceFrame(s, f) {
 }
 
 /** The phase in plain words, plus a detail line. */
-export function phaseText(s, { staticMode = false, loaded = false } = {}) {
+export function phaseText(s, { staticMode = false, loaded = false, recording = false } = {}) {
   switch (s.phase) {
     case "idle":
       if (staticMode) return { word: "Choose a recorded run", detail: "" };
+      if (recording === "opening") return { word: "Opening the input", detail: "If the browser asks, allow the microphone." };
+      if (recording) return { word: "Recording", detail: `Play the sound, then press Stop. It stops by itself at ${RECORD_MAX_S} s.` };
       return loaded ? { word: "Ready to match", detail: "Mark the notes you hear, then press Match." }
         : { word: "Waiting for a sound", detail: "" };
     case "connecting": return { word: "Opening the matcher", detail: "" };
@@ -103,7 +109,9 @@ export function phaseText(s, { staticMode = false, loaded = false } = {}) {
     case "done": return { word: "Done", detail: (s.chord ? `${s.chord}, ` : "")
       + (s.done ? `${fmtSeconds(s.done.seconds)}, ${s.done.steps} steps` : "") };
     case "stopped": return { word: "Stopped", detail: s.bestCC ? "The best patch so far is on the knobs." : "" };
-    case "error": return { word: "Could not match", detail: s.error || "" };
+    case "error": return { word: s.errorWord || "Could not match", detail: s.error || "" };
+    case "making": return { word: "Making the test note",
+      detail: s.making ? `${noteName(s.making.note)}, played by ${s.making.source === "s1" ? "the S-1" : "the twin"}` : "" };
     default: return { word: "", detail: "" };
   }
 }
@@ -199,6 +207,233 @@ export function initMap(params) {
   return out;
 }
 
+// ── pure: a test of the synth's current sound (ROUND2.md §3) ────────────────────────
+export const TEST_NOTE = 48;                      // C3 when no note is marked (driver.PROBE_NOTE)
+export const TEST_SECONDS = 2.2, TEST_GATE = 1.2; // key up at 1.2 s, as twin.py renders (2.0 s × 0.6)
+export const WITHIN = 10;                         // a knob came back when found within 10 steps
+export const RECORD_MAX_S = 8;                    // a recording stops by itself here
+
+const CONTROL = new Map(STAGES.flatMap((s) => s.controls).map((c) => [c.cc, c]));
+const SWITCH_CCS = new Set(STAGES.flatMap((s) => s.controls).filter((c) => c.options || c.glyphs).map((c) => c.cc));
+const LEVEL_CCS = [20, 19, 21, 23];               // Saw, Square, Sub, Noise
+const LFO_CCS = [13, 25, 3, 17, 12];              // Vibrato, LFO amount, Rate, Mod wheel to LFO, Wave
+const MATCHER_LFO_WAVES = [2, 3, 0];              // twin.py S_PARAMS lfo_shape: the waves the matcher tries
+// twin.py DEFAULT_CURVES for the settings the report reasons about (match.check.mjs: == curves.json);
+// the twin's own curves win when given (calibrated ones, once the hardware session has run).
+export const CURVE_DEFAULTS = {
+  saw_lvl: { lo: 0, hi: 1, kind: "linear" }, square_lvl: { lo: 0, hi: 1, kind: "linear" },
+  sub_lvl: { lo: 0, hi: 1, kind: "linear" }, noise_lvl: { lo: 0, hi: 0.5, kind: "linear" },
+  cutoff: { lo: 30, hi: 12000, kind: "exp" }, key_follow: { lo: 0, hi: 1, kind: "linear" },
+  attack: { lo: 0.001, hi: 2, kind: "exp" }, decay: { lo: 0.005, hi: 4, kind: "exp" },
+  sustain: { lo: 0, hi: 1, kind: "linear" }, lfo_to_pitch: { lo: 0, hi: 12, kind: "linear" },
+  lfo_to_cutoff: { lo: 0, hi: 4, kind: "linear" }, lfo_depth: { lo: 0, hi: 1, kind: "linear" },
+};
+const CURVE_OF_CC = { 20: "saw_lvl", 19: "square_lvl", 21: "sub_lvl", 23: "noise_lvl", 74: "cutoff", 26: "key_follow",
+  73: "attack", 75: "decay", 30: "sustain", 13: "lfo_to_pitch", 25: "lfo_to_cutoff", 17: "lfo_depth" };
+const curveFor = (cc, curves) => curves?.curves?.[CURVE_OF_CC[cc]] || CURVE_DEFAULTS[CURVE_OF_CC[cc]];
+/** A knob value 0..127 in the model's units (twin.py Curve.__call__). */
+const physical = (c, v) => {
+  const k = Math.max(0, Math.min(1, v / 127));
+  return c.kind === "exp" ? c.lo * (c.hi / c.lo) ** k : c.lo + (c.hi - c.lo) * k;
+};
+/** The knob value for a model value (Curve.invert, ×127; may fall outside 0..127). */
+const knobFor = (c, x) => 127 * (c.kind === "exp" ? Math.log(x / c.lo) / Math.log(c.hi / c.lo) : (x - c.lo) / (c.hi - c.lo));
+
+/** A value from a Map or a {cc: v} object (number or string keys); undefined when absent. */
+function valueIn(params, cc) {
+  const v = params && typeof params.get === "function" ? params.get(cc) ?? params.get(String(cc)) : params?.[cc] ?? params?.[String(cc)];
+  return v == null || !Number.isFinite(Number(v)) ? undefined : Number(v);
+}
+const read = (params, cc) => valueIn(params, cc) ?? DEFAULTS[cc];
+
+export const labelOf = (cc) => CONTROL.get(cc)?.label || `CC ${cc}`;
+/** A setting's value as its control shows it: a switch's option name (28 → "Gate"), a bipolar
+ *  knob's offset from the middle (76: 30 → "−34", as design/knob.js), else the number. */
+export function valueText(cc, v) {
+  const c = CONTROL.get(cc);
+  const opt = c?.options?.find(([value]) => value === v) || c?.glyphs?.find(([value]) => value === v);
+  if (opt) return String(opt[opt.length - 1]);
+  if (c?.bipolar && Number.isFinite(v)) return (v > 64 ? "+" : v < 64 ? "−" : "") + Math.abs(v - 64);
+  return String(v);
+}
+/** "a", "a and b", "a, b and c". */
+export function listText(items) {
+  return items.length < 2 ? items.join("") : `${items.slice(0, -1).join(", ")} and ${items[items.length - 1]}`;
+}
+
+/** The 21 twin settings of a param map, defaults filling any gap: the test's true values. */
+export function truthOf(params) {
+  return Object.fromEntries(TWIN_CCS.map((cc) => [cc, read(params, cc)]));
+}
+
+/** The note a test plays: the lowest marked note, else C3. */
+export function testNote(seeds) {
+  const marked = [...(seeds || [])].filter(Number.isFinite);
+  return marked.length ? Math.min(...marked) : TEST_NOTE;
+}
+
+/** The pitches one key press sounds, as twin/dsp.js Engine.voicesFor plays them (the matcher is
+ *  seeded with these): Range (CC14) shifts octaves; Chord mode (CC80 = 3) adds the chord voices
+ *  (CC81–83 on, CC85–87 shifts). `unison`: CC80 = 1, four detuned voices the matcher cannot model. */
+export function soundingNotes(note, params) {
+  const v = (cc, d) => valueIn(params, cc) ?? d;
+  const base = note + 12 * (Math.min(5, Math.max(0, Math.round(v(14, 2)))) - 2);
+  const poly = Math.min(3, Math.max(0, Math.round(v(80, 2))));
+  const list = [base];
+  if (poly === 3) {
+    for (const [on, shift] of [[81, 85], [82, 86], [83, 87]]) if (v(on, 127) >= 64) list.push(base + Math.round(v(shift, 64) - 64));
+  }
+  const notes = [...new Set(list.filter((n) => n >= 0 && n <= 127))].sort((a, b) => a - b).slice(0, 4);
+  return { notes: notes.length ? notes : [Math.max(0, Math.min(127, note))], unison: poly === 1 };
+}
+
+/** The envelope's level when the key goes up (twin._adsr at TEST_GATE, Envelope mode). */
+function envAtKeyUp(params, curves) {
+  const A = physical(curveFor(73, curves), read(params, 73));
+  const D = physical(curveFor(75, curves), read(params, 75));
+  const S = physical(curveFor(30, curves), read(params, 30));
+  return (1 - Math.exp((-3 * TEST_GATE) / A)) * (S + (1 - S) * Math.exp(-Math.max(0, TEST_GATE - A) / D));
+}
+
+/**
+ * Which of the twin's settings shape this test note, by the model's own equations (twin.py render):
+ * `ccs` count in the report; `left` lists the rest with why, in plain words. kind "silent": the
+ * setting does not change this sound, so it cannot come back. kind "trade": it changes the sound
+ * only the way another setting does (Key follow on one note moves the cutoff; Mod wheel to LFO
+ * scales both LFO amounts), so only the pair can come back and the report compares the other one.
+ * `found` (the matcher's patch), when given, keeps the LFO amounts in when the true sound has no
+ * LFO but the found one does: no other row would show that mistake.
+ */
+export function relevance(params, { notes = [TEST_NOTE], curves = null, found = null } = {}) {
+  const v = (cc) => read(params, cc);
+  const zero = (cc) => physical(curveFor(cc, curves), v(cc)) <= 1e-9;
+  const lfoActs = (get) => [13, 25].some((cc) => physical(curveFor(cc, curves), get(cc)) > 1e-9)
+    && physical(curveFor(17, curves), get(17)) > 1e-9;
+  const keep = new Set(TWIN_CCS), left = [];
+  const out = (ccs, kind, why, name = "") => {
+    const gone = ccs.filter((cc) => keep.has(cc));
+    if (!gone.length) return;
+    gone.forEach((cc) => keep.delete(cc));
+    left.push({ ccs: gone, kind, why, name: name || listText(gone.map(labelOf)) });
+  };
+  if (zero(19)) out([15], "silent", "Square is at 0");
+  if (zero(21)) out([22], "silent", "Sub is at 0");
+  if (lfoActs(v)) out([17], "trade", "it only scales the LFO amounts");
+  else if (found && lfoActs((cc) => read(found, cc))) out([3, 12], "silent", "the true sound has no LFO");
+  else out(LFO_CCS, "silent", zero(17) ? "Mod wheel to LFO is at 0" : "Vibrato and LFO amount are at 0", "the LFO");
+  const gate = v(28) === 0;
+  // In Gate mode the volume still rises and falls with Attack and Release (twin.py: gate = the
+  // ADSR with no decay); Decay and Sustain reach the sound only through Env amount.
+  if (gate && v(24) === 0) out([75, 30], "silent", "Volume shape is Gate and Env amount is at 0");
+  else if (physical(curveFor(30, curves), v(30)) >= 1 - 1e-9) out([75], "silent", "Sustain is full");
+  if (!gate && envAtKeyUp(params, curves) < 1e-4) out([72], "silent", "the sound dies away before the key goes up");
+  const distinct = [...new Set(notes)];
+  if (distinct.length <= 1) {
+    if (distinct[0] === 60) out([26], "silent", "at C4 it does nothing");
+    else out([26], "trade", "on one note it only moves the cutoff");
+  }
+  return { ccs: TWIN_CCS.filter((cc) => keep.has(cc)), left };
+}
+/** The settings that count in the report (ROUND2.md §3): see relevance(). */
+export const relevantCCs = (params, opts) => relevance(params, opts).ccs;
+
+/**
+ * How close a test came back: for each setting that shapes the note, the true value and the found
+ * one, compared after the model's exact trades — the levels as a mix (the loss is loudness-blind:
+ * twin.spectral_loss normalizes RMS, so only their balance can come back; the found levels are
+ * scaled to the true mix's overall level), Cutoff at the true Key follow, the LFO amounts at the
+ * true Mod wheel to LFO. Switches count only when they match.
+ * opts: {notes, curves, within, source: "twin"|"s1", synced, unison}. Returns
+ * {rows, good, total, summary, notes: [sentence]}.
+ */
+export function recoveryReport(truth, found, { notes = [TEST_NOTE], curves = null, within = WITHIN,
+  source = "twin", synced = true, unison = false } = {}) {
+  const t = (cc) => read(truth, cc), f = (cc) => read(found, cc);
+  const { ccs, left } = relevance(truth, { notes, curves, found });
+  const C = (cc) => curveFor(cc, curves);
+  const compare = new Map(TWIN_CCS.map((cc) => [cc, f(cc)]));
+  const trades = [];
+  // the levels: the found mix at the true mix's overall level (a least-squares gain would shrink a
+  // mix with none of the true oscillators to nothing, and hide it)
+  const tl = LEVEL_CCS.map((cc) => physical(C(cc), t(cc))), fl = LEVEL_CCS.map((cc) => physical(C(cc), f(cc)));
+  const norm = (xs) => Math.sqrt(xs.reduce((a, x) => a + x * x, 0));
+  if (norm(fl) > 0 && norm(tl) > 0) {
+    const g = norm(tl) / norm(fl);
+    LEVEL_CCS.forEach((cc, i) => compare.set(cc, knobFor(C(cc), fl[i] * g)));
+    trades.push({ ccs: LEVEL_CCS, words: "the levels as a mix (the matcher hears their balance, not their loudness)" });
+  }
+  if (left.some((l) => l.kind === "trade" && l.ccs.includes(17))) {
+    const dT = physical(C(17), t(17)), dF = physical(C(17), f(17));
+    for (const cc of [13, 25]) compare.set(cc, knobFor(C(cc), (physical(C(cc), f(cc)) * dF) / dT));
+    trades.push({ ccs: [13, 25], words: "Vibrato and LFO amount as if Mod wheel to LFO were right" });
+  }
+  if (left.some((l) => l.kind === "trade" && l.ccs.includes(26))) {
+    const shift = ((physical(C(26), f(26)) - physical(C(26), t(26))) * (notes[0] - 60)) / 12;
+    compare.set(74, knobFor(C(74), 2 ** (Math.log2(physical(C(74), f(74))) + shift)));
+    trades.push({ ccs: [74], words: "Cutoff as if Key follow were right" });
+  }
+  const rows = ccs.map((cc) => {
+    const sw = SWITCH_CCS.has(cc), truthV = t(cc), foundV = f(cc);
+    const shown = sw ? foundV : Math.round(compare.get(cc));
+    const off = sw ? (foundV === truthV ? 0 : null) : Math.abs(shown - truthV);
+    const traded = !sw && shown !== foundV && trades.some((tr) => tr.ccs.includes(cc));
+    return { cc, label: labelOf(cc), truth: truthV, found: foundV, shown, off, traded, ok: off !== null && off <= within,
+      trueText: valueText(cc, truthV), foundText: valueText(cc, shown) + (traded ? "*" : ""),
+      offText: off === null ? "different" : off === 0 ? "same" : `off by ${off}` };
+  });
+  const good = rows.filter((r) => r.ok).length, total = rows.length;
+  const summary = !total ? "No setting shapes this sound."
+    : good === total ? `All ${total} settings came back within ${within}.` : `${good} of ${total} settings came back within ${within}.`;
+  const said = [];
+  const silent = left.filter((l) => l.kind === "silent"), stand = left.filter((l) => l.kind === "trade");
+  const items = (ls) => ls.map((l) => `${l.name} (${l.why})`).join("; ");   // names can hold "and" themselves
+  if (silent.length) said.push(`Left out, because they do not change this sound, so they cannot come back: ${items(silent)}.`);
+  if (stand.length) said.push(`Also left out, because they stand in for another setting: ${items(stand)}.`);
+  const usedTrades = trades.filter((tr) => rows.some((r) => r.traded && tr.ccs.includes(r.cc)));
+  if (usedTrades.length) said.push(`* Compared after a trade: ${usedTrades.map((tr) => tr.words).join("; ")}. The knobs below show what it set.`);
+  if (ccs.includes(12) && !MATCHER_LFO_WAVES.includes(t(12))) {
+    said.push(`The matcher tries only Triangle, Square and Saw for the LFO wave, so ${valueText(12, t(12))} cannot come back.`);
+  }
+  if (unison) said.push("Unison was on: the matcher plays one voice, so this sound cannot come back exactly.");
+  if (source === "s1") {
+    said.push("This note came from the S-1, and the twin is not yet calibrated to a real S-1, so a setting can be found off even when the sound is close.");
+    if (!synced) said.push("The S-1 kept its own patch (this app did not send it one), so the true values here are this app's knobs and may not be the S-1's.");
+  }
+  return { rows, good, total, summary, notes: said };
+}
+
+// ── pure: recording ─────────────────────────────────────────────────────────────────
+/** True for the S-1's USB audio input (CoreAudio calls it "S-1"; synth/audio.py S1_DEVICE_MARKERS). */
+export const isS1Label = (label) => /(^|[^a-z0-9])s-1([^a-z0-9]|$)/i.test(String(label || ""));
+/** The input to record from: the one the user chose while it is still there, else the S-1, else the default. */
+export function pickInput(inputs, chosen = "") {
+  if (chosen && inputs.some((d) => d.deviceId === chosen)) return chosen;
+  const s1 = inputs.find((d) => isS1Label(d.label));
+  if (s1) return s1.deviceId;
+  return (inputs.find((d) => d.deviceId === "default") || inputs[0] || { deviceId: "" }).deviceId;
+}
+/** The picker's options. Until the browser allows recording it hides the names: one default entry. */
+export function inputOptions(inputs) {
+  if (!inputs.some((d) => d.label)) return [{ value: "", label: "The default input" }];
+  return inputs.map((d, i) => ({ value: d.deviceId, label: d.label || `Input ${i + 1}` }));
+}
+/** A getUserMedia failure, in plain words with what to do. */
+export function recordError(e) {
+  const name = e?.name || "";
+  if (["NotAllowedError", "SecurityError", "PermissionDeniedError"].includes(name)) {
+    return "The browser blocked the microphone. Allow it in the address bar, then press Record again.";
+  }
+  if (["NotFoundError", "OverconstrainedError", "DevicesNotFoundError"].includes(name)) {
+    return "No audio input was found. Plug one in (the S-1 is one when it is plugged in), then press Record again.";
+  }
+  if (["NotReadableError", "TrackStartError", "AbortError"].includes(name)) {
+    return "The input did not start. Another app may be using it: close that app, then press Record again.";
+  }
+  return `Recording did not start${e?.message ? ` (${e.message})` : ""}. Press Record again.`;
+}
+/** A peak level as 0..1 on a −60..0 dBFS scale: the live recording well. */
+export const meterLevel = (peak) => Math.max(0, Math.min(1, (20 * Math.log10(Math.max(peak, 1e-9)) + 60) / 60));
+
 // ── the view ─────────────────────────────────────────────────────────────────────────
 const CSS = `
 .v-match { position: relative; z-index: 1; max-width: 1480px; margin: 0 auto; padding: 30px var(--gutter) 56px; }
@@ -257,6 +492,30 @@ const CSS = `
 .v-match .mx-recorded button:hover, .v-match .mx-recorded button[aria-current="true"] { color: var(--ink); }
 .v-match .mx-recorded small { font-size: 12.5px; color: var(--ink-2); font-variant-numeric: tabular-nums; white-space: nowrap; }
 .v-match code { font: 400 12.5px ui-monospace, "SF Mono", Menlo, monospace; color: var(--ink); background: var(--deep); padding: 1px 5px; border-radius: 3px; white-space: nowrap; }
+.v-match .mx-drop.recording { justify-content: flex-end; outline-style: solid; outline-color: var(--ink); }
+.v-match .mx-drop.recording p.mx-ask { display: none; }
+.v-match .mx-rec { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 14px; margin-top: 12px !important; }
+.v-match .mx-rec .pill.on { border-color: var(--ink); }
+.v-match .mx-from { display: flex; align-items: center; gap: 8px; flex: 1 1 170px; min-width: 0; font-size: 13px; color: var(--ink-2); }
+.v-match .mx-from select { flex: 1; min-width: 0; background: var(--deep); color: var(--ink); border: 1px solid var(--ink-3); border-radius: 3px;
+  padding: 7px 8px; font: 400 13.5px var(--sans); }
+.v-match .mx-from select:disabled { opacity: .45; }
+.v-match .mx-input .mx-recmsg { margin-top: 10px; }
+.v-match .mx-recmsg:empty { display: none; }
+.v-match .mx-test { text-align: left; }
+.v-match .mx-test:disabled { opacity: .45; cursor: default; color: var(--ink-2); }
+.v-match .mx-testbox .note { margin-top: 0; }
+.v-match .mx-report { margin-top: 34px; }
+.v-match .mx-report h3 { font: italic 400 22px/1.15 var(--serif); margin: 0 0 12px; }
+.v-match .mx-rtables { display: grid; grid-template-columns: repeat(auto-fit, minmax(270px, 1fr)); gap: 0 36px; margin-top: 16px; }
+.v-match .mx-rtable { width: 100%; border-collapse: collapse; font-size: 13.5px; font-variant-numeric: tabular-nums; }
+.v-match .mx-rtable th, .v-match .mx-rtable td { font-weight: 400; text-align: right; padding: 6px 0 6px 12px; border-bottom: 1px solid var(--ink-4); white-space: nowrap; }
+.v-match .mx-rtable th:first-child { text-align: left; padding-left: 0; white-space: normal; color: var(--ink-2); }
+.v-match .mx-rtable thead th { font-size: 12px; color: var(--ink-2); padding-top: 0; }
+.v-match .mx-rtable td:last-child { color: var(--ink-2); }
+.v-match .mx-rtable tr.off th:first-child, .v-match .mx-rtable tr.off td:last-child { color: var(--ink); }
+.v-match .mx-rtable tr.off td:last-child { font-weight: 500; }
+.v-match .mx-rnotes .note { max-width: 70ch; margin-top: 10px; }
 .v-match .mx-hidden { display: none !important; }
 @media (max-width: 1100px) {
   .v-match .mx-grid { grid-template-columns: minmax(0, 1fr); }
@@ -266,6 +525,8 @@ const CSS = `
   .v-match .mx-wells { grid-template-columns: minmax(0, 1fr); }
   .v-match .mx-wells canvas { height: 180px; }
   .v-match .mx-close b { font-size: 36px; }
+  .v-match .mx-rtables { grid-template-columns: minmax(0, 1fr); }
+  .v-match .mx-rtable + .mx-rtable thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
 }
 `;
 
@@ -310,13 +571,18 @@ function createView(root, ctx) {
   let recorded = false;         // the frames on screen come from a recorded run
   let socket = null;
   let replayTimers = [];
-  let file = null, fileBytes = null, targetBuffer = null;
+  let fileBytes = null, targetBuffer = null, targetLabel = "";
   let quality = "quick", startFrom = "scratch";
   const seeds = new Set();
   let lowC = 48;                // the keyboard shows two octaves from here
   let showRunNotes = true;      // after a run the keyboard shows its notes, until a key is pressed
   let audio = null, source = null;
   let raf = 0;
+  let destroyed = false;
+  let test = null;              // the loaded target is a test of the current sound: {truth, notes, note, source, synced, unison}
+  let making = false;           // the test note is being made (rendered by the twin, or played by the S-1)
+  let rec = null;               // a recording in progress (see startRecording)
+  let inputs = [], chosenInput = "";
 
   // ── layout ──────────────────────────────────────────────────────────────────────
   const view = h("section", { class: "v-match", "aria-label": "Match a sound", "data-phase": "idle" });
@@ -333,17 +599,27 @@ function createView(root, ctx) {
       : "Give it a recording of one note or a chord of up to four. The matcher turns the twin's knobs by gradient descent until the twin sounds like it." }),
   );
 
-  // server mode: the drop well, the notes, the search budget
+  // server mode: the drop well (or Record, or a test note), the notes, the search budget
   const fileInput = h("input", { type: "file", accept: ".wav,.wave,.aif,.aiff,.flac,.ogg,audio/*", hidden: true, "aria-hidden": "true", tabindex: "-1" });
   const dropCanvas = h("canvas", { "aria-hidden": "true" });
   const dropAsk = h("p", { class: "mx-ask" }, "Drop a sound here, or ",
-    h("button", { type: "button", class: "linkish", "data-action": "choose", onclick: (e) => { e.stopPropagation(); if (!running) fileInput.click(); } }, "choose a file"));
+    h("button", { type: "button", class: "linkish", "data-action": "choose", onclick: (e) => { e.stopPropagation(); if (!busy()) fileInput.click(); } }, "choose a file"));
   const dropFile = h("p", { class: "mx-file" });
   const drop = h("div", { class: "well mx-drop", role: "button", tabindex: "0", "data-role": "drop",
     "aria-label": "Drop a sound here, or press Enter to choose a file" }, dropCanvas, dropAsk, dropFile, fileInput);
   const playTargetEarly = h("button", { type: "button", class: "quiet", disabled: true, "data-action": "play-target-early",
     onclick: () => playBuffer("target") }, "Play target");
   const earlyRow = h("div", { class: "mx-go mx-hidden" }, playTargetEarly);
+  const recBtn = h("button", { type: "button", class: "pill", "data-action": "record",
+    onclick: () => (rec ? stopRecording() : startRecording()) }, "Record");
+  const inputSel = h("select", { "data-role": "input", onchange: () => { chosenInput = inputSel.value; } },
+    h("option", { value: "" }, "The default input"));
+  const recRow = h("div", { class: "mx-rec" }, recBtn, h("label", { class: "mx-from" }, h("span", { text: "From" }), inputSel));
+  const recMsg = h("p", { class: "note mx-recmsg", role: "status", "data-role": "record-message" });
+  const testBtn = h("button", { type: "button", class: "quiet mx-test", "data-action": "test-current", onclick: () => matchCurrentSound() },
+    "Match the synth's current sound");
+  const testBox = h("div", { class: "mx-testbox" }, testBtn,
+    h("p", { class: "note", text: "A test of the matcher: one note of the synth as it is set now, matched from scratch. Then it shows which settings it found again." }));
 
   const keys = h("div", { class: "mx-keys", role: "group", "aria-label": "Notes to match" });
   const marked = h("span", { class: "mx-marked", "aria-live": "polite" });
@@ -357,7 +633,10 @@ function createView(root, ctx) {
   if (!staticMode) {
     input.append(
       drop,
+      recRow,
+      recMsg,
       earlyRow,
+      testBox,
       h("div", {},
         h("h3", { class: "mx-sub", text: "Which notes?" }),
         h("p", { class: "note", text: "Mark the notes you hear, up to four. This is the sure way. Leave them empty and the matcher looks for them." }),
@@ -400,6 +679,12 @@ function createView(root, ctx) {
   const closeBlock = h("div", { class: "mx-close" }, closeNum, h("span", { text: "closeness" }));
   const result = h("div", { class: "mx-result mx-hidden", "data-role": "result" },
     closeBlock, h("div", { class: "mx-actions" }, playTarget, playMatch, loadBtn, againBtn), closeNote);
+  // after a test of the current sound: how many settings came back
+  const reportNum = h("b"), reportWords = h("span");
+  const reportTables = h("div", { class: "mx-rtables" });
+  const reportNotes = h("div", { class: "mx-rnotes" });
+  const report = h("section", { class: "mx-report mx-hidden", "data-role": "report", "aria-label": "How close the test came back" },
+    h("h3", { text: "How close it came back" }), h("div", { class: "mx-close" }, reportNum, " ", reportWords), reportTables, reportNotes);
   const knobsBox = h("div", { class: "mx-knobs", "aria-label": "The twin's knobs, as the matcher sets them" });
   runCol.append(
     h("div", { class: "mx-wells" },
@@ -409,6 +694,7 @@ function createView(root, ctx) {
         h("span", { class: "note", text: "Solid: the target. Dotted: the twin's current guess. Each loop is one cycle." })))),
     h("p", { class: "mx-status", role: "status" }, tag, word, detail),
     result,
+    report,
     knobsBox,
     h("p", { class: "note mx-honest", text: "The matcher finds a patch that sounds like the target, not always the patch that made it. The twin's curves are not yet calibrated to a real S-1, so a match is only as true as the twin." }),
   );
@@ -521,44 +807,299 @@ function createView(root, ctx) {
     } catch (_) { /* sound is a courtesy here */ }
   }
 
-  // ── the target file ─────────────────────────────────────────────────────────────
-  drop.addEventListener("click", () => { if (!running) fileInput.click(); });
-  drop.addEventListener("keydown", (e) => { if ((e.key === "Enter" || e.key === " ") && !running) { e.preventDefault(); fileInput.click(); } });
+  // ── the target: a file, a recording, or a test note, all loaded the same way ─────────
+  const busy = () => running || making || !!rec;
+  drop.addEventListener("click", () => { if (!busy()) fileInput.click(); });
+  drop.addEventListener("keydown", (e) => { if ((e.key === "Enter" || e.key === " ") && !busy()) { e.preventDefault(); fileInput.click(); } });
   ["dragenter", "dragover"].forEach((ev) => drop.addEventListener(ev, (e) => { e.preventDefault(); drop.classList.add("over"); }));
   ["dragleave", "drop"].forEach((ev) => drop.addEventListener(ev, (e) => { e.preventDefault(); drop.classList.remove("over"); }));
-  drop.addEventListener("drop", (e) => { const f = e.dataTransfer?.files?.[0]; if (f && !running) loadFile(f); });
+  drop.addEventListener("drop", (e) => { const f = e.dataTransfer?.files?.[0]; if (f && !busy()) loadFile(f); });
   fileInput.addEventListener("change", () => { if (fileInput.files[0]) loadFile(fileInput.files[0]); fileInput.value = ""; });
 
   async function loadFile(f) {
-    if (running) return;                 // a run in progress keeps its target
+    if (busy()) return;                  // a run in progress keeps its target
     if (f.size > 25 * 1024 * 1024) { setError("That file is too large (25 MB max). Trim it to a few seconds of the sound."); return; }
-    file = f;
-    fileBytes = await f.arrayBuffer();
+    await loadTarget(await f.arrayBuffer(), f.name);
+  }
+  /** Make `bytes` the target, named `name` in the well ("Recording, 2.4 s"); `testInfo` when it is a test note. */
+  async function loadTarget(bytes, name, testInfo = null) {
+    if (running) return;
+    fileBytes = bytes;
     targetBuffer = null;
+    targetLabel = name;
+    test = testInfo;
     run = initialRun(); recorded = false;
     drop.classList.add("loaded");
-    dropFile.textContent = f.name;
-    matchBtn.disabled = false;
-    goNote.textContent = "";
+    dropFile.textContent = name;
+    goNote.textContent = test ? `The test gives the matcher its note (${test.notes.map(noteName).join(" + ")}) and starts from scratch.` : "";
+    syncControls();
     renderAll();
     try {
       targetBuffer = await ac().decodeAudioData(fileBytes.slice(0));
-      dropFile.textContent = `${f.name}, ${targetBuffer.duration.toFixed(1)} s`;
+      targetLabel = `${name}, ${targetBuffer.duration.toFixed(1)} s`;
       playTargetEarly.disabled = false;
       earlyRow.classList.remove("mx-hidden");
     } catch (_) {
       playTargetEarly.disabled = true;   // e.g. AIFF: the browser cannot decode it; the server still can
       earlyRow.classList.add("mx-hidden");
     }
+    if (!rec) dropFile.textContent = targetLabel;
     drawDrop();
   }
   function drawDrop() {
     if (!dropCanvas.isConnected) return;
     const [c, w, hh] = draw.fit(dropCanvas);
+    if (rec && rec.sr) {                 // recording: each 20 ms's peak on a dB scale, drawn up to the record head
+      const frac = Math.min(1, rec.total / (RECORD_MAX_S * rec.sr));
+      c.save(); c.translate(0, -12);
+      draw.hatchShape(c, w, hh, Array.from(rec.bins, meterLevel), { step: 2, reveal: frac });
+      draw.playhead(c, w, hh, frac);
+      c.restore();
+      return;
+    }
     if (!targetBuffer) return;
     const data = targetBuffer.getChannelData(0);
     const top = draw.peaksPerColumn(data, Math.max(2, Math.floor(w / 2)));
     c.save(); c.translate(0, -12); draw.hatchShape(c, w, hh, top, { step: 2 }); c.restore();
+  }
+
+  // ── recording a target from a browser input ────────────────────────────────────────
+  // Raw PCM from an AudioWorklet (a ScriptProcessor where there is none), mixed to mono, with the
+  // browser's voice processing off: echo cancelling, noise suppression and gain control wreck a
+  // synth's sound. Stop ends it; it stops by itself at RECORD_MAX_S. Then: trim to the onset (~5 ms
+  // kept), write a WAV (core/wav.js), and load it like a dropped file.
+  const REC_BINS = RECORD_MAX_S * 50;    // 20 ms of level each, for the live well
+  const RECORDER = `registerProcessor("mx-recorder", class extends AudioWorkletProcessor {
+    constructor() {
+      super(); this.buf = new Float32Array(2048); this.n = 0; this.on = true;
+      this.port.onmessage = () => {
+        if (this.n) this.port.postMessage(this.buf.slice(0, this.n));
+        this.port.postMessage("done"); this.on = false;
+      };
+    }
+    process(inputs) {
+      const ch = inputs[0];
+      if (!this.on) return false;
+      if (ch && ch.length) {
+        for (let i = 0; i < ch[0].length; i++) {
+          let s = 0;
+          for (let c = 0; c < ch.length; c++) s += ch[c][i];
+          this.buf[this.n++] = s / ch.length;
+          if (this.n === this.buf.length) { this.port.postMessage(this.buf); this.buf = new Float32Array(2048); this.n = 0; }
+        }
+      }
+      return true;
+    }
+  });`;
+  let recorderURL = null, recorderReady = null;
+  const media = () => (typeof navigator !== "undefined" ? navigator.mediaDevices : null);
+  const openInput = (id) => media().getUserMedia({ audio: {
+    ...(id && id !== "default" ? { deviceId: { exact: id } } : {}),
+    echoCancellation: false, noiseSuppression: false, autoGainControl: false } });
+  const stopTracks = (stream) => stream?.getTracks().forEach((t) => { try { t.stop(); } catch (_) { /* gone */ } });
+
+  async function refreshInputs() {
+    try { inputs = ((await media()?.enumerateDevices?.()) || []).filter((d) => d.kind === "audioinput"); } catch (_) { inputs = []; }
+    if (destroyed) return;
+    const want = pickInput(inputs, chosenInput);
+    inputSel.replaceChildren(...inputOptions(inputs).map((o) => h("option", { value: o.value }, o.label)));
+    inputSel.value = inputs.some((d) => d.deviceId === want) ? want : inputSel.options[0]?.value ?? "";
+  }
+  const onDeviceChange = () => { refreshInputs(); };
+
+  async function recorderNode(A, token) {
+    if (A.audioWorklet && typeof AudioWorkletNode === "function") {
+      try {
+        recorderURL = recorderURL || URL.createObjectURL(new Blob([RECORDER], { type: "text/javascript" }));
+        recorderReady = recorderReady || A.audioWorklet.addModule(recorderURL);
+        await recorderReady;
+        const node = new AudioWorkletNode(A, "mx-recorder", { numberOfInputs: 1, numberOfOutputs: 1, outputChannelCount: [1] });
+        node.port.onmessage = (e) => (e.data === "done" ? token.onDone?.() : onChunk(token, e.data));
+        token.worklet = true;
+        return node;
+      } catch (_) { recorderReady = null; /* the ScriptProcessor below still records */ }
+    }
+    const node = A.createScriptProcessor(2048, 2, 1);
+    node.onaudioprocess = (e) => {
+      const b = e.inputBuffer, k = b.numberOfChannels, mono = new Float32Array(b.length);
+      for (let c = 0; c < k; c++) { const x = b.getChannelData(c); for (let i = 0; i < x.length; i++) mono[i] += x[i] / k; }
+      onChunk(token, mono);
+    };
+    return node;
+  }
+
+  async function startRecording() {
+    if (busy() || staticMode) return;
+    recMsg.textContent = "";
+    if (!media()?.getUserMedia) {
+      recMsg.textContent = "This browser cannot record here. Open the app in Chrome, Safari or Firefox on this computer.";
+      return;
+    }
+    const token = rec = { chunks: [], total: 0, bins: new Float32Array(REC_BINS), sr: 0, stream: null, source: null, node: null, sink: null };
+    stopSound();
+    syncControls(); renderAll();
+    try {
+      let stream = await openInput(pickInput(inputs, chosenInput));
+      token.stream = stream;
+      // The input names arrive with the permission: now the S-1 can be found, and preferred.
+      await refreshInputs();
+      const want = pickInput(inputs, chosenInput);
+      const got = stream.getAudioTracks()[0]?.getSettings?.().deviceId;
+      if (rec === token && want && want !== "default" && got && want !== got) {
+        stopTracks(stream);
+        token.stream = stream = await openInput(want);
+      }
+      if (rec !== token) { stopTracks(stream); return; }      // stopped (or the view closed) while asking
+      const A = ac();
+      if (A.state === "suspended") await A.resume();
+      token.sr = A.sampleRate;
+      token.node = await recorderNode(A, token);
+      if (rec !== token) { teardownRecording(token); return; }
+      token.source = A.createMediaStreamSource(stream);
+      token.sink = A.createGain();
+      token.sink.gain.value = 0;                              // pulls the recorder; plays nothing
+      token.source.connect(token.node); token.node.connect(token.sink); token.sink.connect(A.destination);
+      token.guard = setTimeout(stopRecording, (RECORD_MAX_S + 1.5) * 1000);   // in case no audio arrives
+      drop.classList.add("recording");
+      dropFile.textContent = `Recording, ${fmtSeconds(0)}`;
+      syncControls(); renderAll(); drawDrop();
+    } catch (e) {
+      teardownRecording(token);
+      if (rec === token) rec = null;
+      recMsg.textContent = recordError(e);
+      syncControls(); renderAll();
+    }
+  }
+  function onChunk(token, chunk) {
+    if (rec !== token || !token.sr || !chunk?.length) return;
+    const max = RECORD_MAX_S * token.sr, take = Math.min(chunk.length, max - token.total);
+    if (take <= 0) return;
+    const c = take < chunk.length ? chunk.slice(0, take) : chunk;
+    token.chunks.push(c);
+    const per = max / REC_BINS;
+    for (let i = 0; i < c.length; i++) {
+      const b = Math.min(REC_BINS - 1, Math.floor((token.total + i) / per)), a = Math.abs(c[i]);
+      if (a > token.bins[b]) token.bins[b] = a;
+    }
+    token.total += take;
+    if (!token.stopping) {
+      dropFile.textContent = `Recording, ${fmtSeconds(token.total / token.sr)}`;
+      scheduleDrop();
+      if (token.total >= max) stopRecording();
+    }
+  }
+  let dropRaf = 0;
+  const scheduleDrop = () => { if (!dropRaf) dropRaf = requestAnimationFrame(() => { dropRaf = 0; drawDrop(); }); };
+  function teardownRecording(token) {
+    clearTimeout(token.guard);
+    for (const n of [token.source, token.node, token.sink]) { try { n?.disconnect(); } catch (_) { /* gone */ } }
+    if (token.node) { if (token.node.port) token.node.port.onmessage = null; else token.node.onaudioprocess = null; }
+    stopTracks(token.stream);
+  }
+  async function stopRecording() {
+    const token = rec;
+    if (!token || token.stopping) return;
+    token.stopping = true;
+    if (token.worklet && token.node) {   // the worklet sends what it still holds, then "done"
+      await new Promise((resolve) => {
+        token.onDone = resolve;
+        try { token.node.port.postMessage("stop"); } catch (_) { resolve(); }
+        setTimeout(resolve, 400);
+      });
+    }
+    teardownRecording(token);
+    if (rec !== token) return;           // the view closed meanwhile
+    rec = null;
+    drop.classList.remove("recording");
+    if (!token.sr) {                     // stopped while the browser was still asking: nothing was recorded
+      dropFile.textContent = targetLabel;
+      syncControls(); renderAll(); drawDrop();
+      return;
+    }
+    const samples = joinChunks(token.chunks, RECORD_MAX_S * token.sr);
+    const peak = peakOf(samples);
+    if (peak < 1e-4) {
+      recMsg.textContent = "The recording is silent. Check that the input is plugged in and turned up, then press Record again.";
+      dropFile.textContent = targetLabel;
+      syncControls(); renderAll(); drawDrop();
+      return;
+    }
+    await loadTarget(encodeWav(trimToOnset(samples, token.sr), token.sr), "Recording");
+    if (peak < 0.01) recMsg.textContent = "The recording is very quiet. It can still be matched, but a louder take matches better.";
+  }
+
+  // ── a test: match the synth's current sound ────────────────────────────────────────
+  // Snapshot the 21 twin settings, make one note with them (the twin renders it, before its
+  // browser-only effects; or the S-1 plays it and the cockpit records it), and match it from
+  // scratch with the note given: never from the knobs, which would start at the answer.
+  async function matchCurrentSound() {
+    if (busy() || staticMode) return;
+    recMsg.textContent = "";
+    const note = testNote(seeds);
+    const { notes, unison } = soundingNotes(note, ctx.params);
+    const from = ctx.soundSource === "s1" ? "s1" : "twin";
+    const info = { truth: truthOf(ctx.params), notes, note, source: from, synced: ctx.status?.link === "synced", unison };
+    making = true;
+    stopSound();
+    run = { ...initialRun(), phase: "making", making: { note, source: from } };
+    recorded = false;
+    syncControls(); renderAll(); revealRun();
+    let bytes;
+    try {
+      bytes = from === "s1" ? await s1Note(note) : await twinNote(note);
+    } catch (e) {
+      making = false;
+      if (destroyed) return;
+      const words = e && (e.status || e.plain) ? e.message
+        : from === "s1" ? "Could not reach the app. Check that it is still running, then try again."
+          : `The twin could not play the test note${e?.message ? ` (${e.message})` : ""}. Reload the page, then try again.`;
+      run = { ...run, phase: "error", errorWord: "Could not make the test note", error: words };
+      syncControls(); renderAll();
+      return;
+    }
+    making = false;
+    if (destroyed) return;
+    await loadTarget(bytes, `${from === "s1" ? "The S-1's" : "The twin's"} current sound, ${noteName(note)}`, info);
+    startMatch();
+  }
+  const plain = (msg) => Object.assign(new Error(msg), { plain: true });
+  async function twinNote(note) {
+    const tw = ctx.twin;
+    if (!tw || typeof tw.renderStages !== "function" || tw.stub) {
+      throw plain("The twin's model did not load in this browser, so it cannot play the test note. Reload the page, then try again.");
+    }
+    const st = await tw.renderStages({ note, seconds: TEST_SECONDS, gate: TEST_GATE });
+    if (!(peakOf(st.amp) >= 1e-4)) {
+      throw plain("The synth's current sound is silent: every level is at 0, or the filter or the volume is closed. Turn one up, then try again.");
+    }
+    return encodeWav(normalize(st.amp, 0.9), st.sr);  // amp: twin.py's model, before the browser-only effects
+  }
+  async function s1Note(note) {
+    const r = await ctx.server.api("POST", "/api/match/record-note", { note, velocity: 100, hold: TEST_GATE, tail: TEST_SECONDS - TEST_GATE });
+    return r.arrayBuffer();
+  }
+
+  // ── the recovery report (after a test) ─────────────────────────────────────────────
+  let reported = null;                   // the done frame the report was built for
+  function renderReport() {
+    const show = !!(test && !recorded && run.phase === "done" && run.done?.cc);
+    report.classList.toggle("mx-hidden", !show);
+    if (!show || reported === run.done) return;
+    reported = run.done;
+    const r = recoveryReport(test.truth, run.done.cc, { notes: test.notes, curves: ctx.twin?.curves,
+      source: test.source, synced: test.synced, unison: test.unison });
+    reportNum.textContent = r.total ? `${r.good} of ${r.total}` : "–";
+    reportWords.textContent = r.total ? `settings came back within ${WITHIN}` : "no setting shapes this sound";
+    const half = r.rows.length > 8 ? Math.ceil(r.rows.length / 2) : r.rows.length;
+    reportTables.replaceChildren(...[r.rows.slice(0, half), r.rows.slice(half)].filter((rows) => rows.length).map(reportTable));
+    reportNotes.replaceChildren(...r.notes.map((text) => h("p", { class: "note", text })));
+  }
+  function reportTable(rows) {
+    const th = (text) => h("th", { scope: "col", text });
+    return h("table", { class: "mx-rtable" },
+      h("thead", {}, h("tr", {}, th("Setting"), th("True"), th("Found"), th("Difference"))),
+      h("tbody", {}, rows.map((r) => h("tr", { class: r.ok ? "ok" : "off", "data-report-cc": String(r.cc) },
+        h("th", { scope: "row", text: r.label }), h("td", { text: r.trueText }), h("td", { text: r.foundText }), h("td", { text: r.offText })))));
   }
 
   // ── sound (A/B) ─────────────────────────────────────────────────────────────────
@@ -597,7 +1138,7 @@ function createView(root, ctx) {
 
   // ── a live match ────────────────────────────────────────────────────────────────
   function startMatch() {
-    if (running || !fileBytes || staticMode) return;
+    if (running || making || rec || !fileBytes || staticMode) return;
     stopSound();
     decoded.target = decoded.match = null;
     run = { ...initialRun(), phase: "connecting" };
@@ -607,8 +1148,10 @@ function createView(root, ctx) {
     renderAll();
     revealRun();
     const q = new URLSearchParams({ throttle: "0.02", quality });
-    if (seeds.size) q.set("notes", [...seeds].sort((a, b) => a - b).join(","));
-    if (startFrom === "current") q.set("init", JSON.stringify(initMap(ctx.params)));
+    // A test gives the matcher its own note and always starts from scratch (the knobs are the answer).
+    const notes = test ? test.notes : [...seeds].sort((a, b) => a - b);
+    if (notes.length) q.set("notes", notes.join(","));
+    if (!test && startFrom === "current") q.set("init", JSON.stringify(initMap(ctx.params)));
     let ws;
     try { ws = ctx.server.ws(`/ws/match?${q}`); } catch (e) { setError("Could not open the matcher. Check that the app is still running, then try again."); return; }
     socket = ws;
@@ -642,10 +1185,21 @@ function createView(root, ctx) {
   function setRunning(on) {
     running = on;
     view.dataset.phase = run.phase;
-    matchBtn.textContent = on ? "Stop" : "Match";
-    matchBtn.disabled = !on && !fileBytes;
-    drop.setAttribute("aria-disabled", String(on));
+    syncControls();
     paintKeys();
+  }
+  /** What each control can do now: a run, a recording and a test note each hold the target. */
+  function syncControls() {
+    const b = busy();
+    matchBtn.textContent = running ? "Stop" : "Match";
+    matchBtn.disabled = !running && (!fileBytes || making || !!rec);
+    drop.setAttribute("aria-disabled", String(b));
+    recBtn.textContent = rec ? "Stop" : "Record";
+    recBtn.classList.toggle("on", !!rec);
+    recBtn.disabled = running || making || !!rec?.stopping;
+    inputSel.disabled = b;
+    testBtn.disabled = b;
+    view.dataset.recording = rec ? "1" : "";
   }
 
   // One frame from the socket or a replay: fold it in, move the knobs, redraw.
@@ -787,7 +1341,8 @@ function createView(root, ctx) {
     if (cw && cw.y?.length) draw.stroke(c, loop(cw, lv.cand), { color: draw.INK, width: 1.3, dash: [1.5, 4], glow: running ? 8 : 0 });
   }
   function renderAll() {
-    const t = phaseText(run, { staticMode, loaded: !!fileBytes });
+    // While recording, the status line speaks for the take (the last run stays until it replaces the target).
+    const t = rec ? phaseText(initialRun(), { recording: rec.sr ? true : "opening" }) : phaseText(run, { staticMode, loaded: !!fileBytes });
     word.textContent = t.word;
     detail.textContent = t.detail;
     tag.classList.toggle("mx-hidden", !(recorded && currentRec));
@@ -808,8 +1363,9 @@ function createView(root, ctx) {
     playTarget.disabled = !(done && run.done.targetWav);
     playMatch.disabled = !(done && run.done.matchWav);
     loadBtn.disabled = !(run.done?.cc || run.bestCC);
-    againBtn.disabled = running || (recorded ? !currentRec : !fileBytes);
+    againBtn.disabled = busy() || (recorded ? !currentRec : !fileBytes);
     againBtn.textContent = recorded ? "Watch again" : "Match again";
+    renderReport();
     paintKeys();
     drawLoss();
     drawPlume();
@@ -821,14 +1377,24 @@ function createView(root, ctx) {
   disposers.push(() => ro.disconnect());
 
   buildKeys();
+  syncControls();
   renderAll();
   if (staticMode) loadIndex();
+  else {
+    refreshInputs();
+    media()?.addEventListener?.("devicechange", onDeviceChange);
+    disposers.push(() => media()?.removeEventListener?.("devicechange", onDeviceChange));
+  }
 
   return {
     destroy() {
+      destroyed = true;
       if (socket) { const ws = socket; socket = null; try { ws.close(); } catch (_) { /* closed */ } }
       replayTimers.forEach(clearTimeout); replayTimers = [];
       if (raf) cancelAnimationFrame(raf);
+      if (dropRaf) cancelAnimationFrame(dropRaf);
+      if (rec) { const token = rec; rec = null; teardownRecording(token); }   // the input's light goes off
+      if (recorderURL) URL.revokeObjectURL(recorderURL);
       for (const [n, t] of auditions) { clearTimeout(t); noteOff(n); }
       stopSound();
       if (audio) { audio.close().catch(() => {}); audio = null; }

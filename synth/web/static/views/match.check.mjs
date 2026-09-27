@@ -120,4 +120,118 @@ eq(M.indexRows([{ slug: "a3-saw", title: "A3 saw", notes: [57], closeness: 64.2 
 ok(M.indexRows({ matches: [{ slug: "b" }] })[0].title === "b" && M.indexRows("nope").length === 0, "index: {matches: […]} or nothing");
 eq(M.initMap(new Map([[74, 90], [1, 5], [22, 1]])), { 74: 90, 22: 1 }, "warm start sends only the twin's CCs");
 
+// ── round 2: a test of the synth's current sound (ROUND2.md §3) ──────────────────
+const py = (rel) => readFileSync(join(here, rel), "utf8");
+const matchInit = py("../../../match/__init__.py"), driverPy = py("../../../match/driver.py");
+ok(+/ANALYSIS_SECONDS = ([\d.]+)/.exec(matchInit)[1] * +/gate_fraction: float = ([\d.]+)/.exec(twinPy)[1] === M.TEST_GATE,
+  "the test note's key goes up when twin.py's render lets go (2.0 s × 0.6)");
+ok(+/PROBE_NOTE = (\d+)/.exec(driverPy)[1] === M.TEST_NOTE && M.TEST_SECONDS > M.TEST_GATE, "C3 by default, as the S-1 probe");
+eq(/SParam\("lfo_shape", 12, \(([\d, ]+)\)\)/.exec(twinPy)[1].split(",").map(Number).map((v) => M.valueText(12, v)).sort(),
+  ["Saw", "Square", "Triangle"], "the LFO waves the matcher tries are the ones the report names");
+const curvesJson = JSON.parse(py("../twin/curves.json"));
+for (const [name, c] of Object.entries(M.CURVE_DEFAULTS)) {
+  const j = curvesJson.curves[name];
+  ok(j && j.lo === c.lo && j.hi === c.hi && j.kind === c.kind, `curve ${name} matches curves.json`);
+}
+ok(M.testNote(new Set()) === 48 && M.testNote(new Set([64, 60])) === 60, "the test plays the lowest marked note, else C3");
+ok(M.listText([]) === "" && M.listText(["a"]) === "a" && M.listText(["a", "b", "c"]) === "a, b and c", "lists in words");
+ok(M.valueText(28, 0) === "Gate" && M.valueText(12, 2) === "Triangle" && M.valueText(22, 2) === "−1" && M.valueText(74, 90) === "90", "values in words");
+ok(M.valueText(76, 64) === "0" && M.valueText(76, 30) === "−34" && M.valueText(76, 70) === "+6", "Fine tune reads as its knob does (from the middle)");
+const D = M.truthOf(new Map());
+ok(M.TWIN_CCS.every((c) => Number.isFinite(D[c])) && Object.keys(D).length === 21, "the truth holds all 21 settings");
+eq(M.truthOf(new Map([[74, 90], [1, 3]]))[74], 90, "…from the synth's params");
+
+// which settings count (relevantCCs): the model's own equations, not a guess
+const rel = (p, o) => M.relevantCCs({ ...D, ...p }, o);
+const has = (p, cc, o) => rel(p, o).includes(cc);
+eq(rel({}, { notes: [48] }), [20, 19, 21, 23, 15, 76, 74, 71, 24, 73, 75, 30, 72, 28], "the S-1 defaults on C3: 14 settings count");
+ok(!has({ 19: 0 }, 15) && has({ 19: 1 }, 15), "no pulse width when Square is at 0");
+ok(!has({ 21: 0 }, 22) && has({ 21: 40 }, 22), "no sub octave when Sub is at 0");
+ok([3, 12, 13, 25, 17].every((cc) => !has({}, cc)), "no LFO settings when every LFO amount is at 0");
+ok([3, 12, 13, 25, 17].every((cc) => !has({ 13: 50, 17: 0 }, cc)), "…or when Mod wheel to LFO is at 0");
+ok([3, 12, 13, 25].every((cc) => has({ 13: 50 }, cc)) && !has({ 13: 50 }, 17), "vibrato on: the LFO counts, Mod wheel to LFO trades with its amounts");
+ok(!has({ 28: 0 }, 75) && !has({ 28: 0 }, 30) && has({ 28: 0 }, 73) && has({ 28: 0 }, 72),
+  "Gate and no Env amount: no Decay or Sustain; Attack and Release still shape the gate (twin.py)");
+ok(has({ 28: 0, 24: 30 }, 75) && has({ 28: 0, 24: 30 }, 30), "Gate with Env amount: the envelope moves the filter");
+ok(!has({ 30: 127 }, 75) && has({ 30: 126 }, 75), "no Decay when Sustain is full");
+ok(!has({ 30: 0, 75: 0 }, 72) && has({ 30: 0, 75: 127 }, 72), "no Release when the sound dies away before the key goes up");
+ok(has({ 28: 0, 30: 0, 75: 0 }, 72), "…but in Gate mode the release always ends the note");
+ok(!has({}, 26, { notes: [48] }) && !has({}, 26, { notes: [60] }) && has({}, 26, { notes: [48, 55] }), "Key follow counts only across notes");
+const why = (p, o) => M.relevance({ ...D, ...p }, o).left;
+ok(why({}, { notes: [60] }).some((l) => l.ccs.includes(26) && l.kind === "silent" && /C4/.test(l.why)), "at C4 Key follow does nothing");
+ok(why({}, { notes: [48] }).some((l) => l.ccs.includes(26) && l.kind === "trade"), "on another note it trades with Cutoff");
+eq(M.relevantCCs(new Map(Object.entries({ ...D, 19: 0 }).map(([k, v]) => [+k, v]))), rel({ 19: 0 }), "a Map works like an object");
+
+// the recovery report: true vs found after the model's exact trades
+const rep = (t, f, o = {}) => M.recoveryReport({ ...D, ...t }, { ...D, ...f }, { notes: [48], ...o });
+const row = (r, cc) => r.rows.find((x) => x.cc === cc);
+const same = rep({}, {});
+ok(same.good === 14 && same.total === 14 && same.summary === "All 14 settings came back within 10.", "a perfect match: every setting came back");
+ok(same.rows.every((x) => x.offText === "same" && !x.traded), "…each the same, nothing traded");
+ok(same.notes[0].startsWith("Left out, because they do not change this sound, so they cannot come back: Sub octave (Sub is at 0)"),
+  "the report says plainly what is left out and why");
+const mix = rep({}, { 19: 64 });
+ok(row(mix, 19).shown === 127 && row(mix, 19).foundText === "127*" && row(mix, 19).ok, "a quieter mix of the same balance came back (levels as a mix)");
+ok(mix.notes.some((n) => n.startsWith("* Compared after a trade: the levels as a mix")), "…and the trade is named");
+const stray = rep({}, { 19: 64, 20: 10 });
+ok(!row(stray, 20).ok && row(stray, 20).offText === "off by 20", "a stray level is still a miss after the mix is scaled");
+const ortho = rep({ 20: 127, 19: 0 }, { 20: 1, 19: 54, 21: 106, 23: 67, 13: 126, 17: 126, 12: 3 });
+ok([20, 19, 21, 23].every((cc) => !row(ortho, cc).ok) && row(ortho, 19).offText === "off by 55" && row(ortho, 21).offText === "off by 109",
+  "a mix of the wrong oscillators stays a miss on every level (it is not scaled away)");
+ok(row(ortho, 13).offText === "off by 126" && row(ortho, 17).offText === "off by 111" && !row(ortho, 3) && !row(ortho, 12),
+  "a vibrato the true sound lacks is a miss; its rate and wave cannot come back");
+ok(ortho.notes[0] === "Left out, because they do not change this sound, so they cannot come back: Pulse width (Square is at 0); Sub octave (Sub is at 0); Rate and Wave (the true sound has no LFO).",
+  "…and the report says why, item by item");
+eq(M.relevantCCs({ ...D }), rel({}), "relevantCCs(params) alone: the true sound's own rules");
+const kf = rep({ 74: 80 }, { 74: 95, 26: 127 });
+ok(row(kf, 74).shown === 80 && row(kf, 74).traded && !row(kf, 26), "Cutoff compared as if Key follow were right (one octave = 14.7 steps)");
+const kfRaw = rep({ 74: 80 }, { 74: 95, 26: 127 }, { notes: [48, 55] });
+ok(row(kfRaw, 74).off === 15 && row(kfRaw, 26).offText === "off by 127", "across notes both count, untraded");
+const lfo = rep({ 13: 40 }, { 13: 20, 17: 30 });
+ok(row(lfo, 13).shown === 40 && row(lfo, 13).ok && !row(lfo, 17), "Vibrato compared as if Mod wheel to LFO were right");
+ok(row(lfo, 25).shown === 0 && row(lfo, 12).offText === "same", "an LFO amount at 0 still counts once the LFO acts");
+const miss = rep({ 13: 40 }, { 13: 40, 12: 3, 71: 30 });
+ok(row(miss, 12).offText === "different" && !row(miss, 12).ok && row(miss, 12).trueText === "Triangle" && row(miss, 12).foundText === "Square",
+  "switches count only when they match");
+ok(row(miss, 71).offText === "off by 30" && miss.summary === "16 of 18 settings came back within 10.", "misses and the one-line summary");
+ok(rep({ 71: 20 }, { 71: 30 }, { within: 9 }).summary === "13 of 14 settings came back within 9.", "the bar is a parameter");
+ok(rep({ 13: 40, 12: 1 }, { 13: 40 }).notes.some((n) => n.includes("Inverse saw cannot come back")), "a wave the matcher never tries is named");
+ok(rep({}, {}, { unison: true }).notes.some((n) => n.startsWith("Unison was on")), "unison is named");
+const s1Notes = rep({}, {}, { source: "s1", synced: false }).notes;
+ok(s1Notes.some((n) => n.includes("not yet calibrated")) && s1Notes.some((n) => n.includes("kept its own patch")), "an S-1 test says what its numbers can mean");
+ok(!rep({}, {}, { source: "s1", synced: true }).notes.some((n) => n.includes("kept its own patch")), "…and drops the patch caveat once synced");
+ok(M.recoveryReport(D, { 74: "127", 19: "127" }, { notes: [48] }).good === 14, "frame CC maps with string values work");
+
+// the pitches a key press sounds: the same as the twin's own voice layer (twin/dsp.js)
+const { Engine } = await import("../twin/dsp.js");
+for (const p of [{}, { 14: 0 }, { 14: 5 }, { 80: 0 }, { 80: 1 }, { 80: 3 }, { 80: 3, 85: 71, 86: 67, 87: 76 },
+  { 80: 3, 81: 0, 85: 71, 86: 67, 87: 76 }, { 80: 3, 14: 3, 85: 52 }]) {
+  const eng = new Engine({ sr: curvesJson.sr, curves: curvesJson });
+  eng.setAll(p);
+  const voices = eng.voicesFor(48);
+  const mine = M.soundingNotes(48, new Map(Object.entries(p).map(([k, v]) => [+k, v])));
+  eq(mine.notes, [...new Set(voices.map((v) => v.note))].sort((a, b) => a - b), `sounding notes == Engine.voicesFor for ${JSON.stringify(p)}`);
+  ok(mine.unison === voices.some((v) => v.detune !== 0), `unison flag for ${JSON.stringify(p)}`);
+}
+
+// recording: the input, the words, the level
+const devs = [{ deviceId: "default", label: "Default - MacBook Air Microphone" }, { deviceId: "a", label: "MacBook Air Microphone" },
+  { deviceId: "s", label: "S-1" }];
+ok(M.pickInput(devs) === "s" && M.pickInput(devs, "a") === "a" && M.pickInput(devs, "gone") === "s", "prefer the S-1 unless the user chose another");
+ok(M.pickInput(devs.slice(0, 2)) === "default" && M.pickInput([]) === "", "else the default");
+ok(M.isS1Label("S-1") && M.isS1Label("Roland S-1 (0582:01b4)") && !M.isS1Label("S-10") && !M.isS1Label("USB-1") && !M.isS1Label(""), "the S-1 by name");
+eq(M.inputOptions([{ deviceId: "", label: "" }]), [{ value: "", label: "The default input" }], "before permission the names are hidden");
+eq(M.inputOptions(devs.slice(1)).map((o) => o.value), ["a", "s"], "after it, every input");
+ok(M.recordError({ name: "NotAllowedError" }) === "The browser blocked the microphone. Allow it in the address bar, then press Record again.",
+  "a blocked microphone says what to do");
+ok(/Plug one in/.test(M.recordError({ name: "NotFoundError" })) && /another app/i.test(M.recordError({ name: "NotReadableError" })), "no input; a busy input");
+ok(/Press Record again\.$/.test(M.recordError(new Error("x"))), "anything else still says what to do");
+ok(M.meterLevel(1) === 1 && M.meterLevel(0.001) === 0 && Math.abs(M.meterLevel(10 ** (-30 / 20)) - 0.5) < 1e-9, "the live level: −60..0 dBFS");
+ok(M.phaseText(M.initialRun(), { recording: true }).word === "Recording", "recording words");
+ok(M.phaseText(M.initialRun(), { recording: "opening" }).word === "Opening the input", "…and while the browser asks");
+const mk = { ...M.initialRun(), phase: "making", making: { note: 48, source: "twin" } };
+ok(M.phaseText(mk).word === "Making the test note" && M.phaseText(mk).detail === "C3, played by the twin", "making words");
+ok(M.phaseText({ ...mk, making: { note: 50, source: "s1" } }).detail === "D3, played by the S-1", "…by the S-1");
+ok(M.phaseText({ ...mk, phase: "error", errorWord: "Could not make the test note", error: "x" }).word === "Could not make the test note", "its own error word");
+
 console.log(`match view: ${checks} checks passed`);

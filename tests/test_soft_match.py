@@ -44,6 +44,17 @@ def client() -> TestClient:
     return TestClient(server.app, base_url=BASE_URL)
 
 
+@pytest.fixture(autouse=True)
+def _round3_quick_budget(monkeypatch: pytest.MonkeyPatch) -> None:
+    """These tests check the soft page's stream end to end, not the search's quality (that is
+    tests/test_match_search.py). A budget without the round-4 keys runs the round-3 search exactly,
+    so pin "quick" to it: the stream stays the same shape at a third of the time."""
+    from synth.match import twin_session
+
+    monkeypatch.setitem(twin_session.QUALITY_PRESETS, "quick",
+                        {"gd_iters": 45, "restarts": 1, "neighbor_iters": 14})
+
+
 def _model_target_wav(note: int = 60) -> bytes:
     """Render a bright, known patch with the differentiable model and return WAV
     bytes. No sub / noise so YIN locks the true octave (a strong sub otherwise

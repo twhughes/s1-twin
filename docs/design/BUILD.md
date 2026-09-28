@@ -103,7 +103,11 @@ params as today (`throttle`, `notes`, `quality`, `init` — `init` becomes a CC 
 page-unit frames by converting from the shared session, and its tests stay green.
 
 Frames also carry `wave` (the candidate's cycle, for the plume) on every frame and `target_wave` on
-pitch and done. **Recorded match format** (for the static page): `matches/<slug>.json` =
+pitch and done.
+Round 4 adds, all optional so old frames and recorded runs still read the same: `trying` (plain words, the
+switch or LFO setting a re-descent tries), `starts` (how many starts the preset makes) on gd frames, and
+`finished: true` on a done frame that a `"finish"` text message ended early (the search stops at the next
+step and still renders, scores and returns the best so far). `quality` takes `quick`, `thorough` or `deep`. **Recorded match format** (for the static page): `matches/<slug>.json` =
 `{"title", "target_url", "notes", "frames": [<the exact WS frames>], "recorded": "<ISO date>", "engine": "twin <git sha>"}`.
 `views/match.js` must be able to replay one of these with no server. `matches/index.json` lists them:
 `[{"slug", "title", "notes", "recorded", "closeness"}]` (ship `[]` when there are none).

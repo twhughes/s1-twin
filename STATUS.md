@@ -13,6 +13,15 @@
   launcher convention: **`synth`** (`bin/synth`) runs the venv's `synth --no-browser`
   detached, waits on `/api/status`, opens the cockpit — `synth off` stops it. Appears on the
   HQ control panel (:8800).
+- **2026-09-28 — round 4, the matcher tries harder (local, not yet pushed):** Tyler: "i wish also the optimization
+  tried harder ... it gives up too easily. especially on the discrete options." Cause: the whole descent ran under the
+  default switches, and the other switch settings were scored once at the end with no re-descent; fixed step counts;
+  a constant LR. **Now** (W-rec, `twin_session.py`): plateau-stopped descents on a cosine LR, a switch re-descent after
+  every start (Quick 1, Thorough top 3, Deep all), an LFO scan (wave × rate × pitch/filter), a final polish, a **Deep**
+  preset (8 starts), and **Finish now** (`"finish"` on /ws/match → a done frame with the best so far). **Benchmark**
+  (5 twin-made targets, 4 with non-default switches; `docs/match-benchmarks.md`): closeness up on all five (mean
+  55.5 → 66.6%), switches found 5/5 (old 3/5), more settings back on every target; Thorough now 1.4–2.3 min (was
+  ~1). Soft-page e2e tests pinned to the old quick budget (107 → 40 s). Weak spots left: fine tune and vibrato depth.
 - **2026-09-28 — round 3, every view on one screen (local, not yet pushed):** Tyler: "that page is spilling off the
   bottom of the screen" (Match: 1,027 px idle with the Match button below the fold, ~1,650 with the report; the
   Sequencer 1,072). `core/fit.js` (the plate's fit, shared: 1470 px design width, scaled down evenly, never up) and a

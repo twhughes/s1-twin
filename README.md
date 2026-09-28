@@ -48,13 +48,15 @@ Give the matcher a sound: drop in a file, record one from a microphone or the S-
 itself on the synth's current sound. It turns the twin's knobs by gradient descent until the twin
 sounds the same, and you watch every step.
 
-![The matcher at work: the loss falls over four starts, the guess (dotted) closes on the target (solid), and the knobs turn until the match is done](docs/images/match.gif)
+![The matcher at work: the loss falls over four starts, the guess (dotted) closes on the target (solid), the Volume shape switch moves to Gate, and the knobs turn until the match is done](docs/images/match.gif)
 
 The self-test is the honest one. The synth plays a note with settings the matcher never sees, and
-the matcher starts from scratch. In the run above, it brought back all 14 settings that shape the
-sound to within 10 (on the knobs' 0 to 127 scale), in about 80 seconds on a laptop:
+the matcher starts from scratch. In the run above the target is in Gate mode, a switch setting the
+matcher has to find for itself. It found Gate, and brought 15 of the 17 settings that shape the
+sound back to within 10 (on the knobs' 0 to 127 scale), at 73% closeness, in two and a half
+minutes on a laptop:
 
-![How close it came back: 14 of 14 settings within 10, each with its true value and the value the matcher found](docs/images/recovery.png)
+![How close it came back: 15 of 17 settings within 10, each with its true value and the value the matcher found; Volume shape Gate found](docs/images/recovery.png)
 
 ## Sync a real S-1
 
@@ -87,10 +89,14 @@ flowchart LR
   overlap-add of short frames, each with its own ladder, which keeps the gradient cheap.
 - **From knob to sound.** Each knob's 0 to 127 maps to a physical unit (hertz, seconds, a ratio)
   through a curve. The curves are what a calibration run fits to a real S-1.
-- **The matcher** runs Adam on 18 continuous knobs and tries the 3 switches (sub octave, LFO wave,
-  volume shape) in turn. The loss is a log-mel distance, plus a multi-resolution spectrogram term
-  and an envelope term, on loudness-normalized audio. Quick is one descent of 45 steps. Thorough
-  is four random starts of 160 steps each, and it keeps the best.
+- **The matcher** runs Adam on 18 continuous knobs. Each descent keeps going until it stops
+  improving, with a step size that shrinks on a cosine schedule. After each start it scores every
+  setting of the 3 switches (sub octave, LFO wave, volume shape) and re-tunes the knobs under the
+  most promising ones; it also scans the LFO's wave and rate. A slow final polish starts from the
+  best patch. The loss is a log-mel distance, plus a multi-resolution spectrogram term and an
+  envelope term, on loudness-normalized audio. **Quick** is one start (about 30 seconds),
+  **Thorough** four starts (2 to 3 minutes), and **Deep** eight starts with every switch setting
+  (up to 10 minutes). **Finish now** stops early and keeps the best patch so far.
 - **The browser twin** is the same model in an AudioWorklet. Every test run checks it against the
   Python: 0.001 log-mel apart offline and 0.07 in real time, where two different patches are at
   least 1.9 apart.
@@ -101,9 +107,10 @@ flowchart LR
   guesses. A calibration run fits them from a few hundred recorded notes of a real S-1, and an ear
   test checks that the matcher's idea of "closer" agrees with a listener. Until that session runs,
   a match is only as true as the twin.
-- On the twin's own sounds the matcher brings the settings back (the self-test above). On sounds
-  from elsewhere, the published runs reach 33 to 50% closeness, and closeness is not yet checked by
-  ear.
+- On the twin's own sounds the matcher brings the settings back (the self-test above). On five
+  twin-made test sounds, four of them with non-default switches, it reaches 54 to 73% closeness
+  and finds every switch (`docs/match-benchmarks.md`). On sounds from elsewhere, the published
+  runs reach 33 to 50%. Closeness is not yet checked by ear.
 - Delay, reverb, chorus and the voice modes are browser extras outside the model: they sound, but
   the matcher does not fit them. Draw and Chop need the real S-1.
 - Tested in Chrome. Safari is untested.

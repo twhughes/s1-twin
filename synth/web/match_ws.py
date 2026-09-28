@@ -15,7 +15,12 @@ Query parameters (all optional):
 * ``notes`` — seeded MIDI notes, e.g. ``60,64,67`` (absent → cold-start detection);
 * ``quality`` — ``quick``, ``thorough`` or ``deep`` (default ``thorough``);
 * ``init`` — a JSON CC map, e.g. ``{"74": 90, "22": 1}``: the synth's current knobs,
-  used as the first start of the descent.
+  used as the first start of the descent;
+* ``crop`` — ``t0,t1`` in seconds: the edges of the main sound, as the user set them (absent →
+  the server finds them, :mod:`synth.match.target_prep`).
+
+The matcher gets only the upload's main sound: the server crops away whatever silence, noise or
+clicks surround it (one source of truth: the browser uploads the whole take).
 
 While the match runs, the client may send the text message ``"finish"``: the search ends at
 the next step and the done frame still comes, with the best patch so far rendered and scored
@@ -23,7 +28,8 @@ the next step and the done frame still comes, with the best patch so far rendere
 
 Every run is kept for later diagnosis in ``~/.synth/matches/<time>/`` (the newest
 ``KEEP_MATCHES``): ``target.wav`` as uploaded, ``match.wav``, and ``meta.json`` with the
-request, a compact loss trace (phase, start, step, loss, best, what was tried) and the result.
+request, the crop and the key-up guess, a compact loss trace (phase, start, step, loss, best,
+what was tried) and the result.
 
 A bad request gets ``{"phase": "error", "detail": <what happened and what to do>}``
 and a close. Localhost only: the same host + origin guard as the cockpit's HTTP
@@ -40,6 +46,16 @@ take is onset-trimmed, 2 s long and peak-normalized at the twin's rate (``prepar
 It answers ``409`` with a plain ``detail`` when the S-1 port is closed, the monitor is
 not running, the sequencer is playing, another match is using the S-1, a note is
 already being recorded, or the take is silent.
+
+``POST /api/match/prepare`` (W-rec2) — the body is the audio file's bytes, as the WebSocket
+takes them (the same 25 MB cap; the cockpit's localhost guard, like every HTTP route). The
+answer says what the matcher will get from it: ``{duration, crop: [t0, t1], onset, gate_s,
+noise_db, peak_db, notes, warnings, peaks, sr, wav_b64}`` — the main sound's edges in the take
+(seconds), when the key went up (seconds after the onset; null when it cannot be seen), the
+floor and the peak (dBFS), the notes found in the crop, plain warnings, the whole take's
+outline for drawing (``peaks``: one 0..1 value a column), and the crop itself as a WAV (peak at
+0.9) to listen to. ``?crop=t0,t1`` uses those edges instead. ``413`` too large, ``422`` no
+clear sound (a plain ``detail``), ``503`` the matcher's extras are missing.
 """
 
 from __future__ import annotations
@@ -54,7 +70,7 @@ from datetime import datetime
 from pathlib import Path
 
 import numpy as np
-from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import Response
 from pydantic import BaseModel, Field
 
@@ -70,10 +86,11 @@ TRACE_KEYS = ("phase", "restart", "iter", "loss", "best_loss", "trying", "notes"
 
 
 def save_match(raw: bytes, query: dict, trace: list[dict], done: dict | None, started: str,
-               root: Path | None = None) -> Path | None:
+               root: Path | None = None, *, crop: tuple[float, float] | None = None,
+               gate_s: float | None = None) -> Path | None:
     """Keep one run for later diagnosis: the target as uploaded, the match's audio, and meta.json
-    (the request, the loss trace, the result without its audio). The newest KEEP_MATCHES stay.
-    Best-effort: a full disk never breaks a match."""
+    (the request, the crop the matcher got and the key-up guess, the loss trace, the result without
+    its audio). The newest KEEP_MATCHES stay. Best-effort: a full disk never breaks a match."""
     try:
         base = root or MATCH_DIR
         base.mkdir(parents=True, exist_ok=True)
@@ -86,7 +103,10 @@ def save_match(raw: bytes, query: dict, trace: list[dict], done: dict | None, st
                       if not k.endswith("_b64") and k not in ("wave", "target_wave")}
             if done.get("match_wav_b64"):
                 (run / "match.wav").write_bytes(base64.b64decode(done["match_wav_b64"]))
-        meta = {"started": started, "query": query, "result": result, "trace": trace}
+        meta = {"started": started, "query": query,
+                "crop": None if crop is None else [round(float(t), 3) for t in crop],
+                "gate_s": None if gate_s is None else round(float(gate_s), 3),
+                "result": result, "trace": trace}
         (run / "meta.json").write_text(json.dumps(meta, indent=1))
         for old in sorted(p for p in base.iterdir() if p.is_dir())[:-KEEP_MATCHES]:
             shutil.rmtree(old, ignore_errors=True)
@@ -167,7 +187,7 @@ async def ws_match(websocket: WebSocket) -> None:
         init_k, init_s = session.cc_init(init_map)
 
     try:
-        plan = await asyncio.to_thread(session.plan, raw, q.get("notes"), q.get("quality"))
+        plan = await asyncio.to_thread(session.plan, raw, q.get("notes"), q.get("quality"), q.get("crop"))
     except session.UploadError as exc:
         await _fail(websocket, str(exc))
         return
@@ -192,7 +212,7 @@ async def ws_match(websocket: WebSocket) -> None:
     reader = asyncio.create_task(listen())
     stream = session.astream(plan, throttle, stop=stop)
     started = datetime.now().strftime("%Y%m%d-%H%M%S")
-    query = {k: q.get(k) for k in ("notes", "quality", "init", "throttle") if q.get(k) is not None}
+    query = {k: q.get(k) for k in ("notes", "quality", "init", "throttle", "crop") if q.get(k) is not None}
     trace: list[dict] = []
     done: dict | None = None
     try:
@@ -209,7 +229,8 @@ async def ws_match(websocket: WebSocket) -> None:
         stop.set()
         reader.cancel()
         await stream.aclose()
-        await asyncio.to_thread(save_match, raw, query, trace, done, started)
+        await asyncio.to_thread(save_match, raw, query, trace, done, started,
+                                crop=plan.crop, gate_s=plan.gate_s)
     with contextlib.suppress(Exception):
         await websocket.close()
 
@@ -316,3 +337,73 @@ def record_note(req: RecordNoteReq) -> Response:
         raise HTTPException(409, SILENT_TAKE)
     return Response(content=wav_bytes(clip), media_type="audio/wav",
                     headers={"Cache-Control": "no-store"})
+
+
+# ── what the matcher will get from an upload (W-rec2) ─────────────────────────
+PEAK_COLUMNS = 480             # the whole take's outline, for the drop well
+PREVIEW_PEAK = 0.9             # the crop to listen to, at this peak (the matcher is loudness-blind)
+
+
+async def _body(request: Request, cap: int) -> bytes:
+    """The request's raw body, refused past ``cap`` bytes (413) before it is all read."""
+    size = request.headers.get("content-length", "")
+    if size.isdigit() and int(size) > cap:
+        raise HTTPException(413, TOO_LARGE)
+    buf = bytearray()
+    async for chunk in request.stream():
+        buf += chunk
+        if len(buf) > cap:
+            raise HTTPException(413, TOO_LARGE)
+    return bytes(buf)
+
+
+def outline(samples: np.ndarray, columns: int = PEAK_COLUMNS) -> list[float]:
+    """The take's peak in each of ``columns`` equal slices, over the loudest (0..1)."""
+    a = np.abs(np.asarray(samples, dtype=np.float64))
+    if a.size == 0:
+        return []
+    edges = np.linspace(0, a.size, min(columns, a.size) + 1).astype(int)
+    cols = np.maximum.reduceat(a, edges[:-1])
+    top = float(cols.max()) or 1.0
+    return [round(float(v) / top, 3) for v in cols]
+
+
+def prepare_answer(raw: bytes, crop: str | None = None) -> dict:
+    """What ``POST /api/match/prepare`` answers for ``raw`` (see the module docstring): the same
+    decode and crop as :func:`session.plan` (both are ``target_prep.prepare_upload``), so the page
+    shows exactly what the matcher gets. Raises :class:`session.UploadError`."""
+    from ..match import WORKING_SR
+    from ..match.target_prep import prepare_upload
+
+    samples, prep = prepare_upload(raw, crop)
+    notes, _ranked = session.detect(prep.samples)
+    peak = float(np.abs(prep.samples).max()) if prep.samples.size else 0.0
+    preview = prep.samples * (PREVIEW_PEAK / peak) if peak > 0 else prep.samples
+    return {
+        "duration": round(prep.duration, 3),
+        "crop": [round(prep.t0, 3), round(prep.t1, 3)],
+        "onset": round(prep.onset, 3),
+        "gate_s": None if prep.gate_s is None else round(prep.gate_s, 3),
+        "noise_db": round(prep.noise_db, 1),
+        "peak_db": round(prep.peak_db, 1),
+        "notes": [int(n) for n in notes],
+        "warnings": list(prep.warnings),
+        "peaks": outline(samples),
+        "sr": WORKING_SR,
+        "wav_b64": session.wav_b64(preview, WORKING_SR),
+    }
+
+
+@router.post("/api/match/prepare", tags=["match"],
+             summary="What the matcher will get from an upload: its main sound, key-up and notes")
+async def prepare(request: Request) -> dict:
+    """The body is the audio file's bytes (as ``/ws/match`` takes them); ``?crop=t0,t1`` sets the
+    edges. See the module docstring for the answer; ``413``, ``422`` and ``503`` carry a plain
+    ``detail``."""
+    raw = await _body(request, MAX_UPLOAD_BYTES)
+    if not matcher_available():
+        raise HTTPException(503, MISSING_EXTRAS)
+    try:
+        return await asyncio.to_thread(prepare_answer, raw, request.query_params.get("crop"))
+    except session.UploadError as exc:
+        raise HTTPException(422, str(exc)) from exc

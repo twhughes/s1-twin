@@ -5,7 +5,7 @@
   with a fake MIDI world and a fake monitor: no MIDI port, no audio device, no real sleeps.
   The S-1's patch must never change (no CC goes out: ``calibrate()`` would send one).
 * The browser's WAV writer (``core/wav.js``): what it writes, the server reads like any
-  dropped file. Skips cleanly when ``node`` is not installed.
+  dropped file, and crops. Skips cleanly when ``node`` is not installed.
 """
 
 from __future__ import annotations
@@ -227,18 +227,20 @@ def test_foreign_origin_is_refused(client, engine, world):
 NODE = shutil.which("node")
 
 _ENCODE = """
-import { encodeWav, trimToOnset } from %s;
+import { encodeWav } from %s;
 const sr = 44100, lead = 0.3, n = Math.round(1.5 * sr), x = new Float32Array(n);
 for (let i = 0; i < n; i++) {
   const t = i / sr - lead;
   if (t >= 0) x[i] = 0.4 * Math.sin(2 * Math.PI * 110 * t) * Math.exp(-t / 0.6);
 }
-process.stdout.write(Buffer.from(encodeWav(trimToOnset(x, sr), sr)).toString("base64"));
+process.stdout.write(Buffer.from(encodeWav(x, sr)).toString("base64"));
 """
 
 
 @pytest.mark.skipif(NODE is None, reason="node is not installed")
 def test_browser_wav_is_read_like_a_dropped_file() -> None:
+    """The browser uploads its whole take (no trim in core/wav.js); the server reads it like any
+    dropped file and crops it to the sound (synth/match/target_prep.py): one place decides."""
     from synth.match import twin_session as ts
 
     module = json.dumps((STATIC / "core" / "wav.js").as_uri())
@@ -246,8 +248,9 @@ def test_browser_wav_is_read_like_a_dropped_file() -> None:
                          capture_output=True, text=True, timeout=60, check=True).stdout
     raw = base64.b64decode(out)
     samples = ts.decode_upload(raw)                  # the /ws/match path for any upload
-    assert abs(len(samples) / WORKING_SR - 1.205) < 0.01, "trimmed to ~5 ms before the note"
-    assert np.abs(samples[: int(0.002 * WORKING_SR)]).max() < 1e-3, "the 5 ms kept before the onset"
-    assert np.abs(samples[int(0.01 * WORKING_SR): int(0.05 * WORKING_SR)]).max() > 0.2, "then the note"
+    assert abs(len(samples) / WORKING_SR - 1.5) < 0.01, "the whole take arrives, lead silence and all"
     plan = ts.plan(raw, "45", "quick")
     assert plan.seeded and plan.notes == [45]
+    assert plan.crop is not None and abs(plan.crop[0] - 0.295) < 0.003, "cropped to ~5 ms before the note"
+    assert np.abs(plan.samples[: int(0.002 * WORKING_SR)]).max() < 1e-3, "the 5 ms kept before the onset"
+    assert np.abs(plan.samples[int(0.01 * WORKING_SR): int(0.05 * WORKING_SR)]).max() > 0.2, "then the note"

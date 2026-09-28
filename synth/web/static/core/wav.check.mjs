@@ -1,9 +1,11 @@
-// node synth/web/static/core/wav.check.mjs — exit 0 = the browser's WAV writer and onset trim hold.
+// node synth/web/static/core/wav.check.mjs — exit 0 = the browser's WAV writer holds.
 // Reads the bytes back by hand (not with wav.js), so a wrong header or sample scale cannot hide.
 // tests/test_match_record.py also decodes these bytes with the server's own reader.
 import assert from "node:assert/strict";
 
-import { encodeWav, joinChunks, peakOf, normalize, onsetIndex, trimToOnset } from "./wav.js";
+import * as W from "./wav.js";
+
+const { encodeWav, joinChunks, peakOf, normalize } = W;
 
 let checks = 0;
 const ok = (cond, msg) => { assert.ok(cond, msg); checks++; };
@@ -36,33 +38,7 @@ const nrm = normalize(Float32Array.from([0.1, -0.2]), 0.9);
 ok(Math.abs(peakOf(nrm) - 0.9) < 1e-6 && Math.abs(nrm[0] - 0.45) < 1e-6, "normalize scales to the peak asked for");
 ok(normalize(new Float32Array(4)).every((x) => x === 0), "silence stays silence");
 
-// ── the onset: silence, a note, and the rules that keep a click or room noise out ─
-const rate = 48000;
-function take({ lead = 0.5, note = 0.6, amp = 0.5, noise = 0, click = null, seed = 1 } = {}) {
-  const n = Math.round((lead + note + 0.2) * rate), x = new Float32Array(n);
-  let s = seed;
-  const rnd = () => { s = (s * 16807) % 2147483647; return s / 2147483647 - 0.5; };
-  for (let i = 0; i < n; i++) {
-    const t = i / rate - lead;
-    x[i] = noise * rnd();
-    if (t >= 0 && t < note) x[i] += amp * Math.sin(2 * Math.PI * 130.8 * t) * Math.min(1, t / 0.002);
-  }
-  if (click != null) for (let i = 0; i < 0.003 * rate; i++) x[Math.round(click * rate) + i] += (i % 2 ? -0.9 : 0.9);
-  return x;
-}
-const ms = (i) => (i / rate) * 1000;
-const at = onsetIndex(take(), rate);
-ok(Math.abs(ms(at) - 500) <= 2, `a note after silence starts at 500 ms (${ms(at).toFixed(1)})`);
-const trimmed = trimToOnset(take(), rate, { keepMs: 5 });
-ok(Math.abs(ms(take().length - trimmed.length) - 495) <= 2, "the trim keeps about 5 ms before the onset");
-ok(trimmed instanceof Float32Array && trimmed.length < take().length, "a new, shorter array");
-const clicky = onsetIndex(take({ click: 0.2 }), rate);
-ok(Math.abs(ms(clicky) - 500) <= 2, `a click before the note is not the onset (${ms(clicky).toFixed(1)} ms)`);
-const noisy = onsetIndex(take({ noise: 0.01, amp: 0.3 }), rate);
-ok(Math.abs(ms(noisy) - 500) <= 3, `room noise is not the onset (${ms(noisy).toFixed(1)} ms)`);
-ok(onsetIndex(take({ lead: 0 }), rate) === 0, "a note from the first sample is kept whole");
-ok(onsetIndex(new Float32Array(rate), rate) === 0 && trimToOnset(new Float32Array(100), rate).length === 100, "silence: nothing is cut");
-ok(onsetIndex(new Float32Array(10), rate) === 0, "shorter than a window: nothing is cut");
-ok(trimToOnset(Array.from(take()), rate).length === trimmed.length, "plain arrays work too");
+// ── no trim here: the server finds the sound in the whole take (synth/match/target_prep.py) ─
+ok(!("trimToOnset" in W) && !("onsetIndex" in W), "the browser never crops a take: one place decides");
 
 console.log(`wav: ${checks} checks passed`);

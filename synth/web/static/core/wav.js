@@ -1,6 +1,7 @@
 // core/wav.js — targets made in the browser (a recording, or a test note of the synth's current
-// sound): join the recorded chunks, trim the silence before the first onset, and write a 16-bit
-// mono PCM WAV that the server reads like any dropped file (synth/match/twin_session.decode_upload).
+// sound): join the recorded chunks and write a 16-bit mono PCM WAV that the server reads like any
+// dropped file (synth/match/twin_session.decode_upload). The browser never trims a take: the server
+// finds the sound in it and crops (synth/match/target_prep.py), the one place that decides.
 // Pure: no DOM, no Web Audio. `node core/wav.check.mjs` checks it (W-rec, docs/design/ROUND2.md §3).
 
 /** 16-bit PCM mono WAV bytes (RIFF) of `samples` (floats; clamped to −1..1, NaN → 0) at `sampleRate`. */
@@ -50,42 +51,4 @@ export function normalize(samples, peak = 0.9) {
   const out = new Float32Array(samples.length);
   for (let i = 0; i < samples.length; i++) out[i] = samples[i] * g;
   return out;
-}
-
-/**
- * Where the sound starts, as a sample index: the first ~1 ms window that rises above both
- * `thresholdDb` under the loudest window (the server's rule, capture.find_onset) and `overFloorDb`
- * over the quiet floor (the 10th percentile window, so a noisy room does not count as the note),
- * and stays up: the median of the next `holdMs` windows is above too, so a click is not a note.
- * 0 when nothing qualifies (the caller then keeps everything).
- */
-export function onsetIndex(samples, sampleRate, { thresholdDb = -45, overFloorDb = 10, holdMs = 20 } = {}) {
-  const win = Math.max(1, Math.round(sampleRate / 1000));
-  const nWin = Math.floor(samples.length / win);
-  if (nWin < 1) return 0;
-  const rms = new Float64Array(nWin);
-  let peak = 0;
-  for (let w = 0; w < nWin; w++) {
-    let s = 0;
-    for (let i = w * win, e = i + win; i < e; i++) s += samples[i] * samples[i];
-    rms[w] = Math.sqrt(s / win);
-    if (rms[w] > peak) peak = rms[w];
-  }
-  if (!(peak > 0)) return 0;
-  const floor = Float64Array.from(rms).sort()[Math.floor(0.1 * (nWin - 1))];
-  const thr = Math.max(peak * 10 ** (thresholdDb / 20), floor * 10 ** (overFloorDb / 20));
-  const hold = Math.max(1, Math.round((holdMs / 1000) * sampleRate / win));
-  for (let w = 0; w < nWin; w++) {
-    if (rms[w] < thr) continue;
-    const next = Array.from(rms.subarray(w, Math.min(nWin, w + hold))).sort((a, b) => a - b);
-    if (next[Math.floor(next.length / 2)] >= thr) return w * win;
-  }
-  return 0;
-}
-
-/** `samples` from `keepMs` before the onset (a new array, so the recorder's buffers can go). */
-export function trimToOnset(samples, sampleRate, { keepMs = 5, ...opts } = {}) {
-  const at = onsetIndex(samples, sampleRate, opts);
-  const start = Math.max(0, at - Math.round((keepMs / 1000) * sampleRate));
-  return Float32Array.from(samples.subarray ? samples.subarray(start) : samples.slice(start));
 }

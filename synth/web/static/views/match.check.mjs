@@ -284,4 +284,45 @@ ok(M.phaseText(mk).word === "Making the test note" && M.phaseText(mk).detail ===
 ok(M.phaseText({ ...mk, making: { note: 50, source: "s1" } }).detail === "D3, played by the S-1", "…by the S-1");
 ok(M.phaseText({ ...mk, phase: "error", errorWord: "Could not make the test note", error: "x" }).word === "Could not make the test note", "its own error word");
 
+// ── round 7: the target the matcher gets (POST /api/match/prepare; synth/match/target_prep.py) ──
+const matchJs = readFileSync(join(here, "match.js"), "utf8");
+ok(!/trimToOnset|onsetIndex/.test(matchJs), "the view uploads the whole take: the server alone crops");
+const prep = { duration: 5.6, crop: [1.995, 3.093], onset: 2.0, gate_s: 0.8, notes: [48], warnings: [] };
+ok(M.foundLine(prep) === "Note C3, held 0.8 s, from 2.0 s to 3.1 s", "the found line");
+ok(M.foundLine({ ...prep, notes: [55, 59, 62], gate_s: null }) === "Notes G3 + B3 + D4, from 2.0 s to 3.1 s", "a chord, and no key-up seen");
+ok(M.foundLine({ ...prep, crop: [2.0, 2.02] }) === "Note C3, held 0.8 s, from 2.00 s to 2.02 s", "a short sound to the hundredth");
+ok(M.foundLine({ notes: [], crop: [0, 1] }) === "From 0.0 s to 1.0 s" && M.foundLine(null) === "The sound", "sentence case whatever is missing");
+eq(M.foundNotes({ notes: [60, 48, 48, 200, 1.5, 64, 67, 72] }), [48, 60, 64, 67], "found notes: real, once each, low to high, four at most");
+ok(M.lowCFor([55, 59]) === 48 && M.lowCFor([61]) === 60 && M.lowCFor([]) === 48 && M.lowCFor([], 36) === 36 && M.lowCFor([127]) === 96,
+  "the keyboard shows the found notes from their C");
+eq(M.patchNotes(new Set([64, 60]), prep), [60, 64], "Play my patch plays the marked notes...");
+eq(M.patchNotes(new Set(), prep), [48], "...else the found one");
+eq(M.patchNotes(new Set(), null), [], "...else nothing");
+ok(M.patchHold(prep) === 0.8, "held as long as the target's key was");
+ok(M.patchHold({ ...prep, gate_s: null }) === 3.093 - 1.995 && M.patchHold({ gate_s: null, crop: [1, 1.1] }) === 0.3
+  && M.patchHold({ gate_s: null, crop: [0, 9] }) === 4 && M.patchHold(null) === M.TEST_GATE, "no key-up seen: the sound's length, 0.3 to 4 s");
+const marks = M.cropMarks(prep);
+ok(Math.abs(marks.from - 1.995 / 5.6) < 1e-9 && Math.abs(marks.to - 3.093 / 5.6) < 1e-9 && Math.abs(marks.keyUp - 2.8 / 5.6) < 1e-9, "the marks as fractions of the take");
+ok(M.cropMarks({ ...prep, gate_s: null }).keyUp === null && M.cropMarks({ ...prep, gate_s: 2 }).keyUp === null, "no key-up mark unless seen inside the crop");
+ok(M.cropMarks(null) === null && M.cropMarks({ duration: 0, crop: [0, 1] }) === null, "no marks without a crop");
+eq(Array.from(M.outlineColumns([0.1, 0.5, 0.2, 1, 0.3, 0.4], 3)), [0.5, 1, 0.4].map(Math.fround), "the outline, each column the loudest it covers");
+ok(M.outlineColumns([0.5], 4).every((v) => Math.abs(v - 0.5) < 1e-6) && M.outlineColumns([], 4).every((v) => v === 0), "fewer slices than columns; none");
+const drawJs = readFileSync(join(here, "../design/draw.js"), "utf8");
+ok(+/const PAD = (\d+);/.exec(drawJs)[1] === M.WELL_PAD && M.wellX(330, 0) === 10 && M.wellX(330, 1) === 320,
+  "the crop marks sit where design/draw.js draws the take (its PAD)");
+eq(M.dragCrop([1, 2], "from", 0.5, 3), [1.5, 2], "dragging the start mark");
+eq(M.dragCrop([1, 2], "from", 0.9, 3), [1.95, 2], "...never past the end (50 ms at least)");
+eq(M.dragCrop([1, 2], "to", 0.1, 3), [1, 1.05], "...the end never before the start");
+eq(M.dragCrop([1, 2], "to", 2, 3), [1, 3], "...nor past the take");
+const loadedWord = (target) => M.phaseText(M.initialRun(), { loaded: true, target });
+ok(loadedWord({ state: "ok", prep }).detail === "Note C3, held 0.8 s, from 2.0 s to 3.1 s. Check the marked notes, then press Match.", "ready: what was found");
+ok(loadedWord({ state: "pending" }).detail === "Finding the sound in the take.", "while the server looks");
+ok(loadedWord({ state: "failed", error: "No clear sound was found." }).word === "No clear sound"
+  && loadedWord({ state: "failed", error: "No clear sound was found." }).detail === "No clear sound was found.", "no clear sound: the server's words");
+ok(loadedWord({ state: "unavailable" }).detail === "Mark the notes you hear, then press Match." && loadedWord(null).word === "Ready to match", "else as before");
+const longest = `${M.foundLine({ duration: 99, crop: [12.3, 14.5], gate_s: 1.2, notes: [61, 63, 66, 68] })}. Check the marked notes, then press Match.`;
+ok(longest.length <= 110, `the found line fits the status row beside its word (${longest.length})`);
+ok(M.hints.map((x) => x.key).join(" ") === "A – K Z  X Space ?" && M.hints.every((x) => /^[A-Z]/.test(x.label)) && M.default.hints === M.hints,
+  "the keys in the bottom strip: A to K play here too");
+
 console.log(`match view: ${checks} checks passed`);

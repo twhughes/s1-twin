@@ -6,17 +6,29 @@
 // Round 2 (docs/design/ROUND2.md §3), server mode only: a target can also be recorded from a
 // browser input, or made from the synth's current sound (one note, played by the twin or the
 // S-1) as a test, which ends with a report of how many settings the matcher found again.
+// Round 7 (W-rec2): the whole take is uploaded and the server finds the sound in it
+// (POST /api/match/prepare, synth/match/target_prep.py): the well draws the crop the matcher gets,
+// the found notes are marked, "Play target" plays that crop and "Play my patch" plays the marked
+// note on the synth. A to K play the synth here too.
 
 import { knob } from "../design/knob.js";
 import { seg, GLYPHS } from "../design/seg.js";
 import * as draw from "../design/draw.js";
 import { rgbOf, lum, noteName } from "../design/colors.js";
 import { readHash } from "../core/flags.js";
-import { encodeWav, joinChunks, normalize, peakOf, trimToOnset } from "../core/wav.js";
+import { encodeWav, joinChunks, normalize, peakOf } from "../core/wav.js";
 import { fitView } from "../core/fit.js";
 
 export const id = "match";
 export const title = "Match";
+// The bottom strip's key hints on this view (app.js): A to K play the synth here too, so a patch can
+// be heard beside the target; the ? list has every key.
+export const hints = [
+  { key: "A – K", label: "Play" },
+  { key: "Z  X", label: "Octave" },
+  { key: "Space", label: "Play/pause" },
+  { key: "?", label: "Keys" },
+];
 
 // ── what the twin models: 18 knobs + 3 switches, in the plate's signal order ─────────
 export const STAGES = [
@@ -96,15 +108,21 @@ export function reduceFrame(s, f) {
   return next;
 }
 
-/** The phase in plain words, plus a detail line. */
-export function phaseText(s, { staticMode = false, loaded = false, recording = false } = {}) {
+/** The phase in plain words, plus a detail line. `target` (idle, a sound loaded): what the server
+ *  found in it, {state: "pending" | "ok" | "failed" | "unavailable", prep, error} (POST /api/match/prepare). */
+export function phaseText(s, { staticMode = false, loaded = false, recording = false, target = null } = {}) {
   switch (s.phase) {
     case "idle":
       if (staticMode) return { word: "Choose a recorded run", detail: "" };
       if (recording === "opening") return { word: "Opening the input", detail: "If the browser asks, allow the microphone." };
       if (recording) return { word: "Recording", detail: `Play the sound, then press Stop. It stops by itself at ${RECORD_MAX_S} s.` };
-      return loaded ? { word: "Ready to match", detail: "Mark the notes you hear, then press Match." }
-        : { word: "Waiting for a sound", detail: "" };
+      if (!loaded) return { word: "Waiting for a sound", detail: "" };
+      if (target?.state === "failed") return { word: "No clear sound", detail: target.error || "" };
+      if (target?.state === "pending") return { word: "Ready to match", detail: "Finding the sound in the take." };
+      if (target?.state === "ok" && target.prep) {
+        return { word: "Ready to match", detail: `${foundLine(target.prep)}. Check the marked notes, then press Match.` };
+      }
+      return { word: "Ready to match", detail: "Mark the notes you hear, then press Match." };
     case "connecting": return { word: "Opening the matcher", detail: "" };
     case "pitch": return { word: "Finding the notes", detail: (s.seeded ? "Marked: " : "Found: ") + s.chord };
     case "gd": {
@@ -476,6 +494,78 @@ export function recordError(e) {
 /** A peak level as 0..1 on a −60..0 dBFS scale: the live recording well. */
 export const meterLevel = (peak) => Math.max(0, Math.min(1, (20 * Math.log10(Math.max(peak, 1e-9)) + 60) / 60));
 
+// ── pure: the target the matcher gets (round 7; the server decides, POST /api/match/prepare) ────
+/** Seconds as the found line says them: "2.1 s" (to the hundredth when `fine`: a short sound). */
+const secs = (t, fine = false) => `${t.toFixed(fine ? 2 : 1)} s`;
+/** The one line under a prepared target: "Note C3, held 0.8 s, from 2.1 s to 3.4 s" ("Notes C3 + E3",
+ *  and no "held" when the key-up could not be seen). */
+export function foundLine(prep) {
+  const notes = Array.isArray(prep?.notes) ? prep.notes.filter(Number.isFinite) : [];
+  const parts = [];
+  if (notes.length) parts.push(`${notes.length > 1 ? "Notes" : "Note"} ${notes.map(noteName).join(" + ")}`);
+  if (Number.isFinite(prep?.gate_s)) parts.push(`held ${secs(prep.gate_s)}`);
+  const [t0, t1] = Array.isArray(prep?.crop) ? prep.crop : [];
+  if (Number.isFinite(t0) && Number.isFinite(t1)) {
+    const fine = t1 - t0 < 0.3 || secs(t0) === secs(t1);
+    parts.push(`from ${secs(t0, fine)} to ${secs(t1, fine)}`);
+  }
+  const line = parts.join(", ");
+  return line ? line[0].toUpperCase() + line.slice(1) : "The sound";
+}
+/** The notes to pre-mark on "Which notes?": the ones found, at most four. */
+export const foundNotes = (prep) => [...new Set((Array.isArray(prep?.notes) ? prep.notes : [])
+  .filter((n) => Number.isInteger(n) && n >= 0 && n <= 127))].sort((a, b) => a - b).slice(0, 4);
+/** The keyboard's lowest C (it shows two octaves from there) for these notes: the C at or under the
+ *  lowest; `fallback` when there are none. */
+export function lowCFor(notes, fallback = 48) {
+  if (!notes.length) return fallback;
+  const lo = Math.min(...notes);
+  return Math.max(0, Math.min(96, lo - (lo % 12)));
+}
+/** What "Play my patch" plays: the marked notes, else the found ones (at most four). */
+export function patchNotes(seeds, prep) {
+  const marked = [...(seeds || [])].filter(Number.isFinite).sort((a, b) => a - b);
+  return (marked.length ? marked : foundNotes(prep)).slice(0, 4);
+}
+/** How long "Play my patch" holds its keys: the target's own held time, else its length (a pluck:
+ *  the key is simply held while it sounds), 0.3 to 4 s; 1.2 s when nothing is known. */
+export function patchHold(prep) {
+  if (Number.isFinite(prep?.gate_s) && prep.gate_s > 0) return Math.min(4, Math.max(0.05, prep.gate_s));
+  const [t0, t1] = Array.isArray(prep?.crop) ? prep.crop : [];
+  if (Number.isFinite(t0) && Number.isFinite(t1) && t1 > t0) return Math.min(4, Math.max(0.3, t1 - t0));
+  return TEST_GATE;
+}
+/** Where the crop lies in the take, as fractions of it: {from, to, keyUp (null if unseen)}. */
+export function cropMarks(prep) {
+  const d = prep?.duration, [t0, t1] = Array.isArray(prep?.crop) ? prep.crop : [];
+  if (!(d > 0) || !Number.isFinite(t0) || !Number.isFinite(t1)) return null;
+  const f = (t) => Math.max(0, Math.min(1, t / d));
+  const up = Number.isFinite(prep.gate_s) && Number.isFinite(prep.onset) ? prep.onset + prep.gate_s : NaN;
+  return { from: f(t0), to: f(t1), keyUp: Number.isFinite(up) && up < t1 ? f(up) : null };
+}
+/** The server's outline of the take (one 0..1 peak a slice) at `cols` columns, each the loudest it covers. */
+export function outlineColumns(peaks, cols) {
+  const n = Array.isArray(peaks) ? peaks.length : 0, out = new Float32Array(Math.max(0, cols | 0));
+  if (!n || !out.length) return out;
+  for (let c = 0; c < out.length; c++) {
+    const a = Math.floor((c * n) / out.length), b = Math.max(a + 1, Math.floor(((c + 1) * n) / out.length));
+    let m = 0;
+    for (let i = a; i < Math.min(n, b); i++) m = Math.max(m, Number(peaks[i]) || 0);
+    out[c] = m;
+  }
+  return out;
+}
+/** The x of a fraction of the take in a well `w` px wide (design/draw.js maps with PAD = 10; match.check.mjs holds them together). */
+export const WELL_PAD = 10;
+export const wellX = (w, frac) => WELL_PAD + frac * (w - 2 * WELL_PAD);
+/** A marker dragged to `frac` of the take (0..1): the new crop, [t0, t1] seconds, at least 50 ms long. */
+export function dragCrop(crop, which, frac, duration, least = 0.05) {
+  const t = Math.max(0, Math.min(1, frac)) * duration;
+  const [t0, t1] = crop;
+  const r = (v) => Math.round(v * 1000) / 1000;
+  return which === "from" ? [r(Math.max(0, Math.min(t, t1 - least))), t1] : [t0, r(Math.min(duration, Math.max(t, t0 + least)))];
+}
+
 // ── the view ─────────────────────────────────────────────────────────────────────────
 const CSS = `
 /* One screen (core/fit.js): above 1180 px the view is laid out at 1470 px and must fit 1470 × 760 under the
@@ -489,7 +579,8 @@ const CSS = `
 
 /* the left column: the target, the notes, the search */
 .v-match .mx-input > * + * { margin-top: 10px; }
-.v-match .mx-input > .mx-early, .v-match .mx-input > .mx-recmsg { margin-top: 5px; }
+.v-match .mx-input > .mx-recmsg { margin-top: 5px; }
+.v-match .mx-listen { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 10px; }
 .v-match .mx-input .heading { margin-bottom: 0; }
 .v-match .mx-input .note { margin: 3px 0 0; max-width: none; }
 .v-match .mx-drop { position: relative; height: 96px; display: flex; flex-direction: column; align-items: center; justify-content: center;
@@ -553,7 +644,7 @@ const CSS = `
 .v-match .mx-close b { font: 300 36px/1 var(--sans); font-variant-numeric: tabular-nums; letter-spacing: -0.01em; }
 .v-match .mx-close span { font-size: 13.5px; color: var(--ink-2); }
 .v-match .mx-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; }
-.v-match .mx-run > .mx-closenote { margin: 3px 0 0; max-width: none; }
+.v-match .mx-run > .mx-closenote, .v-match .mx-run > .mx-warn { margin: 3px 0 0; max-width: none; }
 .v-match .mx-panelhead { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 28px; margin-top: 14px; }
 .v-match .mx-panelhead .seg .k-label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 .v-match .mx-panelhead .mx-close b { font-size: 26px; }
@@ -609,7 +700,7 @@ export function unmount() {
   try { current.destroy(); } finally { current = null; }
 }
 
-export default { id, title, mount, unmount };
+export default { id, title, mount, unmount, hints };
 
 // A tiny element builder: h("div", {class: "x", onclick: fn}, child, "text", …)
 function h(tag, attrs = {}, ...kids) {
@@ -651,6 +742,14 @@ function createView(root, ctx) {
   let making = false;           // the test note is being made (rendered by the twin, or played by the S-1)
   let rec = null;               // a recording in progress (see startRecording)
   let inputs = [], chosenInput = "";
+  // What the server found in the loaded target (POST /api/match/prepare): the crop the matcher gets,
+  // the key-up, the notes, warnings. state: "none" | "pending" | "ok" | "failed" (no clear sound) |
+  // "unavailable" (the server could not say; the match still crops on its own).
+  let prep = null, prepState = "none", prepError = "", prepToken = 0;
+  let cropOverride = null;      // [t0, t1]: the crop's edges as the user dragged them
+  let drag = null;              // a crop mark being dragged: {which: "from" | "to", crop: [t0, t1], moved}
+  let swallowClick = false;     // the click that ends a drag is not a click on the well
+  let patch = null;             // "Play my patch": {notes, timer} while its keys are held
 
   // ── layout ──────────────────────────────────────────────────────────────────────
   const view = h("section", { class: "v-match", "aria-label": "Match a sound", "data-phase": "idle" });
@@ -662,6 +761,9 @@ function createView(root, ctx) {
   // one screen: the view's design size, scaled down evenly to fit a smaller window (core/fit.js)
   const fit = fitView(view, { onFit: (s) => { view.dataset.fit = String(s); } });
   disposers.push(() => fit.destroy());
+  // A to K play the synth here too (core/keys.js), so a patch can be heard beside the target.
+  ctx.keys?.qwerty(true);
+  disposers.push(() => ctx.keys?.qwerty(false));
 
   input.append(
     h("h2", { class: "heading", text: "Match a sound" }),
@@ -678,9 +780,14 @@ function createView(root, ctx) {
   const dropFile = h("p", { class: "mx-file" });
   const drop = h("div", { class: "well mx-drop", role: "button", tabindex: "0", "data-role": "drop",
     "aria-label": "Drop a sound here, or press Enter to choose a file" }, dropCanvas, dropAsk, dropFile, fileInput);
-  const playTargetEarly = h("button", { type: "button", class: "quiet", disabled: true, "data-action": "play-target-early",
-    onclick: () => playBuffer("target") }, "Play target");
-  const earlyRow = h("div", { class: "mx-go mx-early mx-hidden" }, playTargetEarly);
+  // Listening, before a match: the crop the matcher gets, and the synth's own sound on the marked note.
+  const playCrop = h("button", { type: "button", class: "pill", disabled: true, "data-action": "play-crop",
+    onclick: () => playBuffer("crop") }, "Play target");
+  const playPatchBtn = h("button", { type: "button", class: "pill", disabled: true, "data-action": "play-patch",
+    onclick: () => playPatch() }, "Play my patch");
+  const resetCrop = h("button", { type: "button", class: "quiet mx-hidden", "data-action": "reset-crop",
+    onclick: () => setCrop(null) }, "Reset crop");
+  const listenRow = h("div", { class: "mx-listen mx-hidden", "data-role": "listen" }, playCrop, playPatchBtn, resetCrop);
   const recBtn = h("button", { type: "button", class: "pill", "data-action": "record",
     onclick: () => (rec ? stopRecording() : startRecording()) }, "Record");
   const inputSel = h("select", { "data-role": "input", onchange: () => { chosenInput = inputSel.value; } },
@@ -707,7 +814,7 @@ function createView(root, ctx) {
       drop,
       recRow,
       recMsg,
-      earlyRow,
+      listenRow,
       testBox,
       h("div", {},
         h("h3", { class: "mx-sub", text: "Which notes?" }),
@@ -716,7 +823,7 @@ function createView(root, ctx) {
         h("div", { class: "mx-keyrow" }, marked,
           h("button", { type: "button", class: "quiet", onclick: () => shiftKeys(-12) }, "Lower"),
           h("button", { type: "button", class: "quiet", onclick: () => shiftKeys(12) }, "Higher"),
-          h("button", { type: "button", class: "quiet", onclick: () => { seeds.clear(); paintKeys(); } }, "Clear")),
+          h("button", { type: "button", class: "quiet", onclick: () => { seeds.clear(); paintKeys(); syncControls(); } }, "Clear")),
       ),
       h("div", { class: "row mx-segs" }, qualitySeg.el, startSeg.el),
       h("p", { class: "note", text: COPY.search }),
@@ -745,6 +852,7 @@ function createView(root, ctx) {
   const tag = h("span", { class: "mx-tag mx-hidden", "data-role": "recorded" });
   const closeNum = h("b");
   const closeNote = h("p", { class: "note mx-closenote", text: COPY.closeness });
+  const warnLine = h("p", { class: "note mx-warn mx-hidden", role: "status", "data-role": "warnings" });
   const playTarget = h("button", { type: "button", class: "pill", "data-action": "play-target", onclick: () => playBuffer("target") }, "Play target");
   const playMatch = h("button", { type: "button", class: "pill", "data-action": "play-match", onclick: () => playBuffer("match") }, "Play match");
   const loadBtn = h("button", { type: "button", class: "pill", "data-action": "load", onclick: loadIntoSynth }, "Load into the synth");
@@ -773,6 +881,7 @@ function createView(root, ctx) {
         h("span", { class: "note", text: COPY.plume })))),
     tag,
     h("div", { class: "mx-row" }, h("p", { class: "mx-status", role: "status" }, word, detail), result),
+    warnLine,
     closeNote,
     panelHead,
     h("div", { class: "mx-panel" }, knobsBox, report),
@@ -874,6 +983,7 @@ function createView(root, ctx) {
     else seeds.add(n);
     audition(n);
     paintKeys();
+    syncControls();                 // "Play my patch" plays the marked notes
   }
   // A short audition of a marked key. Its note-off is never cancelled (a stuck note on the
   // S-1 is worse than a late one); unmount sends any pending note-offs at once.
@@ -889,7 +999,7 @@ function createView(root, ctx) {
 
   // ── the target: a file, a recording, or a test note, all loaded the same way ─────────
   const busy = () => running || making || !!rec;
-  drop.addEventListener("click", () => { if (!busy()) fileInput.click(); });
+  drop.addEventListener("click", () => { if (swallowClick) { swallowClick = false; return; } if (!busy()) fileInput.click(); });
   drop.addEventListener("keydown", (e) => { if ((e.key === "Enter" || e.key === " ") && !busy()) { e.preventDefault(); fileInput.click(); } });
   ["dragenter", "dragover"].forEach((ev) => drop.addEventListener(ev, (e) => { e.preventDefault(); drop.classList.add("over"); }));
   ["dragleave", "drop"].forEach((ev) => drop.addEventListener(ev, (e) => { e.preventDefault(); drop.classList.remove("over"); }));
@@ -901,7 +1011,8 @@ function createView(root, ctx) {
     if (f.size > 25 * 1024 * 1024) { setError("That file is too large (25 MB max). Trim it to a few seconds of the sound."); return; }
     await loadTarget(await f.arrayBuffer(), f.name);
   }
-  /** Make `bytes` the target, named `name` in the well ("Recording, 2.4 s"); `testInfo` when it is a test note. */
+  /** Make `bytes` the target, named `name` in the well ("Recording, 2.4 s"); `testInfo` when it is a test note.
+   *  The whole take goes to the server, which finds the sound in it (prepare()); the well then draws the crop. */
   async function loadTarget(bytes, name, testInfo = null) {
     if (running) return;
     fileBytes = bytes;
@@ -909,24 +1020,60 @@ function createView(root, ctx) {
     targetLabel = name;
     test = testInfo;
     run = initialRun(); recorded = false;
+    prep = null; prepError = ""; cropOverride = null; decoded.crop = null;
+    prepState = staticMode ? "none" : "pending";
     drop.classList.add("loaded");
     dropFile.textContent = name;
     goNote.textContent = test ? testGoWords(test.notes) : "";
+    listenRow.classList.remove("mx-hidden");
     syncControls();
     renderAll();
+    if (!staticMode) prepare(bytes, ++prepToken);       // not awaited: a test's match starts at once
     try {
       targetBuffer = await ac().decodeAudioData(fileBytes.slice(0));
       targetLabel = `${name}, ${targetBuffer.duration.toFixed(1)} s`;
-      playTargetEarly.disabled = false;
-      earlyRow.classList.remove("mx-hidden");
     } catch (_) {
-      playTargetEarly.disabled = true;   // e.g. AIFF: the browser cannot decode it; the server still can
-      earlyRow.classList.add("mx-hidden");
+      targetBuffer = null;               // e.g. AIFF: the browser cannot decode it; the server still can
+      if (prep) targetLabel = `${name}, ${prep.duration.toFixed(1)} s`;
     }
-    if (!rec) dropFile.textContent = targetLabel;
+    if (!rec && fileBytes === bytes) dropFile.textContent = targetLabel;
+    syncControls();
+    drawDrop();
+  }
+  /** Ask the server what the matcher will get from `bytes` (with the user's own edges when `crop`), and
+   *  show it: the crop in the well, the found line, the warnings; `mark`: mark the found notes (a new target). */
+  async function prepare(bytes, mine, { crop = null, mark = true } = {}) {
+    let answer = null, failed = null;
+    try {
+      const q = crop ? `?crop=${crop[0].toFixed(3)},${crop[1].toFixed(3)}` : "";
+      answer = await ctx.server.api("POST", `/api/match/prepare${q}`, bytes, { form: true });
+    } catch (e) { failed = e; }
+    if (mine !== prepToken || destroyed) return;          // a newer target (or crop) took over
+    if (answer && Array.isArray(answer.crop)) {
+      prep = answer; prepState = "ok"; decoded.crop = null;
+      if (!targetBuffer && fileBytes === bytes) targetLabel = targetLabel.replace(/(, [\d.]+ s)?$/, `, ${prep.duration.toFixed(1)} s`);
+      if (mark && !test && !running) {                   // mark what was found; the keys can change it
+        seeds.clear();
+        foundNotes(prep).forEach((n) => seeds.add(n));
+        showRunNotes = false;
+        const low = lowCFor([...seeds], lowC);
+        if (low !== lowC) { lowC = low; buildKeys(); }
+      }
+    } else {
+      prep = null;
+      prepState = failed?.status === 422 ? "failed" : "unavailable";
+      prepError = failed?.status === 422 ? failed.message : "";
+    }
+    if (!rec && fileBytes === bytes) dropFile.textContent = targetLabel;
+    syncControls();
+    renderAll();
     drawDrop();
   }
   function drawDrop() {
+    // the crop on the well itself, for anything that reads the page (a test, a screen reader's label)
+    const shown = drag && prep ? drag.crop : prep?.crop;
+    drop.dataset.crop = shown ? shown.join(",") : "";
+    drop.dataset.duration = prep ? String(prep.duration) : "";
     if (!dropCanvas.isConnected) return;
     const [c, w, hh] = draw.fit(dropCanvas);
     const above = Math.max(20, hh - 22);  // the sound draws above the well's name line
@@ -936,10 +1083,73 @@ function createView(root, ctx) {
       draw.playhead(c, w, above, frac);
       return;
     }
-    if (!targetBuffer) return;
-    const data = targetBuffer.getChannelData(0);
-    const top = draw.peaksPerColumn(data, Math.max(2, Math.floor(w / 2)));
+    const cols = Math.max(2, Math.floor(w / 2));
+    const marks = cropMarks(drag && prep ? { ...prep, crop: drag.crop } : prep);
+    const top = prep?.peaks?.length ? outlineColumns(prep.peaks, cols)
+      : targetBuffer ? draw.peaksPerColumn(targetBuffer.getChannelData(0), cols) : null;
+    if (!top) return;
+    if (!marks) { draw.hatchShape(c, w, above, top, { step: 2 }); return; }
+    // The take, dimmed; the crop the matcher gets, clear; thin marks at its edges; the key-up, dotted.
+    draw.hatchShape(c, w, above, top, { step: 2, alpha: 0.2, edge: draw.INK3 });
+    const x0 = wellX(w, marks.from), x1 = wellX(w, marks.to);
+    c.save();
+    c.beginPath(); c.rect(x0, 0, Math.max(1, x1 - x0), hh); c.clip();
     draw.hatchShape(c, w, above, top, { step: 2 });
+    c.restore();
+    draw.playhead(c, w, above, marks.from);
+    draw.playhead(c, w, above, marks.to);
+    if (marks.keyUp != null && wellX(w, marks.keyUp) - x0 > 12) {   // the words only where they fit before the end mark
+      draw.keyUpMark(c, w, above, marks.keyUp, x1 - wellX(w, marks.keyUp) > 46 ? "key up" : "");
+    }
+  }
+
+  // ── the crop's edges, by hand: drag a mark in the well; the server reads the sound between them ──
+  /** Where a pointer is in the well: the canvas's own px (the view may be scaled to fit) and the take's fraction. */
+  function wellPoint(clientX) {
+    const r = dropCanvas.getBoundingClientRect(), w = dropCanvas.clientWidth || 1;
+    const x = ((clientX - r.left) / (r.width || 1)) * w;
+    return { x, w, frac: (x - WELL_PAD) / Math.max(1, w - 2 * WELL_PAD) };
+  }
+  /** The mark within reach of the pointer ("from" or "to"), or null. */
+  function markNear(clientX) {
+    const marks = cropMarks(prep);
+    if (!marks || prepState !== "ok" || busy()) return null;
+    const { x, w } = wellPoint(clientX);
+    const d0 = Math.abs(x - wellX(w, marks.from)), d1 = Math.abs(x - wellX(w, marks.to));
+    return Math.min(d0, d1) > 7 ? null : d0 < d1 || (d0 === d1 && x < wellX(w, marks.from)) ? "from" : "to";
+  }
+  drop.addEventListener("pointerdown", (e) => {
+    const which = markNear(e.clientX);
+    if (!which) return;
+    e.preventDefault();
+    drop.setPointerCapture?.(e.pointerId);
+    drag = { which, crop: [...prep.crop], moved: false };
+  });
+  drop.addEventListener("pointermove", (e) => {
+    if (!drag) { drop.style.cursor = markNear(e.clientX) ? "ew-resize" : ""; return; }
+    drag.crop = dragCrop(drag.crop, drag.which, wellPoint(e.clientX).frac, prep.duration);
+    drag.moved = true;
+    scheduleDrop();
+  });
+  const endDrag = (e) => {
+    if (!drag) return;
+    const d = drag;
+    drag = null;
+    if (e?.type === "pointerup") { swallowClick = true; setTimeout(() => { swallowClick = false; }, 0); }
+    if (d.moved && prep && (d.crop[0] !== prep.crop[0] || d.crop[1] !== prep.crop[1])) setCrop(d.crop);
+    else drawDrop();
+  };
+  drop.addEventListener("pointerup", endDrag);
+  drop.addEventListener("pointercancel", endDrag);
+  /** Use the user's edges (`crop` = [t0, t1] seconds), or the found ones again (null). The notes stay as marked. */
+  function setCrop(crop) {
+    if (!fileBytes || staticMode || busy()) return;
+    cropOverride = crop;
+    decoded.crop = null;
+    if (crop && prep) prep = { ...prep, crop };           // the new edges show at once; the server's reading follows
+    prepState = "pending";
+    syncControls(); renderAll(); drawDrop();
+    prepare(fileBytes, ++prepToken, { crop, mark: false });
   }
 
   // ── recording a target from a browser input ────────────────────────────────────────
@@ -1103,8 +1313,8 @@ function createView(root, ctx) {
       syncControls(); renderAll(); drawDrop();
       return;
     }
-    await loadTarget(encodeWav(trimToOnset(samples, token.sr), token.sr), "Recording");
-    if (peak < 0.01) recMsg.textContent = "The recording is very quiet. It can still be matched, but a louder take matches better.";
+    // The whole take goes up: the server finds the sound in it (the lead-in, the room, the click of Stop).
+    await loadTarget(encodeWav(samples, token.sr), "Recording");
   }
 
   // ── a test: match the synth's current sound ────────────────────────────────────────
@@ -1202,24 +1412,29 @@ function createView(root, ctx) {
     return audio;
   }
   function stopSound() { if (source) { try { source.stop(); } catch (_) { /* already stopped */ } source = null; } }
-  const decoded = { target: null, match: null };
+  const decoded = { target: null, match: null, crop: null };
   async function wavBuffer(b64) {
     const bin = atob(b64), bytes = new Uint8Array(bin.length);
     for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
     return ac().decodeAudioData(bytes.buffer);
   }
+  /** "crop": the crop the matcher gets (the server's, else the whole take while the server cannot say);
+   *  "target" and "match": the done frame's A/B. */
   async function playBuffer(which) {
     try {
       const A = ac();
       if (A.state === "suspended") await A.resume();
       let buf = decoded[which];
+      if (!buf && which === "crop" && prep?.wav_b64) buf = decoded.crop = await wavBuffer(prep.wav_b64);
+      if (!buf && which === "crop" && prepState === "unavailable") buf = targetBuffer;
       if (!buf && which === "target" && targetBuffer && !run.done) buf = targetBuffer;
-      if (!buf && run.done) {
+      if (!buf && run.done && which !== "crop") {
         const b64 = which === "target" ? run.done.targetWav : run.done.matchWav;
         if (b64) buf = decoded[which] = await wavBuffer(b64);
       }
       if (!buf) return;
       stopSound();
+      stopPatch();
       source = A.createBufferSource();
       source.buffer = buf;
       const g = A.createGain(); g.gain.value = 0.9;
@@ -1228,6 +1443,24 @@ function createView(root, ctx) {
     } catch (e) {
       ctx.toast?.("Could not play that sound in this browser.");
     }
+  }
+
+  // ── "Play my patch": the synth's own sound (the S-1 when it sounds, else the twin), on the marked
+  // note (else the one found), held as long as the target's key was ─────────────────────────
+  function playPatch() {
+    const notes = patchNotes(seeds, prep);
+    if (!notes.length) return;
+    stopPatch();
+    stopSound();
+    try { notes.forEach((n) => ctx.note(n, true, 100)); } catch (_) { /* sound is a courtesy */ }
+    patch = { notes, timer: setTimeout(stopPatch, patchHold(prep) * 1000) };
+  }
+  function stopPatch() {
+    if (!patch) return;
+    const { notes, timer } = patch;
+    patch = null;
+    clearTimeout(timer);
+    for (const n of notes) { try { ctx.note(n, false); } catch (_) { /* courtesy */ } }
   }
 
   // ── a live match ────────────────────────────────────────────────────────────────
@@ -1249,6 +1482,7 @@ function createView(root, ctx) {
     const notes = test ? test.notes : [...seeds].sort((a, b) => a - b);
     if (notes.length) q.set("notes", notes.join(","));
     if (!test && startFrom === "current") q.set("init", JSON.stringify(initMap(ctx.params)));
+    if (cropOverride) q.set("crop", cropOverride.map((t) => t.toFixed(3)).join(","));
     let ws;
     try { ws = ctx.server.ws(`/ws/match?${q}`); } catch (e) { setError("Could not open the matcher. Check that the app is still running, then try again."); return; }
     socket = ws;
@@ -1299,7 +1533,11 @@ function createView(root, ctx) {
   function syncControls() {
     const b = busy();
     matchBtn.textContent = !running ? "Match" : finishing ? "Finishing" : "Finish now";
-    matchBtn.disabled = running ? finishing : (!fileBytes || making || !!rec);
+    matchBtn.disabled = running ? finishing : (!fileBytes || making || !!rec || prepState === "failed");
+    playCrop.disabled = !(prep?.wav_b64 || (prepState === "unavailable" && targetBuffer)) || !!rec;
+    playPatchBtn.disabled = !patchNotes(seeds, prep).length || !!rec;
+    resetCrop.classList.toggle("mx-hidden", !cropOverride);
+    resetCrop.disabled = b;
     drop.setAttribute("aria-disabled", String(b));
     recBtn.textContent = rec ? "Stop" : "Record";
     recBtn.classList.toggle("on", !!rec);
@@ -1449,9 +1687,15 @@ function createView(root, ctx) {
   }
   function renderAll() {
     // While recording, the status line speaks for the take (the last run stays until it replaces the target).
-    const t = rec ? phaseText(initialRun(), { recording: rec.sr ? true : "opening" }) : phaseText(run, { staticMode, loaded: !!fileBytes });
+    const target = { state: prepState, prep, error: prepError };
+    const t = rec ? phaseText(initialRun(), { recording: rec.sr ? true : "opening" })
+      : phaseText(run, { staticMode, loaded: !!fileBytes, target });
     word.textContent = t.word;
     detail.textContent = t.detail;
+    // what to know about the take, while it waits for a match
+    const warns = !rec && run.phase === "idle" && prepState === "ok" ? prep.warnings || [] : [];
+    warnLine.textContent = warns.join(" ");
+    warnLine.classList.toggle("mx-hidden", !warns.length);
     tag.classList.toggle("mx-hidden", !(recorded && currentRec));
     if (recorded && currentRec) {
       tag.replaceChildren(h("b", { text: "Recorded run" }),
@@ -1503,6 +1747,8 @@ function createView(root, ctx) {
       if (rec) { const token = rec; rec = null; teardownRecording(token); }   // the input's light goes off
       if (recorderURL) URL.revokeObjectURL(recorderURL);
       for (const [n, t] of auditions) { clearTimeout(t); noteOff(n); }
+      prepToken++;                      // a late answer from the server finds nothing to fill
+      stopPatch();
       stopSound();
       if (audio) { audio.close().catch(() => {}); audio = null; }
       for (const d of disposers.reverse()) { try { d(); } catch (_) { /* keep tearing down */ } }

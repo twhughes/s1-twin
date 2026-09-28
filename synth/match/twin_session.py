@@ -281,17 +281,25 @@ class Plan:
     cold_candidates: list[int] | None = None
     init_k: np.ndarray | None = None
     init_s: dict[str, int] = field(default_factory=dict)
+    gate_s: float | None = None                 # how long the key was held (target_prep's guess), or None
+    crop: tuple[float, float] | None = None     # where ``samples`` lie in the upload, in seconds
 
 
-def plan(raw: bytes, notes: str | None = None, quality: str | None = None) -> Plan:
-    """Decode an upload and fix the note set: seeded notes are used exactly (the
-    recommended path); none → cold-start detection. Raises :class:`UploadError`."""
-    samples = decode_upload(raw)
+def plan(raw: bytes, notes: str | None = None, quality: str | None = None,
+         crop: str | None = None) -> Plan:
+    """Decode an upload, crop it to its main sound (:mod:`target_prep`: whatever silence, noise or
+    clicks surround it; ``crop`` = "t0,t1" seconds overrides the found edges), and fix the note set:
+    seeded notes are used exactly (the recommended path); none → cold-start detection on the crop.
+    Raises :class:`UploadError`."""
+    from .target_prep import prepare_upload
+
+    _take, prep = prepare_upload(raw, crop)             # decode_upload, then prepare_target
+    edges = {"gate_s": prep.gate_s, "crop": (prep.t0, prep.t1)}
     seeded_notes = parse_notes(notes)
     if seeded_notes:
-        return Plan(samples, seeded_notes, True, parse_quality(quality))
-    found, ranked = detect(samples)
-    return Plan(samples, found, False, parse_quality(quality), cold_candidates=ranked)
+        return Plan(prep.samples, seeded_notes, True, parse_quality(quality), **edges)
+    found, ranked = detect(prep.samples)
+    return Plan(prep.samples, found, False, parse_quality(quality), cold_candidates=ranked, **edges)
 
 
 # ── audio snippets ────────────────────────────────────────────────────────────

@@ -168,11 +168,11 @@ const row = (r, cc) => r.rows.find((x) => x.cc === cc);
 const same = rep({}, {});
 ok(same.good === 14 && same.total === 14 && same.summary === "All 14 settings came back within 10.", "a perfect match: every setting came back");
 ok(same.rows.every((x) => x.offText === "same" && !x.traded), "…each the same, nothing traded");
-ok(same.notes[0].startsWith("Left out, because they do not change this sound, so they cannot come back: Sub octave (Sub is at 0)"),
+ok(same.notes[0].startsWith("Left out, as they do not change this sound and so cannot come back: Sub octave (Sub is at 0)"),
   "the report says plainly what is left out and why");
 const mix = rep({}, { 19: 64 });
 ok(row(mix, 19).shown === 127 && row(mix, 19).foundText === "127*" && row(mix, 19).ok, "a quieter mix of the same balance came back (levels as a mix)");
-ok(mix.notes.some((n) => n.startsWith("* Compared after a trade: the levels as a mix")), "…and the trade is named");
+ok(mix.notes.some((n) => n.startsWith("* Compared as the matcher hears them: the levels as a mix")), "…and the trade is named");
 const stray = rep({}, { 19: 64, 20: 10 });
 ok(!row(stray, 20).ok && row(stray, 20).offText === "off by 20", "a stray level is still a miss after the mix is scaled");
 const ortho = rep({ 20: 127, 19: 0 }, { 20: 1, 19: 54, 21: 106, 23: 67, 13: 126, 17: 126, 12: 3 });
@@ -180,7 +180,7 @@ ok([20, 19, 21, 23].every((cc) => !row(ortho, cc).ok) && row(ortho, 19).offText 
   "a mix of the wrong oscillators stays a miss on every level (it is not scaled away)");
 ok(row(ortho, 13).offText === "off by 126" && row(ortho, 17).offText === "off by 111" && !row(ortho, 3) && !row(ortho, 12),
   "a vibrato the true sound lacks is a miss; its rate and wave cannot come back");
-ok(ortho.notes[0] === "Left out, because they do not change this sound, so they cannot come back: Pulse width (Square is at 0); Sub octave (Sub is at 0); Rate and Wave (the true sound has no LFO).",
+ok(ortho.notes[0] === "Left out, as they do not change this sound and so cannot come back: Pulse width (Square is at 0); Sub octave (Sub is at 0); Rate and Wave (the true sound has no LFO).",
   "…and the report says why, item by item");
 eq(M.relevantCCs({ ...D }), rel({}), "relevantCCs(params) alone: the true sound's own rules");
 const kf = rep({ 74: 80 }, { 74: 95, 26: 127 });
@@ -198,9 +198,27 @@ ok(rep({ 71: 20 }, { 71: 30 }, { within: 9 }).summary === "13 of 14 settings cam
 ok(rep({ 13: 40, 12: 1 }, { 13: 40 }).notes.some((n) => n.includes("Inverse saw cannot come back")), "a wave the matcher never tries is named");
 ok(rep({}, {}, { unison: true }).notes.some((n) => n.startsWith("Unison was on")), "unison is named");
 const s1Notes = rep({}, {}, { source: "s1", synced: false }).notes;
-ok(s1Notes.some((n) => n.includes("not yet calibrated")) && s1Notes.some((n) => n.includes("kept its own patch")), "an S-1 test says what its numbers can mean");
-ok(!rep({}, {}, { source: "s1", synced: true }).notes.some((n) => n.includes("kept its own patch")), "…and drops the patch caveat once synced");
+ok(s1Notes.some((n) => n.includes("not yet calibrated")) && s1Notes.some((n) => n.includes("No patch was sent")), "an S-1 test says what its numbers can mean");
+ok(!rep({}, {}, { source: "s1", synced: true }).notes.some((n) => n.includes("No patch was sent")), "…and drops the patch caveat once synced");
 ok(M.recoveryReport(D, { 74: "127", 19: "127" }, { notes: [48] }).good === 14, "frame CC maps with string values work");
+
+// the report shares one fixed-height panel with the knobs: at most 7 rows a table, and short notes
+eq([M.tableSplit(0), M.tableSplit(5), M.tableSplit(7), M.tableSplit(8), M.tableSplit(14), M.tableSplit(19), M.tableSplit(21)],
+  [[], [5], [7], [4, 4], [7, 7], [7, 6, 6], [7, 7, 7]], "tables of at most 7 rows, as even as they go");
+ok(Array.from({ length: 21 }, (_, n) => M.tableSplit(n + 1)).every((s, n) => s.reduce((a, b) => a + b, 0) === n + 1 && Math.max(...s) <= 7),
+  "every row lands in exactly one table");
+const noteLen = (r) => r.notes.join(" ").length;
+ok(noteLen(rep({}, { 19: 64 })) <= 330, `a twin test's notes fit two lines of the panel (${noteLen(rep({}, { 19: 64 }))} characters)`);
+const worst = rep({ 21: 40, 13: 40, 12: 1 }, { 19: 64, 26: 90, 13: 20, 17: 30 }, { source: "s1", synced: false, unison: true });
+ok(noteLen(worst) <= 700 && worst.rows.length <= 21, `even the longest notes stay within four lines (checked in the browser) (${noteLen(worst)} characters)`);
+
+// the one-screen copy budget (core/fit.js): each line holds its words, so the view keeps to 1470 × 760
+for (const k of ["test", "notes", "search"]) ok(M.COPY[k].length <= 52, `COPY.${k} fits one line of the 330 px column (${M.COPY[k].length})`);
+ok(M.COPY.intro.length <= 112, `the intro fits two lines (${M.COPY.intro.length})`);
+ok(M.COPY.loss.length <= 70 && M.COPY.plume.length <= 40, "each well's caption fits beside its title");
+ok(M.COPY.closeness.length <= 150 && M.COPY.honest.length <= 150, "the closeness caveat and the honest line fit one line of the run column");
+ok(M.testGoWords([48]) === "C3, from scratch: a minute or two" && M.testGoWords([48]).length <= 36, "a test's words fit beside Match");
+ok(Object.values(M.COPY).every((w) => w === w.trim() && /^[A-Z]/.test(w) && !/→/.test(w)), "sentence case, plain, no arrows");
 
 // the pitches a key press sounds: the same as the twin's own voice layer (twin/dsp.js)
 const { Engine } = await import("../twin/dsp.js");

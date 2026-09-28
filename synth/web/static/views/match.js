@@ -13,6 +13,7 @@ import * as draw from "../design/draw.js";
 import { rgbOf, lum, noteName } from "../design/colors.js";
 import { readHash } from "../core/flags.js";
 import { encodeWav, joinChunks, normalize, peakOf, trimToOnset } from "../core/wav.js";
+import { fitView } from "../core/fit.js";
 
 export const id = "match";
 export const title = "Match";
@@ -337,6 +338,14 @@ export function relevance(params, { notes = [TEST_NOTE], curves = null, found = 
 /** The settings that count in the report (ROUND2.md §3): see relevance(). */
 export const relevantCCs = (params, opts) => relevance(params, opts).ccs;
 
+/** How the report's rows split into side-by-side tables of at most `per` rows, as evenly as they go:
+ *  the tables' height is fixed, so the report fits the panel whatever the count (14 → 7 + 7, 19 → 7 + 6 + 6). */
+export function tableSplit(n, per = 7) {
+  if (!(n > 0)) return [];
+  const k = Math.ceil(n / per), base = Math.floor(n / k), extra = n % k;
+  return Array.from({ length: k }, (_, i) => base + (i < extra ? 1 : 0));
+}
+
 /**
  * How close a test came back: for each setting that shapes the note, the true value and the found
  * one, compared after the model's exact trades — the levels as a mix (the loss is loudness-blind:
@@ -360,12 +369,12 @@ export function recoveryReport(truth, found, { notes = [TEST_NOTE], curves = nul
   if (norm(fl) > 0 && norm(tl) > 0) {
     const g = norm(tl) / norm(fl);
     LEVEL_CCS.forEach((cc, i) => compare.set(cc, knobFor(C(cc), fl[i] * g)));
-    trades.push({ ccs: LEVEL_CCS, words: "the levels as a mix (the matcher hears their balance, not their loudness)" });
+    trades.push({ ccs: LEVEL_CCS, words: "the levels as a mix (their balance, not their loudness)" });
   }
   if (left.some((l) => l.kind === "trade" && l.ccs.includes(17))) {
     const dT = physical(C(17), t(17)), dF = physical(C(17), f(17));
     for (const cc of [13, 25]) compare.set(cc, knobFor(C(cc), (physical(C(cc), f(cc)) * dF) / dT));
-    trades.push({ ccs: [13, 25], words: "Vibrato and LFO amount as if Mod wheel to LFO were right" });
+    trades.push({ ccs: [13, 25], words: "the LFO amounts as if Mod wheel to LFO were right" });
   }
   if (left.some((l) => l.kind === "trade" && l.ccs.includes(26))) {
     const shift = ((physical(C(26), f(26)) - physical(C(26), t(26))) * (notes[0] - 60)) / 12;
@@ -386,21 +395,38 @@ export function recoveryReport(truth, found, { notes = [TEST_NOTE], curves = nul
     : good === total ? `All ${total} settings came back within ${within}.` : `${good} of ${total} settings came back within ${within}.`;
   const said = [];
   const silent = left.filter((l) => l.kind === "silent"), stand = left.filter((l) => l.kind === "trade");
+  // Short sentences: the report shares one fixed-height panel with the knobs (views/match.js layout).
   const items = (ls) => ls.map((l) => `${l.name} (${l.why})`).join("; ");   // names can hold "and" themselves
-  if (silent.length) said.push(`Left out, because they do not change this sound, so they cannot come back: ${items(silent)}.`);
-  if (stand.length) said.push(`Also left out, because they stand in for another setting: ${items(stand)}.`);
+  if (silent.length) said.push(`Left out, as they do not change this sound and so cannot come back: ${items(silent)}.`);
+  if (stand.length) said.push(`Also left out: ${items(stand)}.`);
   const usedTrades = trades.filter((tr) => rows.some((r) => r.traded && tr.ccs.includes(r.cc)));
-  if (usedTrades.length) said.push(`* Compared after a trade: ${usedTrades.map((tr) => tr.words).join("; ")}. The knobs below show what it set.`);
+  if (usedTrades.length) said.push(`* Compared as the matcher hears them: ${usedTrades.map((tr) => tr.words).join("; ")}.`);
   if (ccs.includes(12) && !MATCHER_LFO_WAVES.includes(t(12))) {
     said.push(`The matcher tries only Triangle, Square and Saw for the LFO wave, so ${valueText(12, t(12))} cannot come back.`);
   }
   if (unison) said.push("Unison was on: the matcher plays one voice, so this sound cannot come back exactly.");
   if (source === "s1") {
-    said.push("This note came from the S-1, and the twin is not yet calibrated to a real S-1, so a setting can be found off even when the sound is close.");
-    if (!synced) said.push("The S-1 kept its own patch (this app did not send it one), so the true values here are this app's knobs and may not be the S-1's.");
+    said.push("From the S-1: the twin is not yet calibrated to it, so a setting can be off even when the sound is close.");
+    if (!synced) said.push("No patch was sent to the S-1, so the true values are this app's knobs and may not be its own.");
   }
   return { rows, good, total, summary, notes: said };
 }
+
+// ── the view's short copy ────────────────────────────────────────────────────────────
+/** Words the one-screen layout (core/fit.js) holds to their lines at 1470 × 760: the left column's notes
+ *  to one line of its 330 px, the right column's to one line of about 1,000 px (match.check.mjs). */
+export const COPY = {
+  intro: "Give it one note or a chord of up to four. The matcher turns the twin's knobs until the twin sounds like it.",
+  test: "A test: can the matcher find the knobs as set now?",
+  notes: "Mark up to four, or let the matcher find them.",
+  search: "Thorough makes four starts; it takes longer.",
+  loss: "The loss, lower is closer. The bright line is the best so far.",
+  plume: "Solid: the target. Dotted: the guess.",
+  closeness: "Closeness is the app's own measure of how alike the two sound. No one has checked it by ear yet, so trust your ears first.",
+  honest: "The matcher finds a patch that sounds like the target, not always the one that made it, and the twin is not yet calibrated to a real S-1.",
+};
+/** Beside Match, for a test target: its notes, and that it starts from scratch and searches thoroughly. */
+export const testGoWords = (notes) => `${notes.map(noteName).join(" + ")}, from scratch: a minute or two`;
 
 // ── pure: recording ─────────────────────────────────────────────────────────────────
 /** True for the S-1's USB audio input (CoreAudio calls it "S-1"; synth/audio.py S1_DEVICE_MARKERS). */
@@ -436,95 +462,120 @@ export const meterLevel = (peak) => Math.max(0, Math.min(1, (20 * Math.log10(Mat
 
 // ── the view ─────────────────────────────────────────────────────────────────────────
 const CSS = `
-.v-match { position: relative; z-index: 1; max-width: 1480px; margin: 0 auto; padding: 30px var(--gutter) 56px; }
-.v-match .mx-grid { display: grid; grid-template-columns: minmax(0, 340px) minmax(0, 1fr); gap: var(--gap); align-items: start; }
-.v-match .mx-input > * + * { margin-top: 18px; }
+/* One screen (core/fit.js): above 1180 px the view is laid out at 1470 px and must fit 1470 × 760 under the
+   header and above the bottom strip at 100% (natural height about 660 px or less, in every state). The right
+   column's panel has one fixed height and shows the knobs, or the report after a test. At 1180 px and below
+   the view stacks and scrolls. */
+.v-match { position: relative; z-index: 1; max-width: 1480px; margin: 0 auto; padding: 12px var(--gutter) 8px; }
+.v-match .mx-grid { display: grid; grid-template-columns: minmax(0, 330px) minmax(0, 1fr); gap: var(--gap); align-items: start; }
+.v-match .mx-hidden { display: none !important; }
+.v-match code { font: 400 12.5px ui-monospace, "SF Mono", Menlo, monospace; color: var(--ink); background: var(--deep); padding: 1px 5px; border-radius: 3px; white-space: nowrap; }
+
+/* the left column: the target, the notes, the search */
+.v-match .mx-input > * + * { margin-top: 10px; }
+.v-match .mx-input > .mx-early, .v-match .mx-input > .mx-recmsg { margin-top: 5px; }
 .v-match .mx-input .heading { margin-bottom: 0; }
-.v-match .mx-input .note { margin: 6px 0 0; max-width: 40ch; }
-.v-match .mx-drop { position: relative; min-height: 150px; display: flex; flex-direction: column; align-items: center; justify-content: center;
-  gap: 6px; text-align: center; padding: 18px; cursor: pointer; outline: 1.25px dashed var(--ink-3); outline-offset: -1px; }
+.v-match .mx-input .note { margin: 3px 0 0; max-width: none; }
+.v-match .mx-drop { position: relative; height: 96px; display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 4px; text-align: center; padding: 8px 14px; cursor: pointer; outline: 1.25px dashed var(--ink-3); outline-offset: -1px; }
 .v-match .mx-drop:hover, .v-match .mx-drop.over { outline-color: var(--ink); }
 .v-match .mx-drop:focus-visible { outline: 1.5px dashed var(--ink); outline-offset: 3px; }
 .v-match .mx-drop canvas { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
-.v-match .mx-drop p { position: relative; margin: 0; font-size: 14px; color: var(--ink); max-width: 30ch; }
+.v-match .mx-drop p { position: relative; margin: 0; font-size: 14px; color: var(--ink); }
 .v-match .mx-drop .mx-file { font-size: 12.5px; color: var(--ink-2); font-variant-numeric: tabular-nums; }
-.v-match .mx-drop.loaded { justify-content: flex-end; }
-.v-match .mx-drop.loaded p.mx-ask { display: none; }
-.v-match .mx-sub { font: italic 400 19px/1.2 var(--serif); margin: 0; }
-.v-match .mx-input > .mx-sub { margin-top: 26px; }
-.v-match .mx-keys { position: relative; height: 70px; display: flex; background: var(--deep); border-radius: 3px; user-select: none; -webkit-user-select: none; }
+.v-match .mx-drop.loaded, .v-match .mx-drop.recording { justify-content: flex-end; }
+.v-match .mx-drop.loaded p.mx-ask, .v-match .mx-drop.recording p.mx-ask { display: none; }
+.v-match .mx-drop.recording { outline-style: solid; outline-color: var(--ink); }
+.v-match .mx-rec { display: flex; align-items: center; gap: 10px 14px; }
+.v-match .mx-rec .pill.on { border-color: var(--ink); }
+.v-match .mx-from { display: flex; align-items: center; gap: 8px; flex: 1 1 150px; min-width: 0; font-size: 13px; color: var(--ink-2); }
+.v-match .mx-from select { flex: 1; min-width: 0; background: var(--deep); color: var(--ink); border: 1px solid var(--ink-3); border-radius: 3px;
+  padding: 7px 8px; font: 400 13.5px var(--sans); }
+.v-match .mx-from select:disabled { opacity: .45; }
+.v-match .mx-recmsg:empty { display: none; }
+.v-match .mx-test { text-align: left; padding: 1px 0; }
+.v-match .mx-test:disabled { opacity: .45; cursor: default; color: var(--ink-2); }
+.v-match .mx-sub { font: italic 400 19px/1.1 var(--serif); margin: 0; }
+.v-match .mx-input > .mx-sub { margin-top: 18px; }
+.v-match .mx-keys { position: relative; height: 56px; margin-top: 8px; display: flex; background: var(--deep); border-radius: 3px; user-select: none; -webkit-user-select: none; }
 .v-match .mx-keys button { font: inherit; padding: 0; margin: 0; }
 .v-match .mx-wk { position: relative; flex: 1; border: 0; border-right: 1px solid var(--ink-4); background: none; cursor: pointer;
-  display: flex; align-items: flex-end; justify-content: center; padding-bottom: 6px !important; font-size: 10.5px; color: var(--ink-3); border-radius: 0; }
+  display: flex; align-items: flex-end; justify-content: center; padding-bottom: 4px !important; font-size: 10.5px; color: var(--ink-3); border-radius: 0; }
 .v-match .mx-wk.last { border-right: 0; }
-.v-match .mx-bk { position: absolute; top: 0; height: 42px; background: var(--field); border: 1px solid var(--ink-3); border-top: 0;
+.v-match .mx-bk { position: absolute; top: 0; height: 34px; background: var(--field); border: 1px solid var(--ink-3); border-top: 0;
   border-radius: 0 0 2px 2px; cursor: pointer; z-index: 2; color: var(--ink-3); font-size: 10px; }
 .v-match .mx-keys [aria-pressed="true"] { background: rgb(var(--pc)); color: var(--on-pc); box-shadow: inset 0 0 0 1.5px var(--ink); }
 .v-match .mx-keys.found [aria-pressed="true"] { box-shadow: inset 0 0 0 1.5px var(--ink), inset 0 0 0 3px var(--deep); }
 .v-match .mx-keys button:focus-visible { outline-offset: -3px; }
 .v-match .mx-keys[aria-disabled="true"] button { cursor: default; }
-.v-match .mx-keyrow { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 16px; margin-top: 8px; }
+.v-match .mx-keyrow { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 16px; margin-top: 3px; }
+.v-match .mx-keyrow .quiet { padding: 2px 0; }
 .v-match .mx-keyrow .mx-marked { color: var(--ink-2); font-size: 13px; margin-right: auto; font-variant-numeric: tabular-nums; }
-.v-match .mx-go { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; }
+.v-match .mx-segs { gap: 10px 30px; }
+.v-match .mx-go { display: flex; align-items: center; gap: 6px 16px; flex-wrap: wrap; }
+.v-match .mx-recorded { list-style: none; margin: 0; padding: 0; }
+.v-match .mx-recorded button { background: none; border: 0; border-bottom: 1px solid var(--ink-4); cursor: pointer; width: 100%;
+  text-align: left; padding: 8px 0; color: var(--ink-2); font-size: 14.5px; display: flex; justify-content: space-between; gap: 12px; }
+.v-match .mx-recorded button:hover, .v-match .mx-recorded button[aria-current="true"] { color: var(--ink); }
+.v-match .mx-recorded small { font-size: 12.5px; color: var(--ink-2); font-variant-numeric: tabular-nums; white-space: nowrap; }
+
+/* the right column: the wells, one status row, the panel (knobs or report), one honest line */
 .v-match .mx-run { min-width: 0; }
 .v-match .mx-wells { display: grid; grid-template-columns: minmax(0, 1.6fr) minmax(0, 1fr); gap: 24px; }
 .v-match .mx-wells figure { margin: 0; min-width: 0; }
-.v-match .mx-wells canvas { height: 214px; }
-.v-match .mx-status { margin: 26px 0 0; display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 16px; min-height: 30px; }
-.v-match .mx-word { font: italic 400 26px/1.1 var(--serif); }
-.v-match .mx-detail { color: var(--ink-2); font-size: 13.5px; font-variant-numeric: tabular-nums; }
-.v-match .mx-tag { flex-basis: 100%; font-size: 12.5px; color: var(--ink-2); }
+.v-match .mx-wells canvas { height: 150px; }
+.v-match .mx-wells figcaption { margin-top: 7px; font-size: 19px; }
+.v-match .mx-wells figcaption .note { display: inline; margin: 0 0 0 10px; font-size: 12.5px; }
+.v-match .mx-tag { display: block; margin: 12px 0 -4px; font-size: 12.5px; color: var(--ink-2); }
 .v-match .mx-tag b { font-weight: 500; color: var(--ink); border: 1.25px solid var(--ink-3); border-radius: 999px; padding: 2px 9px; margin-right: 8px; }
-.v-match .mx-result { margin-top: 18px; display: flex; flex-wrap: wrap; align-items: center; gap: 14px 28px; }
-.v-match .mx-close { display: flex; align-items: baseline; gap: 10px; }
-.v-match .mx-close b { font: 300 44px/1 var(--sans); font-variant-numeric: tabular-nums; letter-spacing: -0.01em; }
+.v-match .mx-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 26px; margin-top: 12px; min-height: 40px; }
+.v-match .mx-status { margin: 0; display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 14px; }
+.v-match .mx-word { font: italic 400 24px/1.1 var(--serif); }
+.v-match .mx-detail { color: var(--ink-2); font-size: 13.5px; font-variant-numeric: tabular-nums; }
+.v-match .mx-result { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 24px; }
+.v-match .mx-close { display: flex; align-items: baseline; gap: 9px; }
+.v-match .mx-close b { font: 300 36px/1 var(--sans); font-variant-numeric: tabular-nums; letter-spacing: -0.01em; }
 .v-match .mx-close span { font-size: 13.5px; color: var(--ink-2); }
-.v-match .mx-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 12px; }
-.v-match .mx-result .note { flex-basis: 100%; margin: 0; max-width: 62ch; }
-.v-match .mx-knobs { margin-top: 34px; display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 30px var(--gap); }
-.v-match .mx-stage .row { gap: 16px 10px; }
-.v-match .mx-stage h3 { font: italic 400 22px/1.15 var(--serif); margin: 0 0 14px; }
+.v-match .mx-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; }
+.v-match .mx-run > .mx-closenote { margin: 3px 0 0; max-width: none; }
+.v-match .mx-panelhead { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 28px; margin-top: 14px; }
+.v-match .mx-panelhead .seg .k-label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+.v-match .mx-panelhead .mx-close b { font-size: 26px; }
+.v-match .mx-panel { margin-top: 14px; height: 260px; overflow-y: auto; }
+/* four stages side by side, widths set by their controls (Oscillator: 4 dials a row, then 3 and Sub octave) */
+.v-match .mx-knobs { display: grid; grid-template-columns: minmax(0, 1.95fr) minmax(0, 1.3fr) minmax(0, 1.3fr) minmax(0, 1fr); gap: 0 22px; }
+.v-match .mx-stage h3 { font: italic 400 19px/1.15 var(--serif); margin: 0 0 8px; }
+.v-match .mx-stage .row { gap: 10px 8px; }
+.v-match .mx-knobs .knob { width: 68px; }
+.v-match .mx-knobs .knob svg { width: 44px; height: 44px; }
+.v-match .mx-knobs .k-label { margin-top: 3px; white-space: nowrap; }
+.v-match .mx-knobs .seg-opts { gap: 4px 7px; }
 .v-match .mx-knobs svg, .v-match .mx-knobs .seg-opts button { pointer-events: none; cursor: default; }
-.v-match .mx-honest { margin-top: 34px !important; max-width: 70ch !important; }
-.v-match .mx-recorded { list-style: none; margin: 0; padding: 0; }
-.v-match .mx-recorded button { background: none; border: 0; border-bottom: 1px solid var(--ink-4); cursor: pointer; width: 100%;
-  text-align: left; padding: 9px 0; color: var(--ink-2); font-size: 14.5px; display: flex; justify-content: space-between; gap: 12px; }
-.v-match .mx-recorded button:hover, .v-match .mx-recorded button[aria-current="true"] { color: var(--ink); }
-.v-match .mx-recorded small { font-size: 12.5px; color: var(--ink-2); font-variant-numeric: tabular-nums; white-space: nowrap; }
-.v-match code { font: 400 12.5px ui-monospace, "SF Mono", Menlo, monospace; color: var(--ink); background: var(--deep); padding: 1px 5px; border-radius: 3px; white-space: nowrap; }
-.v-match .mx-drop.recording { justify-content: flex-end; outline-style: solid; outline-color: var(--ink); }
-.v-match .mx-drop.recording p.mx-ask { display: none; }
-.v-match .mx-rec { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 14px; margin-top: 12px !important; }
-.v-match .mx-rec .pill.on { border-color: var(--ink); }
-.v-match .mx-from { display: flex; align-items: center; gap: 8px; flex: 1 1 170px; min-width: 0; font-size: 13px; color: var(--ink-2); }
-.v-match .mx-from select { flex: 1; min-width: 0; background: var(--deep); color: var(--ink); border: 1px solid var(--ink-3); border-radius: 3px;
-  padding: 7px 8px; font: 400 13.5px var(--sans); }
-.v-match .mx-from select:disabled { opacity: .45; }
-.v-match .mx-input .mx-recmsg { margin-top: 10px; }
-.v-match .mx-recmsg:empty { display: none; }
-.v-match .mx-test { text-align: left; }
-.v-match .mx-test:disabled { opacity: .45; cursor: default; color: var(--ink-2); }
-.v-match .mx-testbox .note { margin-top: 0; }
-.v-match .mx-report { margin-top: 34px; }
-.v-match .mx-report h3 { font: italic 400 22px/1.15 var(--serif); margin: 0 0 12px; }
-.v-match .mx-rtables { display: grid; grid-template-columns: repeat(auto-fit, minmax(270px, 1fr)); gap: 0 36px; margin-top: 16px; }
-.v-match .mx-rtable { width: 100%; border-collapse: collapse; font-size: 13.5px; font-variant-numeric: tabular-nums; }
-.v-match .mx-rtable th, .v-match .mx-rtable td { font-weight: 400; text-align: right; padding: 6px 0 6px 12px; border-bottom: 1px solid var(--ink-4); white-space: nowrap; }
+.v-match .mx-run > .mx-honest { margin: 10px 0 0; max-width: none; }
+.v-match .mx-rtables { display: grid; grid-template-columns: repeat(var(--cols, 2), minmax(0, 1fr)); gap: 0 32px; }
+.v-match .mx-rtable { width: 100%; border-collapse: collapse; font-size: 13px; line-height: 1.25; font-variant-numeric: tabular-nums; }
+.v-match .mx-rtable th, .v-match .mx-rtable td { font-weight: 400; text-align: right; padding: 3px 0 3px 10px; border-bottom: 1px solid var(--ink-4); white-space: nowrap; }
 .v-match .mx-rtable th:first-child { text-align: left; padding-left: 0; white-space: normal; color: var(--ink-2); }
-.v-match .mx-rtable thead th { font-size: 12px; color: var(--ink-2); padding-top: 0; }
+.v-match .mx-rtable thead th { font-size: 11.5px; color: var(--ink-2); padding-top: 0; }
 .v-match .mx-rtable td:last-child { color: var(--ink-2); }
 .v-match .mx-rtable tr.off th:first-child, .v-match .mx-rtable tr.off td:last-child { color: var(--ink); }
 .v-match .mx-rtable tr.off td:last-child { font-weight: 500; }
-.v-match .mx-rnotes .note { max-width: 70ch; margin-top: 10px; }
-.v-match .mx-hidden { display: none !important; }
-@media (max-width: 1100px) {
+.v-match .mx-rnotes { margin: 9px 0 0; max-width: none; font-size: 12.5px; line-height: 1.4; }
+
+/* stacked (1180 px and below): one column that scrolls; the panel takes the height it needs */
+@media (max-width: 1180px) {
+  .v-match { padding: 24px var(--gutter) 48px; }
   .v-match .mx-grid { grid-template-columns: minmax(0, 1fr); }
   .v-match .mx-input .note { max-width: 60ch; }
+  .v-match .mx-wells canvas { height: 180px; }
+  .v-match .mx-panel { height: auto; overflow: visible; }
+  .v-match .mx-knobs { grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 24px 30px; }
+  .v-match .mx-rtables { grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); }
 }
 @media (max-width: 640px) {
   .v-match .mx-wells { grid-template-columns: minmax(0, 1fr); }
-  .v-match .mx-wells canvas { height: 180px; }
-  .v-match .mx-close b { font-size: 36px; }
+  .v-match .mx-wells figcaption .note { display: block; margin: 3px 0 0; }
+  .v-match .mx-close b { font-size: 32px; }
   .v-match .mx-rtables { grid-template-columns: minmax(0, 1fr); }
   .v-match .mx-rtable + .mx-rtable thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
 }
@@ -591,12 +642,15 @@ function createView(root, ctx) {
   view.append(h("div", { class: "mx-grid" }, input, runCol));
   root.append(view);
   disposers.push(() => view.remove());
+  // one screen: the view's design size, scaled down evenly to fit a smaller window (core/fit.js)
+  const fit = fitView(view, { onFit: (s) => { view.dataset.fit = String(s); } });
+  disposers.push(() => fit.destroy());
 
   input.append(
     h("h2", { class: "heading", text: "Match a sound" }),
     h("p", { class: "note", text: staticMode
       ? "The matcher turns the twin's knobs by gradient descent until the twin sounds like a recording. This page cannot run it, so here are real runs, recorded on a computer and replayed step by step."
-      : "Give it a recording of one note or a chord of up to four. The matcher turns the twin's knobs by gradient descent until the twin sounds like it." }),
+      : COPY.intro }),
   );
 
   // server mode: the drop well (or Record, or a test note), the notes, the search budget
@@ -609,7 +663,7 @@ function createView(root, ctx) {
     "aria-label": "Drop a sound here, or press Enter to choose a file" }, dropCanvas, dropAsk, dropFile, fileInput);
   const playTargetEarly = h("button", { type: "button", class: "quiet", disabled: true, "data-action": "play-target-early",
     onclick: () => playBuffer("target") }, "Play target");
-  const earlyRow = h("div", { class: "mx-go mx-hidden" }, playTargetEarly);
+  const earlyRow = h("div", { class: "mx-go mx-early mx-hidden" }, playTargetEarly);
   const recBtn = h("button", { type: "button", class: "pill", "data-action": "record",
     onclick: () => (rec ? stopRecording() : startRecording()) }, "Record");
   const inputSel = h("select", { "data-role": "input", onchange: () => { chosenInput = inputSel.value; } },
@@ -619,7 +673,7 @@ function createView(root, ctx) {
   const testBtn = h("button", { type: "button", class: "quiet mx-test", "data-action": "test-current", onclick: () => matchCurrentSound() },
     "Match the synth's current sound");
   const testBox = h("div", { class: "mx-testbox" }, testBtn,
-    h("p", { class: "note", text: "A test of the matcher: one note of the synth as it is set now, matched from scratch. Then it shows which settings it found again." }));
+    h("p", { class: "note", text: COPY.test }));
 
   const keys = h("div", { class: "mx-keys", role: "group", "aria-label": "Notes to match" });
   const marked = h("span", { class: "mx-marked", "aria-live": "polite" });
@@ -639,15 +693,15 @@ function createView(root, ctx) {
       testBox,
       h("div", {},
         h("h3", { class: "mx-sub", text: "Which notes?" }),
-        h("p", { class: "note", text: "Mark the notes you hear, up to four. This is the sure way. Leave them empty and the matcher looks for them." }),
-        h("div", { style: "margin-top:12px" }, keys),
+        h("p", { class: "note", text: COPY.notes }),
+        keys,
         h("div", { class: "mx-keyrow" }, marked,
           h("button", { type: "button", class: "quiet", onclick: () => shiftKeys(-12) }, "Lower"),
           h("button", { type: "button", class: "quiet", onclick: () => shiftKeys(12) }, "Higher"),
           h("button", { type: "button", class: "quiet", onclick: () => { seeds.clear(); paintKeys(); } }, "Clear")),
       ),
-      h("div", { class: "row", style: "gap:14px 34px" }, qualitySeg.el, startSeg.el),
-      h("p", { class: "note", text: "Quick is one short descent. Thorough makes four starts and keeps the best; it takes several times longer." }),
+      h("div", { class: "row mx-segs" }, qualitySeg.el, startSeg.el),
+      h("p", { class: "note", text: COPY.search }),
       h("div", { class: "mx-go" }, matchBtn, goNote),
     );
   }
@@ -664,39 +718,47 @@ function createView(root, ctx) {
     );
   }
 
-  // the run: two wells, the status line, the result, the knobs
+  // the run: two wells, one status row (the result joins it when done), then one panel of fixed height that
+  // shows the knobs, or after a test the report (a switch picks), and one honest line
   const lossCanvas = h("canvas", { class: "well", role: "img", "aria-label": "The loss, falling as the matcher descends" });
   const plumeCanvas = h("canvas", { class: "well", role: "img", "aria-label": "The target and the current guess, drawn as plumes" });
   const word = h("span", { class: "mx-word", "aria-live": "polite" });
   const detail = h("span", { class: "mx-detail" });
   const tag = h("span", { class: "mx-tag mx-hidden", "data-role": "recorded" });
   const closeNum = h("b");
-  const closeNote = h("p", { class: "note", text: "Closeness is the app's own measure of how alike the two sound. No one has checked it by ear yet, so trust your ears first." });
+  const closeNote = h("p", { class: "note mx-closenote", text: COPY.closeness });
   const playTarget = h("button", { type: "button", class: "pill", "data-action": "play-target", onclick: () => playBuffer("target") }, "Play target");
   const playMatch = h("button", { type: "button", class: "pill", "data-action": "play-match", onclick: () => playBuffer("match") }, "Play match");
   const loadBtn = h("button", { type: "button", class: "pill", "data-action": "load", onclick: loadIntoSynth }, "Load into the synth");
   const againBtn = h("button", { type: "button", class: "quiet", "data-action": "again", onclick: () => (recorded ? replayAgain() : startMatch()) }, "Match again");
   const closeBlock = h("div", { class: "mx-close" }, closeNum, h("span", { text: "closeness" }));
   const result = h("div", { class: "mx-result mx-hidden", "data-role": "result" },
-    closeBlock, h("div", { class: "mx-actions" }, playTarget, playMatch, loadBtn, againBtn), closeNote);
-  // after a test of the current sound: how many settings came back
+    closeBlock, h("div", { class: "mx-actions" }, playTarget, playMatch, loadBtn, againBtn));
+  // after a test of the current sound: how many settings came back, or the knobs it set
+  let panelShows = "report";
+  const panelSeg = seg({ label: "Show", value: panelShows,
+    options: [{ value: "report", label: "How close it came back" }, { value: "knobs", label: "The knobs" }],
+    onInput: (v) => { panelShows = v; paintPanel(); } });
   const reportNum = h("b"), reportWords = h("span");
+  const panelHead = h("div", { class: "mx-panelhead mx-hidden", "data-role": "panel-switch" },
+    panelSeg.el, h("div", { class: "mx-close", "data-role": "report-summary" }, reportNum, " ", reportWords));
   const reportTables = h("div", { class: "mx-rtables" });
-  const reportNotes = h("div", { class: "mx-rnotes" });
+  const reportNotes = h("p", { class: "note mx-rnotes" });
   const report = h("section", { class: "mx-report mx-hidden", "data-role": "report", "aria-label": "How close the test came back" },
-    h("h3", { text: "How close it came back" }), h("div", { class: "mx-close" }, reportNum, " ", reportWords), reportTables, reportNotes);
+    reportTables, reportNotes);
   const knobsBox = h("div", { class: "mx-knobs", "aria-label": "The twin's knobs, as the matcher sets them" });
   runCol.append(
     h("div", { class: "mx-wells" },
       h("figure", {}, lossCanvas, h("figcaption", { class: "caption" }, "Descent",
-        h("span", { class: "note", text: "The loss, lower is closer. The bright line is the best so far." }))),
+        h("span", { class: "note", text: COPY.loss }))),
       h("figure", {}, plumeCanvas, h("figcaption", { class: "caption" }, "Target and guess",
-        h("span", { class: "note", text: "Solid: the target. Dotted: the twin's current guess. Each loop is one cycle." })))),
-    h("p", { class: "mx-status", role: "status" }, tag, word, detail),
-    result,
-    report,
-    knobsBox,
-    h("p", { class: "note mx-honest", text: "The matcher finds a patch that sounds like the target, not always the patch that made it. The twin's curves are not yet calibrated to a real S-1, so a match is only as true as the twin." }),
+        h("span", { class: "note", text: COPY.plume })))),
+    tag,
+    h("div", { class: "mx-row" }, h("p", { class: "mx-status", role: "status" }, word, detail), result),
+    closeNote,
+    panelHead,
+    h("div", { class: "mx-panel" }, knobsBox, report),
+    h("p", { class: "note mx-honest", text: COPY.honest }),
   );
 
   // the knobs and switches (read-only here: they show the matcher's hand)
@@ -831,7 +893,7 @@ function createView(root, ctx) {
     run = initialRun(); recorded = false;
     drop.classList.add("loaded");
     dropFile.textContent = name;
-    goNote.textContent = test ? `The test gives the matcher its note (${test.notes.map(noteName).join(" + ")}), starts from scratch, and searches thoroughly, so it takes a minute or two.` : "";
+    goNote.textContent = test ? testGoWords(test.notes) : "";
     syncControls();
     renderAll();
     try {
@@ -849,18 +911,17 @@ function createView(root, ctx) {
   function drawDrop() {
     if (!dropCanvas.isConnected) return;
     const [c, w, hh] = draw.fit(dropCanvas);
+    const above = Math.max(20, hh - 22);  // the sound draws above the well's name line
     if (rec && rec.sr) {                 // recording: each 20 ms's peak on a dB scale, drawn up to the record head
       const frac = Math.min(1, rec.total / (RECORD_MAX_S * rec.sr));
-      c.save(); c.translate(0, -12);
-      draw.hatchShape(c, w, hh, Array.from(rec.bins, meterLevel), { step: 2, reveal: frac });
-      draw.playhead(c, w, hh, frac);
-      c.restore();
+      draw.hatchShape(c, w, above, Array.from(rec.bins, meterLevel), { step: 2, reveal: frac });
+      draw.playhead(c, w, above, frac);
       return;
     }
     if (!targetBuffer) return;
     const data = targetBuffer.getChannelData(0);
     const top = draw.peaksPerColumn(data, Math.max(2, Math.floor(w / 2)));
-    c.save(); c.translate(0, -12); draw.hatchShape(c, w, hh, top, { step: 2 }); c.restore();
+    draw.hatchShape(c, w, above, top, { step: 2 });
   }
 
   // ── recording a target from a browser input ────────────────────────────────────────
@@ -1085,18 +1146,30 @@ function createView(root, ctx) {
 
   // ── the recovery report (after a test) ─────────────────────────────────────────────
   let reported = null;                   // the done frame the report was built for
+  const hasReport = () => !!(test && !recorded && run.phase === "done" && run.done?.cc);
   function renderReport() {
-    const show = !!(test && !recorded && run.phase === "done" && run.done?.cc);
-    report.classList.toggle("mx-hidden", !show);
-    if (!show || reported === run.done) return;
-    reported = run.done;
-    const r = recoveryReport(test.truth, run.done.cc, { notes: test.notes, curves: ctx.twin?.curves,
-      source: test.source, synced: test.synced, unison: test.unison });
-    reportNum.textContent = r.total ? `${r.good} of ${r.total}` : "–";
-    reportWords.textContent = r.total ? `settings came back within ${WITHIN}` : "no setting shapes this sound";
-    const half = r.rows.length > 8 ? Math.ceil(r.rows.length / 2) : r.rows.length;
-    reportTables.replaceChildren(...[r.rows.slice(0, half), r.rows.slice(half)].filter((rows) => rows.length).map(reportTable));
-    reportNotes.replaceChildren(...r.notes.map((text) => h("p", { class: "note", text })));
+    if (hasReport() && reported !== run.done) {
+      reported = run.done;
+      const r = recoveryReport(test.truth, run.done.cc, { notes: test.notes, curves: ctx.twin?.curves,
+        source: test.source, synced: test.synced, unison: test.unison });
+      reportNum.textContent = r.total ? `${r.good} of ${r.total}` : "–";
+      reportWords.textContent = r.total ? `settings came back within ${WITHIN}` : "no setting shapes this sound";
+      let at = 0;
+      const tables = tableSplit(r.rows.length).map((n) => reportTable(r.rows.slice(at, (at += n))));
+      reportTables.style.setProperty("--cols", String(Math.max(2, tables.length)));
+      reportTables.replaceChildren(...tables);
+      reportNotes.textContent = r.notes.join(" ");
+      panelShows = "report";              // a new report opens on itself
+      panelSeg.set("report");
+    }
+    paintPanel();
+  }
+  /** The panel: the report after a test (unless the switch says the knobs), else the knobs. */
+  function paintPanel() {
+    const has = hasReport(), showReport = has && panelShows === "report";
+    panelHead.classList.toggle("mx-hidden", !has);
+    report.classList.toggle("mx-hidden", !showReport);
+    knobsBox.classList.toggle("mx-hidden", showReport);
   }
   function reportTable(rows) {
     const th = (text) => h("th", { scope: "col", text });

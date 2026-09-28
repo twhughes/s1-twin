@@ -555,6 +555,26 @@ def pick_plain(scored: list[tuple[float, np.ndarray, str, tuple[str, str]]],
     return picked
 
 
+# Gate mode with a filter envelope. Under Envelope the one ADSR shapes the volume AND the filter, so a flat
+# volume (a gate) forces a flat filter: the descent fakes Gate with Sustain full and the filter envelope off.
+# There Gate sounds the same, and with the filter envelope off the ADSR does nothing under Gate, so a Gate
+# trial from those knobs has no gradient toward a sweep. Its extra trial starts where the ADSR matters.
+GATE_FAMILY = {"env_to_cutoff": 0.35, "decay": 0.45, "sustain": 0.35}
+GATE_FAMILY_ITERS = 3          # x switch_iters: it starts away from the descent's knobs, not beside them
+
+
+def gate_family(k: np.ndarray) -> np.ndarray:
+    """``k`` with the filter envelope on (at least GATE_FAMILY's amount) and a decaying ADSR."""
+    from .twin import K_NAMES
+
+    at = {n: i for i, n in enumerate(K_NAMES)}
+    out = np.array(k, dtype=np.float64)
+    out[at["env_to_cutoff"]] = max(out[at["env_to_cutoff"]], GATE_FAMILY["env_to_cutoff"])
+    out[at["decay"]] = GATE_FAMILY["decay"]
+    out[at["sustain"]] = GATE_FAMILY["sustain"]
+    return out
+
+
 def extras_mask() -> np.ndarray:
     """1 at the extras' places in k (EXTRAS), else 0: the prior is ``lam * k @ mask``."""
     from .twin import K_NAMES
@@ -741,7 +761,8 @@ def steps(
     per_start = gd_iters
     if new_style:
         tried = (n_configs - 1 if switch_top < 0 else min(switch_top, n_configs - 1)) + max(0, lfo_top)
-        per_start += (tried * switch_iters + continue_iters) if switch_iters else 0
+        # (+ the Gate-with-a-filter-envelope trial after an Envelope start: GATE_FAMILY_ITERS long)
+        per_start += ((tried + GATE_FAMILY_ITERS) * switch_iters + continue_iters) if switch_iters else 0
     # ``total``: every gd step the budget allows (the old search runs exactly this many; a round-4
     # search usually stops sooner, as its descents stop improving).
     total_gd = max(1, per_start * restarts + (polish_iters if new_style else 0))
@@ -925,6 +946,11 @@ def steps(
         n_steps += len(scored)
         tries = [(cfg, mine["k"], switch_words(cfg, s_r), LR_SWITCH)
                  for cfg in switch_candidates(scored, s_r, mine["loss"], switch_top)]
+        if s_r.get("amp_env_mode") == 1:           # Gate with a filter envelope (see GATE_FAMILY)
+            gate_cfg = {**s_r, "amp_env_mode": 0}
+            tries.append((gate_cfg, gate_family(mine["k"]),
+                          f"{switch_words(gate_cfg, s_r)}, with a filter envelope", LR_SWITCH))
+
         if lfo_top > 0:
             # the LFO scan: its best settings (one each on the pitch and the filter, for Deep)
             hyps = sorted(((score(k2, s2, notes0), i, k2, s2, w)
@@ -942,7 +968,9 @@ def steps(
             if finishing():
                 break
             trial = {"k": k_try.copy(), "loss": math.inf}
-            yield from descend(notes0, cfg, k_try, switch_iters, lr_try, rule(switch_iters, warm=True),
+            family = words.endswith("with a filter envelope")
+            n_it = switch_iters * (GATE_FAMILY_ITERS if family else 1)
+            yield from descend(notes0, cfg, k_try, n_it, lr_try, rule(n_it, warm=True),
                                trial, restart=r, trying=words, **extra_new)
             if trial["loss"] < mine["loss"] and (won is None or trial["loss"] < won["loss"]):
                 won = {"s": dict(cfg), "k": trial["k"], "loss": trial["loss"]}

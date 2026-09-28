@@ -12,6 +12,7 @@ kept in the repo (docs/match-baseline.json). The fast regression cases live in t
     python tools/match_suite.py --search quick --jobs 3
     python tools/match_suite.py --cases gate,gate@rec --seeds 0,1,2
     python tools/match_suite.py --update-baseline    # accept these numbers as the new baseline
+    python tools/match_suite.py --from-json runs.json --update-baseline   # ...from a saved run (--json)
 
 Exit status 1 when a case falls below its baseline by more than the tolerance (closeness by more
 than CLOSENESS_TOL points, settings back by more than SETTINGS_TOL, or a switch it used to find).
@@ -220,6 +221,7 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--jobs", type=int, default=3, help="cases run at once")
     ap.add_argument("--json", default=None, help="also write the raw runs here")
     ap.add_argument("--update-baseline", action="store_true", help="accept these numbers as the baseline")
+    ap.add_argument("--from-json", default=None, help="read the runs from a saved --json file, not run them")
     args = ap.parse_args(argv)
 
     cases = [c for c in args.cases.split(",") if c]
@@ -230,12 +232,19 @@ def main(argv: list[str] | None = None) -> int:
     jobs = [(c, args.search, s) for c in cases for s in seeds]
     t0 = time.perf_counter()
     runs: list[dict] = []
-    with ProcessPoolExecutor(max_workers=max(1, args.jobs)) as pool:
-        for r in pool.map(run_case, jobs):
-            runs.append(r)
-            print(f"  {r['case']:12s} seed {r['seed']}  closeness {r['closeness']:6.2f}  "
-                  f"{r['steps']:5d} steps  {r['seconds']:7.1f} s", flush=True)
-    score_runs(runs)
+    if args.from_json:
+        runs = [r for r in json.loads(Path(args.from_json).read_text())
+                if r["case"] in cases and r["search"] == args.search]
+    else:
+        with ProcessPoolExecutor(max_workers=max(1, args.jobs)) as pool:
+            for r in pool.map(run_case, jobs):
+                runs.append(r)
+                print(f"  {r['case']:12s} seed {r['seed']}  closeness {r['closeness']:6.2f}  "
+                      f"{r['steps']:5d} steps  {r['seconds']:7.1f} s", flush=True)
+    if not runs:
+        ap.error("no runs to report")
+    if any("good" not in r for r in runs):
+        score_runs(runs)
     now = summarize(runs)
     stored = json.loads(BASELINE.read_text()) if BASELINE.exists() else {}
     base = stored.get(args.search, {}).get("cases", {})

@@ -1,0 +1,152 @@
+{
+ "thorough": {
+  "made": "2026-09-28",
+  "commit": "6296ee2",
+  "cases": {
+   "square": {
+    "closeness": 89.8,
+    "worst_closeness": 89.8,
+    "good": 14,
+    "total": 14,
+    "switches": true,
+    "seeds": 1
+   },
+   "saw": {
+    "closeness": 81.6,
+    "worst_closeness": 81.6,
+    "good": 13,
+    "total": 13,
+    "switches": true,
+    "seeds": 1
+   },
+   "gate": {
+    "closeness": 74.4,
+    "worst_closeness": 74.4,
+    "good": 13,
+    "total": 14,
+    "switches": true,
+    "seeds": 1
+   },
+   "sub": {
+    "closeness": 78.4,
+    "worst_closeness": 78.4,
+    "good": 15,
+    "total": 15,
+    "switches": true,
+    "seeds": 1
+   },
+   "vibrato": {
+    "closeness": 62.5,
+    "worst_closeness": 62.5,
+    "good": 12,
+    "total": 17,
+    "switches": false,
+    "seeds": 1
+   },
+   "wobble": {
+    "closeness": 42.4,
+    "worst_closeness": 42.4,
+    "good": 18,
+    "total": 19,
+    "switches": true,
+    "seeds": 1
+   },
+   "pluck": {
+    "closeness": 85.9,
+    "worst_closeness": 85.9,
+    "good": 16,
+    "total": 17,
+    "switches": true,
+    "seeds": 1
+   },
+   "bass": {
+    "closeness": 39.7,
+    "worst_closeness": 39.7,
+    "good": 10,
+    "total": 17,
+    "switches": true,
+    "seeds": 1
+   },
+   "high": {
+    "closeness": 61.9,
+    "worst_closeness": 61.9,
+    "good": 10,
+    "total": 14,
+    "switches": true,
+    "seeds": 1
+   },
+   "pad": {
+    "closeness": 89.5,
+    "worst_closeness": 89.5,
+    "good": 11,
+    "total": 14,
+    "switches": true,
+    "seeds": 1
+   },
+   "short": {
+    "closeness": 34.9,
+    "worst_closeness": 34.9,
+    "good": 12,
+    "total": 17,
+    "switches": true,
+    "seeds": 1
+   },
+   "chord": {
+    "closeness": 78.4,
+    "worst_closeness": 78.4,
+    "good": 14,
+    "total": 14,
+    "switches": true,
+    "seeds": 1
+   },
+   "square@rec": {
+    "closeness": 38.7,
+    "worst_closeness": 38.7,
+    "good": 9,
+    "total": 14,
+    "switches": true,
+    "seeds": 1
+   },
+   "gate@rec": {
+    "closeness": 25.2,
+    "worst_closeness": 25.2,
+    "good": 5,
+    "total": 14,
+    "switches": true,
+    "seeds": 1
+   },
+   "pluck@rec": {
+    "closeness": 37.8,
+    "worst_closeness": 37.8,
+    "good": 6,
+    "total": 14,
+    "switches": true,
+    "seeds": 1
+   },
+   "bass@rec": {
+    "closeness": 9.3,
+    "worst_closeness": 9.3,
+    "good": 7,
+    "total": 17,
+    "switches": true,
+    "seeds": 1
+   },
+   "pad@rec": {
+    "closeness": 20.0,
+    "worst_closeness": 20.0,
+    "good": 13,
+    "total": 17,
+    "switches": true,
+    "seeds": 1
+   },
+   "short@rec": {
+    "closeness": 28.8,
+    "worst_closeness": 28.8,
+    "good": 7,
+    "total": 14,
+    "switches": true,
+    "seeds": 1
+   }
+  }
+ }
+}

@@ -1,5 +1,5 @@
 # STATUS — synth
-*updated 2026-09-27 late night (**published: github.com/twhughes/s1-twin, tylerwhughes.com/s1-twin/, CI green**); 2026-09-27 night (**Tyler's first-use fixes are in (round 2): one-screen plate, global transport + shortcuts, record + self-test in Match; 840 tests; README rebuilt** — see the round-2 bullet); earlier 2026-09-27 (the cyanotype build integrated); 2026-09-07 (venv rebuilt, merge prep); 2026-08-08 (soft synth + twin); 2026-08-07 (chassis build); 2026-08-01 (canonical s1.json)*
+*updated 2026-09-28 evening (**recordings, voices and a reproduction suite; not yet pushed**); 2026-09-27 late night (**published: github.com/twhughes/s1-twin, tylerwhughes.com/s1-twin/, CI green**); 2026-09-27 night (**Tyler's first-use fixes are in (round 2): one-screen plate, global transport + shortcuts, record + self-test in Match; 840 tests; README rebuilt** — see the round-2 bullet); earlier 2026-09-27 (the cyanotype build integrated); 2026-09-07 (venv rebuilt, merge prep); 2026-08-08 (soft synth + twin); 2026-08-07 (chassis build); 2026-08-01 (canonical s1.json)*
 
 - **state:** active
 - **what:** The Roland S-1 hardware synth, fully present in software: one `s1` command starts a local web cockpit (FastAPI) with every panel knob and menu setting live-synced both directions, a piano-roll sequencer with MIDI clock out, auto-monitored USB audio with a live oscilloscope (drift-servo resampled passthrough, ~35 ms, glitch-free), MIDI-keyboard forwarding, .PRM export ("Save to S-1") *and* import (the librarian), synesthesia note-coloring, and a full REST/WS agent API. The Textual TUI is retired. Plus the CMA-ES sound-matching engine behind `[studio]` and now a differentiable digital twin (`match/twin.py`, autograd, `[twin]`). 615 tests. A standalone headless twin of the monitor+forwarding lives at `music/tools/s1_rig.py` (launch: `music/rig.sh`).
@@ -13,6 +13,32 @@
   launcher convention: **`synth`** (`bin/synth`) runs the venv's `synth --no-browser`
   detached, waits on `/api/status`, opens the cockpit — `synth off` stops it. Appears on the
   HQ control panel (:8800).
+- **2026-09-28 (evening) — "record sounds and just reproduce them", and why vocals fail (rounds 5 to 11; local,
+  not yet pushed):**
+  - **Round 5, a bug found from Tyler's own bad match:** the 16 kHz search twin took its filter ceiling
+    (0.45 × sr) and harmonic count from its own rate, a duller instrument than the 22 kHz model (−7 dB at 5 kHz);
+    `Twin(model_sr=…)` + a band-limited search loss. On the S-1 default square: Quick 39 → 84%. Every match is
+    now kept in `~/.synth/matches/` (target, match, meta with a loss trace; newest 20) for diagnosis.
+  - **The reproduction suite** (`tools/match_suite.py`): 12 twin-made cases + 6 "recorded" copies (a small
+    speaker, a room, 48 kHz, −18 dB, 2 s of room noise before), scored with the view's own report, compared
+    with `docs/match-baseline.json`; fast cases in `tests/test_match_suite.py`. Before: recorded 3–8%.
+  - **Round 6 (W-rec):** plain starting patches, a mild prior on the extras (λ 0.02), a note-length scan,
+    floor-matched hiss (16-bit tails), seeds. **Round 7 (W-rec2):** `target_prep.py` auto-crop (onset within
+    ~2 ms), a key-up guess, `/api/match/prepare`, the crop drawn and draggable, Play target = what the matcher
+    gets, Play my patch, A–K on Match, the detected note pre-marked. **Round 9 (W-voice):** `pitch.py` (YIN
+    50–2500 Hz, one sung note = one note, cents and wobble), `reach.py` + a plain "out of the S-1's reach"
+    line after a match (vowels: two or more resonances; the S-1's filter makes one).
+  - **Lead integration fixes:** the key-up guess read a 16-bit tail's floor as a key-up (1.505 s on a 1.2 s
+    note) and the length scan only tried multiples of the guess → the plateau must sit within 40 dB of the
+    peak and before the crop's end, and the scan always tries 1.2 s and a spread; a Gate trial that starts
+    where the envelope matters (gate 68.5 → 78% Quick); a clean note keeps its whole release tail for the
+    matcher while a recording ends at its room (sub 45 → 78%, square@rec kept at 39%).
+  - **Tyler's six real takes, cold (no notes marked), Thorough:** every one now detected as one correct note;
+    closeness 0.4 → 22.0 (C♯3 vowel), 0.9 → 6.4 (high glide), 9.9 → 11.5, 10.6 → 10.9, 26.8 → 27.7 and
+    20.0 → 18.1 (whistles). **Why vocals stay low:** the S-1 cannot make a vowel (one resonant filter), and a
+    voice wavers unevenly. Open: whistles score badly even from a hand-made pure tone (loss 12.96), so
+    something else in those takes dominates (loudness swell? room?); short notes (suite "short" ~35%).
+  - Checks: 959 passed, ruff clean, every node check green.
 - **2026-09-28 — round 4, the matcher tries harder (local, not yet pushed):** Tyler: "i wish also the optimization
   tried harder ... it gives up too easily. especially on the discrete options." Cause: the whole descent ran under the
   default switches, and the other switch settings were scored once at the end with no re-descent; fixed step counts;

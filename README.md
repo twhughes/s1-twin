@@ -58,6 +58,13 @@ minutes on a laptop:
 
 ![How close it came back: 15 of 17 settings within 10, each with its true value and the value the matcher found; Volume shape Gate found](docs/images/recovery.png)
 
+**Record anything.** Record from a microphone or the S-1, or drop in a file. The matcher finds the
+sound in the take, whatever silence, noise or clicks surround it, marks the note it hears (one sung
+note is one note, with its cents), and works out how long the key was held. **Play target** plays
+exactly what the matcher gets; **Play my patch** plays the synth's current sound beside it. When a
+sound is out of the S-1's reach, the page says so and why: a sung vowel has two or more resonances,
+and the S-1's filter makes one.
+
 ## Sync a real S-1
 
 Plug the S-1 in over USB and the page becomes its front panel:
@@ -89,11 +96,12 @@ flowchart LR
   overlap-add of short frames, each with its own ladder, which keeps the gradient cheap.
 - **From knob to sound.** Each knob's 0 to 127 maps to a physical unit (hertz, seconds, a ratio)
   through a curve. The curves are what a calibration run fits to a real S-1.
-- **The matcher** runs Adam on 18 continuous knobs. Each descent keeps going until it stops
-  improving, with a step size that shrinks on a cosine schedule. After each start it scores every
-  setting of the 3 switches (sub octave, LFO wave, volume shape) and re-tunes the knobs under the
-  most promising ones; it also scans the LFO's wave and rate. A slow final polish starts from the
-  best patch. The loss is a log-mel distance, plus a multi-resolution spectrogram term and an
+- **The matcher** runs Adam on 18 continuous knobs, from plain starting patches (one or two
+  oscillators, the extras off). Each descent keeps going until it stops improving, with a step size
+  that shrinks on a cosine schedule, and a light penalty keeps noise, sub and vibrato out unless
+  they clearly help. After each start it scores every setting of the 3 switches (sub octave, LFO
+  wave, volume shape) and re-tunes the knobs under the most promising ones; it also scans the LFO's
+  wave and rate, and how long the note was held. A slow final polish starts from the best patch. The loss is a log-mel distance, plus a multi-resolution spectrogram term and an
   envelope term, on loudness-normalized audio. **Quick** is one start (about 30 seconds),
   **Thorough** four starts (2 to 3 minutes), and **Deep** eight starts with every switch setting
   (up to 10 minutes). **Finish now** stops early and keeps the best patch so far.
@@ -107,10 +115,15 @@ flowchart LR
   guesses. A calibration run fits them from a few hundred recorded notes of a real S-1, and an ear
   test checks that the matcher's idea of "closer" agrees with a listener. Until that session runs,
   a match is only as true as the twin.
-- On the twin's own sounds the matcher brings the settings back (the self-test above). On five
-  twin-made test sounds, four of them with non-default switches, it reaches 54 to 73% closeness
-  and finds every switch (`docs/match-benchmarks.md`). On sounds from elsewhere, the published
-  runs reach 33 to 50%. Closeness is not yet checked by ear.
+- On the twin's own sounds the matcher brings the settings back (the self-test above). The
+  reproduction suite (`tools/match_suite.py`, 12 twin-made sounds) reaches 74 to 90% closeness on
+  nine of them with Thorough; a low bass, a short note and a wobble are weaker (35 to 42%). Their
+  "recorded" copies, through a small speaker and a room with noise around them, reach 9 to 39%.
+  Closeness is not yet checked by ear (`docs/match-benchmarks.md`, `docs/match-baseline.json`).
+- **Voices are out of the S-1's reach.** A vowel is two or more resonances; the S-1 has one filter,
+  so the matcher gets the pitch, the loudness shape and one resonance, not the vowel. On six sung
+  and whistled takes the matcher now hears the right single note every time, and reaches 6 to 28%
+  closeness. Draw and Chop, which the twin does not model yet, may reach further.
 - Delay, reverb, chorus and the voice modes are browser extras outside the model: they sound, but
   the matcher does not fit them. Draw and Chop need the real S-1.
 - Tested in Chrome. Safari is untested.
@@ -187,6 +200,7 @@ curl -X POST localhost:8766/api/notes -H 'content-type: application/json' -d '{"
 .venv/bin/ruff check .
 node synth/web/static/design/kit.check.mjs      # front-end checks live next to their modules (*.check.mjs)
 .venv/bin/python tools/build_site.py            # the static page (browser twin only) into site/
+.venv/bin/python tools/match_suite.py           # the reproduction suite, against docs/match-baseline.json
 ```
 
 Layout: `synth/schema.py` and `synth/data/s1.json` (every parameter, audited against the official

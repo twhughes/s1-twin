@@ -240,3 +240,38 @@ stays mild: a real vibrato still scores better with its LFO at 4 × this λ
   here.
 - The two caveats at the top of this file still hold: closeness is not yet checked by ear, and there
   is no real S-1 in these runs.
+
+
+## The reproduction suite, and Tyler's own takes (2026-09-28, evening)
+
+`tools/match_suite.py`: 12 twin-made cases and 6 recorded copies (a small speaker, a room, 48 kHz, −18 dB,
+2 s of room noise before the note and 1.5 s after, −60 dBFS noise under it), the notes given, scored with
+the Match view's own report. The baseline (`docs/match-baseline.json`) is the Thorough column below.
+
+| case | Quick, before round 5 | Thorough, now (baseline) | settings within 10, now |
+|---|---|---|---|
+| square | 84.3 | 89.8 | 14 of 14 |
+| saw | 80.5 | 81.6 | 13 of 13 |
+| gate | 72.6 | 74.4 | 13 of 14 |
+| sub | 61.3 | 78.4 | 15 of 15 |
+| vibrato | 58.9 | 62.5 | 12 of 17 (LFO wave missed) |
+| wobble | 55.7 | 42.4 | 18 of 19 (closeness now spans the whole release: an LFO a hair off drifts out of phase) |
+| pluck | 40.2 | 85.9 | 16 of 17 |
+| bass | 35.8 | 39.7 | 10 of 17 |
+| high | 31.5 | 61.9 | 10 of 14 |
+| pad | 54.6 | 89.5 | 11 of 14 |
+| short | 25.8 | 34.9 | 12 of 17 |
+| chord | 77.7 | 78.4 | 14 of 14 |
+| square@rec | 8.3 | 38.7 | 9 of 14 |
+| gate@rec | 8.3 | 25.2 | 5 of 14 |
+| pluck@rec | 8.3 | 37.8 | 6 of 14 |
+| bass@rec | 2.8 | 9.3 | 7 of 17 |
+| pad@rec | 5.1 | 20.0 | 13 of 17 |
+| short@rec | 8.2 | 28.8 | 7 of 14 |
+
+Tyler's six real takes (sung and whistled, kept only on his machine), cold start as he used them, Thorough:
+his runs detected clusters (C4+C#4+D4+E4, C#3+D3+D#3, E6+F6+F#6+G6, C3+C#3) or the whistles' D#6 and F6; now
+every take is one correct note. Closeness: 0.4 → 22.0 (a C#3 vowel), 0.9 → 6.4 (a high glide), 9.9 → 11.5,
+10.6 → 10.9, 26.8 → 27.7 and 20.0 → 18.1 (whistles). Vowels stay low because the S-1's one filter cannot make
+two resonances; the whistles score badly even from a hand-made pure tone (loss 12.96), so something else in
+those takes dominates: the next thing to look at.

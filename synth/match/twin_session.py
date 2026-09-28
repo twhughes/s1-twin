@@ -148,7 +148,10 @@ PLAIN_REST = {"pulse_width": 0.0, "resonance": 0.1, "key_follow": 0.0, "fine_tun
 # hardly shows.) A key-up past the render's end holds the note through the window (HELD).
 GATE_PRE_STARTS = 6
 GATE_DEFAULT = 1.2
-GATE_FACTORS = (0.5, 0.7, 1.4, 2.0)
+GATE_FACTORS = (0.5, 0.7, 0.85, 1.15, 1.4, 2.0)   # around the current best: coarse steps, then fine
+# ...and these are always tried too, so one bad guess (a recording's key-up read off a noise floor) can
+# never decide the length alone: the twin's own 1.2 s and a spread from a short stab to a long hold.
+GATE_GRID = (0.2, 0.35, 0.6, 0.9, GATE_DEFAULT)
 GATE_MIN = 0.1
 HELD = 60.0
 # The target's noise floor. A recording (even a 16-bit WAV of the twin) never falls silent: after the
@@ -329,8 +332,8 @@ class Plan:
     cold_candidates: list[int] | None = None
     init_k: np.ndarray | None = None
     init_s: dict[str, int] = field(default_factory=dict)
-    gate_s: float | None = None                 # the key-up time: target_prep's guess (None: the twin's 1.2 s);
-                                                # the run's note-length scan starts from it
+    gate_s: float | None = None                 # the key-up: target_prep's guess (None: the twin's 1.2 s),
+                                                # where the run's note-length scan starts
     crop: tuple[float, float] | None = None     # where ``samples`` lie in the upload, in seconds
 
 
@@ -498,13 +501,13 @@ def noise_floor(x: np.ndarray, sr: float) -> float:
 
 
 def gate_candidates(gate: float, window: float) -> list[float]:
-    """The key-up times the note-length scan tries around ``gate`` (seconds): x0.5, x0.7, x1.4, x2 and held
-    through; times at or past the search ``window`` all sound held there, so they count once (HELD), and
-    none is shorter than GATE_MIN. ``gate`` itself is left out."""
+    """The key-up times the note-length scan tries around ``gate`` (seconds): GATE_FACTORS times it, the
+    fixed GATE_GRID, and held through; times at or past the search ``window`` all sound held there, so they
+    count once (HELD), and none is shorter than GATE_MIN. ``gate`` itself is left out."""
     out: list[float] = []
-    for g in [gate * f for f in GATE_FACTORS] + [HELD]:
+    cur = HELD if gate >= window else gate
+    for g in [gate * f for f in GATE_FACTORS] + list(GATE_GRID) + [HELD]:
         g = HELD if g >= window else max(GATE_MIN, round(g, 3))
-        cur = HELD if gate >= window else gate
         if g != cur and g not in out:
             out.append(g)
     return out

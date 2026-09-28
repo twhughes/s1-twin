@@ -73,6 +73,8 @@ FALL_SLOPE = 15.0        # ...the fall at least this fast...
 KINK = 10.0              # ...and at least this much faster than the plateau
 FALL_DB = 8.0            # the fall goes at least this far under the plateau
 RISE_BACK_DB = 1.5       # after the key-up, nothing climbs back over the plateau by more than this
+PLATEAU_SPAN_DB = 40.0   # a sustain plateau is part of the note: within this of its peak (a 16-bit tail's
+                         # hiss, -96 dB, then digital silence is a clean "plateau then fall" too)
 
 NO_SOUND = ("No clear sound was found in that audio, only a click or steady noise. "
             "Record the sound again, louder or closer, or choose another file.")
@@ -247,13 +249,15 @@ def _hinge(s: np.ndarray, k: float, lo: int, hi: int, fps: float) -> tuple[np.nd
     return coef, float(np.mean(resid * resid))
 
 
-def key_up(power: np.ndarray, fps: float, floor_db: float) -> float | None:
+def key_up(power: np.ndarray, fps: float, floor_db: float, until: float | None = None) -> float | None:
     """How long the key was held, in seconds from the first frame, or None.
 
     ``power`` is the frame power from the onset. After the sustain plateau (at least 100 ms, falling
     no faster than ``PLATEAU_SLOPE``), the envelope starts falling for good: much faster, at least
     ``FALL_DB`` down, and never back over the plateau. A plateau-then-fall line fitted around each
-    candidate bend (150 ms each side) finds it, to a few milliseconds on a clean take."""
+    candidate bend (150 ms each side) finds it, to a few milliseconds on a clean take. The plateau lies
+    within PLATEAU_SPAN_DB of the note's peak, and the key goes up before ``until`` (seconds from the
+    first frame: where the sound ends) when given."""
     s = _smooth_db(power)
     n = len(s)
     if n < PLATEAU_FRAMES + 4:
@@ -278,12 +282,15 @@ def key_up(power: np.ndarray, fps: float, floor_db: float) -> float | None:
             hi += 1
         return lo, min(end, hi + 1)
 
+    last = end - 2 if until is None else min(end - 2, int(until * fps))
     best: tuple[float, int] | None = None
-    for k in range(first + PLATEAU_FRAMES, end - 2):
+    for k in range(first + PLATEAU_FRAMES, last):
         lo, hi = window(k)
         if hi - k < 3:
             continue
         (level, before, after), err = _hinge(s, k, lo, hi, fps)
+        if level < top - PLATEAU_SPAN_DB:
+            continue
         if before < -PLATEAU_SLOPE or after > -FALL_SLOPE or after > before - KINK:
             continue
         rest = s[k + 1:end]
@@ -531,7 +538,7 @@ def _finish(take: _Take, i0: int, i1: int, onset: int, lead: int, look: int, war
     if clipped >= CLIP_SHARE:
         warnings.insert(0, CLIPPED)
     floor = take.heard_floor if math.isfinite(take.heard_floor) else -120.0
-    gate = key_up(frame_power(x[onset:look], take.hop), take.fps, floor)
+    gate = key_up(frame_power(x[onset:look], take.hop), take.fps, floor, until=max(0, i1 - onset) / sr)
     return Prepared(samples=crop, t0=i0 / sr, t1=i1 / sr, gate_s=gate,
                     noise_db=max(-120.0, take.floor_db), peak_db=max(-120.0, peak_db),
                     warnings=warnings, onset=onset / sr, duration=len(x) / sr)

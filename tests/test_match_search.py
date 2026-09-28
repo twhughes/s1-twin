@@ -325,8 +325,12 @@ def _wav_target(cc: dict[int, int], gate: float, note: int = 48) -> np.ndarray:
 
 
 def test_the_key_up_candidates() -> None:
-    assert ts.gate_candidates(1.2, 1.5) == [0.6, 0.84, ts.HELD], "x1.4 and x2 sound held in a 1.5 s window"
-    assert ts.gate_candidates(0.6, 1.5) == [0.3, 0.42, 0.84, 1.2, ts.HELD]
+    near = ts.gate_candidates(1.2, 1.5)
+    assert {0.6, 0.84, 1.02, 1.38, ts.HELD} <= set(near), "coarse and fine steps; x1.4 and x2 sound held"
+    assert 1.2 not in near and len(near) == len(set(near)), "the current length is left out, none twice"
+    assert set(ts.GATE_GRID) - {1.2} <= set(near), "the fixed spread is always tried"
+    far = ts.gate_candidates(1.505, 1.5)                  # a bad guess (a key-up read off a noise floor)
+    assert ts.GATE_DEFAULT in far, "the twin's own 1.2 s is always a candidate: one bad guess never decides"
     assert ts.gate_candidates(0.12, 1.5)[0] == ts.GATE_MIN and ts.HELD not in ts.gate_candidates(ts.HELD, 1.5)
     assert ts.gate_words(0.42, 1.5) == "note held 0.4 s"
     assert ts.gate_words(ts.HELD, 1.5) == "note held to the end"
@@ -365,7 +369,8 @@ def test_the_scan_finds_a_short_note() -> None:
     frames = [s.frame for s in ts.steps(_wav_target(SHORT, 0.35), [48], seeded=True, budget=budget)]
     assert 0.25 <= frames[-1]["held"] <= 0.5
     first = next(f for f in frames if f["phase"] == "gd")
-    assert first["trying"].endswith(ts.gate_words(frames[-1]["held"], ts.SEARCH_SECONDS))
+    said = float(first["trying"].rsplit("note held ", 1)[1].split(" s")[0])
+    assert 0.25 <= said <= 0.55, "the first start already says a short note (the scan after it may refine it)"
 
 
 def test_a_plans_key_up_reaches_the_run() -> None:

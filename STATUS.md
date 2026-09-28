@@ -13,6 +13,15 @@
   launcher convention: **`synth`** (`bin/synth`) runs the venv's `synth --no-browser`
   detached, waits on `/api/status`, opens the cockpit — `synth off` stops it. Appears on the
   HQ control panel (:8800).
+- **2026-09-28 — round 3, every view on one screen (local, not yet pushed):** Tyler: "that page is spilling off the
+  bottom of the screen" (Match: 1,027 px idle with the Match button below the fold, ~1,650 with the report; the
+  Sequencer 1,072). `core/fit.js` (the plate's fit, shared: 1470 px design width, scaled down evenly, never up) and a
+  **bottom strip** (footer + key hints, like a status bar; `--strip-h` 34 px) so nothing floats over a control. Match
+  (W-rec): compact left column, 150 px wells, one done row, one fixed panel that switches between the knobs and the
+  recovery report; every state 554–643 px. Sequencer (W-keys): the roll beside a 300 px column for sequences,
+  patterns and the warning; 624 px in every state. At 1470×760 all three views: page height 760, scale 1.
+  842 pytest, ruff clean, 11 node-check files green. Next (round 4, running): the matcher tries harder — switches
+  with re-descent, plateau-based descents, a Deep preset, Stop = finish with the best so far.
 - **2026-09-27 (late night) — PUBLISHED (Tyler: "we can publish this changes. both in github and put on my
   website too"):** GitHub repo renamed `s1tui` → **`twhughes/s1-twin`** (old URL redirects), `main` pushed
   (a3e7821 → e064442, 56 + round-2 commits, history scanned: no secrets, same author identity as before), page

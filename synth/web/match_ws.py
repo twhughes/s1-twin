@@ -21,6 +21,10 @@ While the match runs, the client may send the text message ``"finish"``: the sea
 the next step and the done frame still comes, with the best patch so far rendered and scored
 (``"finished": true``). Closing the socket ends the search too, with no done frame.
 
+Every run is kept for later diagnosis in ``~/.synth/matches/<time>/`` (the newest
+``KEEP_MATCHES``): ``target.wav`` as uploaded, ``match.wav``, and ``meta.json`` with the
+request, a compact loss trace (phase, start, step, loss, best, what was tried) and the result.
+
 A bad request gets ``{"phase": "error", "detail": <what happened and what to do>}``
 and a close. Localhost only: the same host + origin guard as the cockpit's HTTP
 routes (a browser WebSocket skips the HTTP middleware, so it is checked here).
@@ -41,9 +45,13 @@ already being recorded, or the take is silent.
 from __future__ import annotations
 
 import asyncio
+import base64
 import contextlib
 import json
+import shutil
 import threading
+from datetime import datetime
+from pathlib import Path
 
 import numpy as np
 from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect
@@ -53,8 +61,38 @@ from pydantic import BaseModel, Field
 import synth.engine as engine_module
 
 from ..match import twin_session as session
+from ..paths import data_dir
 
 router = APIRouter()
+MATCH_DIR = data_dir() / "matches"   # every run, kept for diagnosis (tests point this elsewhere)
+KEEP_MATCHES = 20              # runs kept there (the newest)
+TRACE_KEYS = ("phase", "restart", "iter", "loss", "best_loss", "trying", "notes", "improved")
+
+
+def save_match(raw: bytes, query: dict, trace: list[dict], done: dict | None, started: str,
+               root: Path | None = None) -> Path | None:
+    """Keep one run for later diagnosis: the target as uploaded, the match's audio, and meta.json
+    (the request, the loss trace, the result without its audio). The newest KEEP_MATCHES stay.
+    Best-effort: a full disk never breaks a match."""
+    try:
+        base = root or MATCH_DIR
+        base.mkdir(parents=True, exist_ok=True)
+        run = base / started
+        run.mkdir(exist_ok=True)
+        (run / ("target.wav" if raw[:4] == b"RIFF" else "target.bin")).write_bytes(raw)
+        result = None
+        if done is not None:
+            result = {k: v for k, v in done.items()
+                      if not k.endswith("_b64") and k not in ("wave", "target_wave")}
+            if done.get("match_wav_b64"):
+                (run / "match.wav").write_bytes(base64.b64decode(done["match_wav_b64"]))
+        meta = {"started": started, "query": query, "result": result, "trace": trace}
+        (run / "meta.json").write_text(json.dumps(meta, indent=1))
+        for old in sorted(p for p in base.iterdir() if p.is_dir())[:-KEEP_MATCHES]:
+            shutil.rmtree(old, ignore_errors=True)
+        return run
+    except OSError:
+        return None
 
 TOO_LARGE = "That audio file is too large (25 MB max). Trim it to a few seconds of the sound."
 MISSING_EXTRAS = (
@@ -153,15 +191,25 @@ async def ws_match(websocket: WebSocket) -> None:
 
     reader = asyncio.create_task(listen())
     stream = session.astream(plan, throttle, stop=stop)
+    started = datetime.now().strftime("%Y%m%d-%H%M%S")
+    query = {k: q.get(k) for k in ("notes", "quality", "init", "throttle") if q.get(k) is not None}
+    trace: list[dict] = []
+    done: dict | None = None
     try:
         async for step in stream:
-            await websocket.send_json(step.frame)
+            f = step.frame
+            if f.get("phase") == "done":
+                done = f
+            else:
+                trace.append({k: f[k] for k in TRACE_KEYS if k in f})
+            await websocket.send_json(f)
     except (WebSocketDisconnect, RuntimeError):
         return                                   # the client left; the finally below ends the run
     finally:
         stop.set()
         reader.cancel()
         await stream.aclose()
+        await asyncio.to_thread(save_match, raw, query, trace, done, started)
     with contextlib.suppress(Exception):
         await websocket.close()
 

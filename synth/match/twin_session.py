@@ -527,7 +527,7 @@ def steps(
     from autograd import grad
 
     from .capture import AudioClip, prepare
-    from .twin import Twin, _closeness_vs, midi_to_hz, spectral_loss
+    from .twin import SEARCH_BAND, Twin, _closeness_vs, band_limit, midi_to_hz, spectral_loss
 
     b = resolve_budget(quality, budget)
     gd_iters, restarts, neighbor_iters = int(b["gd_iters"]), int(b["restarts"]), int(b["neighbor_iters"])
@@ -560,13 +560,17 @@ def steps(
     # Align the search render's note-off to the full render's absolute time, so the
     # shorter render keeps the target's envelope shape (mirrors TwinMatcher).
     note_off_s = full.seconds * full.gate_fraction
+    # The search twin renders the SAME model more cheaply: its caps come from the full rate
+    # (model_sr), and the loss compares only the band both renders hold (band_limit).
     search = Twin(sr=SEARCH_SR, seconds=SEARCH_SECONDS,
-                  gate_fraction=min(1.0, note_off_s / SEARCH_SECONDS))
+                  gate_fraction=min(1.0, note_off_s / SEARCH_SECONDS), model_sr=full.sr)
+    fmax = SEARCH_BAND * search.sr
 
     target_full = np.asarray(target_audio, dtype=np.float64)
     tgt_lo = AudioClip(target_full.astype(np.float32), full.sr).resample(search.sr).samples.astype(np.float64)
     n = max(1, int(round(search.seconds * search.sr)))
     tgt_lo = np.concatenate([tgt_lo, np.zeros(n - tgt_lo.shape[0])]) if tgt_lo.shape[0] < n else tgt_lo[:n]
+    tgt_lo = np.asarray(band_limit(tgt_lo, search.sr, fmax), dtype=np.float64)
 
     s0 = {**S_DEFAULT, **(init_s or {})}
     notes0 = sorted(int(x) for x in notes)
@@ -587,10 +591,11 @@ def steps(
         return lambda k: search.render_chord(k, s, note_set)
 
     def loss_of(audio: np.ndarray) -> float:
-        return float(spectral_loss(audio, tgt_lo, search.sr))
+        return float(spectral_loss(band_limit(audio, search.sr, fmax), tgt_lo, search.sr))
 
     def grad_of(note_set: list[int], s: dict[str, int]) -> Callable[[np.ndarray], np.ndarray]:
-        return grad(lambda k: spectral_loss(search.render_chord(k, s, note_set), tgt_lo, search.sr))
+        return grad(lambda k: spectral_loss(band_limit(search.render_chord(k, s, note_set), search.sr, fmax),
+                                            tgt_lo, search.sr))
 
     def frame(phase: str, note_set: list[int], x: np.ndarray, s: dict[str, int],
               audio: np.ndarray, **extra: Any) -> dict[str, Any]:

@@ -70,6 +70,10 @@ __all__ = [
 ]
 
 MAX_HARMONICS = 64
+# The band a cheaper search render compares, as a fraction of its rate: its harmonics stop near
+# 0.445 x sr (a semitone of headroom for fine tune and one for vibrato), so above this the target
+# has partials the render cannot make (see band_limit).
+SEARCH_BAND = 0.43
 _TWO_PI = 2.0 * math.pi
 
 
@@ -432,11 +436,17 @@ class Twin:
         sr: int = WORKING_SR,
         seconds: float = ANALYSIS_SECONDS,
         gate_fraction: float = 0.6,
+        model_sr: int | None = None,
     ) -> None:
         self.mapping = mapping
         self.sr = int(sr)
         self.seconds = float(seconds)
         self.gate_fraction = float(gate_fraction)
+        # The rate the MODEL is defined at: the filter's ceiling (0.45 x model_sr) and the harmonic
+        # count come from it, so a cheaper render (the matcher's 16 kHz search twin) keeps the
+        # model's sound in every band it can hold instead of turning into a duller instrument.
+        # (twin/dsp.js does the same with its modelSr.) Defaults to the render's own rate.
+        self.model_sr = int(model_sr) if model_sr else self.sr
         self.k_dim = len(K_PARAMS)
         self.k_names = K_NAMES
         # tier-1 backend state (structural conformance to InstrumentBackend)
@@ -466,7 +476,8 @@ class Twin:
         note_len = self.seconds * self.gate_fraction
         cents = p["fine_tune"]          # fine tune (cents -> ratio), differentiable in k
         f0_base = midi_to_hz(note)
-        H = _harmonic_count(f0_base * (2.0 ** (100.0 / 1200.0)), sr)
+        f_top = f0_base * (2.0 ** (100.0 / 1200.0))
+        H = min(_harmonic_count(f_top, self.model_sr), _harmonic_count(f_top, sr))
 
         # -- modulators -------------------------------------------------------
         env = _adsr(p["attack"], p["decay"], p["sustain"], p["release"], note_len, n, sr)
@@ -497,8 +508,9 @@ class Twin:
         log2_fc = anp.log2(anp.clip(p["cutoff"], 1e-3, None)) + key_oct
         mod = p["env_to_cutoff"] * env + p["lfo_to_cutoff"] * lfo
         log2_fc_t = log2_fc + mod
-        # soft two-sided bound to [20 Hz, 0.45*sr]
-        lo, hi = math.log2(20.0), math.log2(0.45 * sr)
+        # soft two-sided bound to [20 Hz, 0.45 * the model's rate] (the frequency-domain ladder
+        # needs no bound below the render's Nyquist: H(s) is evaluated at the bins it has)
+        lo, hi = math.log2(20.0), math.log2(0.45 * self.model_sr)
         log2_fc_t = hi - _softplus(hi - log2_fc_t)
         log2_fc_t = lo + _softplus(log2_fc_t - lo)
         cutoff_t = 2.0 ** log2_fc_t
@@ -709,6 +721,23 @@ def envelope_loss(a: Any, b: Any, sr: float = WORKING_SR, frame_ms: float = 10.0
     return anp.mean(anp.abs(_rms_env(a, sr, frame_ms) - _rms_env(b, sr, frame_ms)))
 
 
+def band_limit(x: Any, sr: float, fmax: float) -> Any:
+    """Keep only what lies below ``fmax`` (rFFT mask with a short raised-cosine edge), differentiable.
+
+    The matcher's search compares a cheap 16 kHz render with a target resampled from a richer one;
+    above about 0.44 x 16 kHz the render has no harmonics left while the target still does, so the
+    search loss looks only at the band both hold (applied to the candidate and the target alike)."""
+    n = x.shape[-1]
+    m = n + (n % 2)                               # autograd's rFFT gradient needs an even length
+    if m != n:
+        x = anp.concatenate([x, anp.zeros(1)])
+    f = np.fft.rfftfreq(m, 1.0 / sr)
+    edge = 0.06 * fmax
+    keep = np.clip((fmax - f) / edge, 0.0, 1.0)
+    keep = 0.5 - 0.5 * np.cos(np.pi * keep)
+    return anp.fft.irfft(anp.fft.rfft(x) * keep, m)[:n]
+
+
 def _rms_normalize(x: Any) -> Any:
     """Loudness-invariant scaling (differentiable) — score timbre, not level."""
     return x / (anp.sqrt(anp.mean(x * x) + _EPS))
@@ -805,7 +834,7 @@ class TwinMatcher:
         note_off_s = self.twin.seconds * self.twin.gate_fraction
         search_gate = min(1.0, note_off_s / search_seconds)
         self.search_twin = Twin(sr=search_sr, seconds=search_seconds,
-                                gate_fraction=search_gate)
+                                gate_fraction=search_gate, model_sr=self.twin.sr)
         self.iters = iters
         self.lr = lr
         self.s_sweep = tuple(s_sweep)
@@ -823,6 +852,8 @@ class TwinMatcher:
             tgt_lo = np.concatenate([tgt_lo, np.zeros(n - tgt_lo.shape[0])])
         else:
             tgt_lo = tgt_lo[:n]
+        fmax = SEARCH_BAND * stw.sr
+        tgt_lo = np.asarray(band_limit(tgt_lo, stw.sr, fmax), dtype=np.float64)
 
         rng = np.random.default_rng(self.seed)
         start = _time.perf_counter()
@@ -832,7 +863,7 @@ class TwinMatcher:
             s_full = {**_default_s(), **s}
 
             def obj(k: np.ndarray, _s=s_full) -> float:
-                return spectral_loss(stw.render(k, _s, note), tgt_lo, stw.sr)
+                return spectral_loss(band_limit(stw.render(k, _s, note), stw.sr, fmax), tgt_lo, stw.sr)
 
             x0 = 0.5 + 0.05 * rng.standard_normal(stw.k_dim)
             xk, lk, evals = _adam_descend(obj, x0, self.iters, self.lr)

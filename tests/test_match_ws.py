@@ -120,3 +120,32 @@ def test_foreign_host_or_origin_is_refused(client: TestClient, headers: dict) ->
         with client.websocket_connect("/ws/match", headers=headers) as ws:
             ws.receive_json()
     assert exc.value.code == 1008
+
+
+def test_every_run_is_kept_for_diagnosis(client: TestClient) -> None:
+    """The target as uploaded, the match's audio and meta.json (request, trace, result) land in
+    MATCH_DIR, the newest KEEP_MATCHES of them."""
+    import time
+
+    frames = _stream(client, _tone_wav(), "throttle=0&quality=quick&notes=57")
+    assert frames[-1]["phase"] == "done"
+    deadline = time.monotonic() + 10          # the run is saved just after the done frame goes out
+    while not list(match_ws.MATCH_DIR.glob("*/meta.json")) and time.monotonic() < deadline:
+        time.sleep(0.05)
+    runs = sorted(p for p in match_ws.MATCH_DIR.iterdir() if p.is_dir())
+    assert runs, "the run was not kept"
+    run = runs[-1]
+    assert (run / "target.wav").read_bytes()[:4] == b"RIFF"
+    assert (run / "match.wav").read_bytes()[:4] == b"RIFF"
+    meta = json.loads((run / "meta.json").read_text())
+    assert meta["query"]["notes"] == "57" and meta["query"]["quality"] == "quick"
+    assert meta["result"]["closeness"] == frames[-1]["closeness"]
+    assert "match_wav_b64" not in meta["result"] and meta["trace"]
+    assert {"phase", "loss"} <= set(meta["trace"][0])
+
+
+def test_only_the_newest_runs_are_kept(tmp_path) -> None:
+    for i in range(match_ws.KEEP_MATCHES + 3):
+        match_ws.save_match(b"RIFFxxxx", {}, [], None, f"20260101-0000{i:02d}", root=tmp_path)
+    runs = sorted(p.name for p in tmp_path.iterdir())
+    assert len(runs) == match_ws.KEEP_MATCHES and runs[0] == "20260101-000003"

@@ -6,6 +6,8 @@
 // or runs its own clock on the static page. The banks and the S-1's patterns (/api/sequences,
 // /api/device/pattern) are this view's own. Space, ⇧ Space, − and = and Delete come from
 // core/shortcuts.js; the roll keeps its own keys while it has focus.
+// One screen (core/fit.js): the bar, then the roll with its caption line on the left and a right column
+// with the four-notes warning, Sequences and Patterns on the S-1 (or the static page's note).
 // The pure helpers (rollGeometry, cellAt, moveCursor, …) run in node: views/sequencer.check.mjs; the
 // step rules (stepSeconds, stepPlan, swingDelay, …) moved to core/transport.js with the engine.
 
@@ -14,6 +16,7 @@ import { seg } from "../design/seg.js";
 import * as draw from "../design/draw.js";
 import { rgbOf, rgba, noteName } from "../design/colors.js";
 import { MAX_STEPS, stepSeconds, clampDuration, createTransport } from "../core/transport.js";
+import { fitView } from "../core/fit.js";
 
 export const id = "sequencer";
 export const title = "Sequencer";
@@ -90,11 +93,14 @@ export function warningText(steps) {
 }
 
 // ── the view ─────────────────────────────────────────────────────────────────────────
+// One screen (ROUND2.md §4, round 3): above 1180 px the view is laid out at the design size (1470 px wide)
+// and core/fit.js scales it down evenly for a smaller window. The roll has a fixed height and the right
+// column is exactly as tall as the roll and its caption line, so a selected note, the four-notes warning
+// or a long list of saved sequences never makes the page taller: the list scrolls inside the column.
+// At 1180 px and below the view stacks and the page scrolls.
 const CSS = `
-.v-seq { position: relative; z-index: 1; max-width: 1480px; margin: 0 auto; padding: 30px var(--gutter) 56px; }
-.v-seq .sq-bar { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 22px 40px; }
-.v-seq .sq-group { display: flex; flex-direction: column; gap: 10px; }
-.v-seq .sq-group > .k-label { color: var(--ink); }
+.v-seq { --roll-h: 400px; --under-h: 98px; position: relative; z-index: 1; max-width: 1480px; margin: 0 auto; padding: 14px var(--gutter) 10px; }
+.v-seq .sq-bar { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 16px 44px; }
 .v-seq .sq-transport { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
 .v-seq .pill[aria-pressed="true"] { border-color: var(--ink); box-shadow: inset 0 0 0 0.75px var(--ink); }
 .v-seq .sq-pos { min-width: 9.5em; color: var(--ink-2); font-size: 13.5px; font-variant-numeric: tabular-nums; margin-left: 6px; }
@@ -106,30 +112,51 @@ const CSS = `
 .v-seq .sq-field input { width: 5.6em; }
 .v-seq .sq-field input:focus, .v-seq select:focus, .v-seq .sq-save input:focus { border-color: var(--ink); outline: none; }
 .v-seq .sq-field input:focus-visible, .v-seq select:focus-visible, .v-seq .sq-save input:focus-visible { outline: 1.5px dashed var(--ink); outline-offset: 3px; }
-.v-seq .sq-perf { display: flex; gap: 10px; }
-.v-seq .sq-warn { margin: 22px 0 0; font-size: 13.5px; color: var(--ink); max-width: 80ch; padding-left: 14px; border-left: 1.25px dashed var(--ink-3); }
-.v-seq .sq-roll { margin-top: 26px; max-height: 440px; overflow: auto; overscroll-behavior: contain; }
+.v-seq .sq-perf { display: flex; gap: 10px; margin-left: auto; }          /* over the right column */
+.v-seq .sq-main { display: grid; grid-template-columns: minmax(0, 1fr) 300px; gap: 28px 44px; margin-top: 14px; }
+.v-seq .sq-roll { height: var(--roll-h); overflow: auto; overscroll-behavior: contain; }
 .v-seq .sq-roll canvas { display: block; touch-action: none; cursor: crosshair; max-width: none; }
 .v-seq .sq-roll canvas:focus-visible { outline-offset: -3px; }
-.v-seq .sq-under { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 18px 40px; }
-.v-seq .sq-under .caption { flex: 1 1 320px; }
-.v-seq .sq-under .caption .note { max-width: 70ch; }
-.v-seq .sq-inspector { display: flex; flex-wrap: wrap; align-items: center; gap: 12px 18px; margin-top: 14px; }
+.v-seq .sq-under { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 12px 32px; min-height: var(--under-h); padding-top: 10px; }
+.v-seq .sq-under .caption { flex: 1 1 320px; margin: 0; }
+.v-seq .sq-under .caption .note { max-width: none; }
+.v-seq .sq-inspector { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 16px; }
 .v-seq .sq-which { display: flex; align-items: center; gap: 9px; font-size: 14px; font-variant-numeric: tabular-nums; min-width: 9em; }
 .v-seq .sq-swatch { width: 13px; height: 13px; border-radius: 50%; background: rgb(var(--pc)); box-shadow: 0 0 0 1.25px var(--ink); }
-.v-seq .sq-lower { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: var(--gap); margin-top: 44px; }
-.v-seq .sq-lower .note { margin: 0 0 14px; }
-.v-seq .sq-save { display: flex; gap: 10px; flex-wrap: wrap; }
-.v-seq .sq-save input { flex: 1 1 12em; min-width: 0; }
-.v-seq .sq-confirm { margin: 12px 0 0; font-size: 13.5px; color: var(--ink); display: flex; gap: 8px 16px; flex-wrap: wrap; align-items: baseline; }
-.v-seq .sq-list { list-style: none; margin: 16px 0 0; padding: 0; }
-.v-seq .sq-list li { display: flex; align-items: baseline; gap: 16px; padding: 7px 0; border-bottom: 1px solid var(--ink-4); }
-.v-seq .sq-list li span { flex: 1; font-size: 14.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.v-seq .sq-pc { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 12px 18px; }
+.v-seq .sq-side { display: flex; flex-direction: column; gap: 22px; min-width: 0; }
+.v-seq .sq-side section { display: flex; flex-direction: column; min-height: 0; }
+.v-seq .sq-side h2.heading { font-size: 21px; margin: 0 0 3px; }
+.v-seq .sq-side .note { margin: 0 0 10px; max-width: none; }
+.v-seq .sq-side > .note { margin: 0; }
+.v-seq .sq-warn { flex: none; margin: 0; font-size: 13px; line-height: 1.45; color: var(--ink); padding-left: 12px; border-left: 1.25px dashed var(--ink-3); }
+.v-seq .sq-save { display: flex; gap: 10px; }
+.v-seq .sq-save input { flex: 1 1 auto; min-width: 0; }
+.v-seq .sq-confirm { flex: none; margin: 10px 0 0; font-size: 13px; color: var(--ink); display: flex; gap: 6px 14px; flex-wrap: wrap; align-items: baseline; }
+.v-seq .sq-list { list-style: none; margin: 8px 0 0; padding: 0; max-height: 222px; min-height: 0; overflow-y: auto; overscroll-behavior: contain; }
+.v-seq .sq-list li { display: flex; align-items: baseline; gap: 14px; padding: 3px 0; border-bottom: 1px solid var(--ink-4); }
+.v-seq .sq-list li span { flex: 1; min-width: 0; font-size: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.v-seq .sq-list .quiet { font-size: 13px; }
+.v-seq .sq-side .sq-seqs > .note:last-child { margin: 8px 0 0; }
+.v-seq .sq-pcs { flex: none; margin-top: auto; }
+.v-seq .sq-pc { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 10px 14px; }
 .v-seq .sq-pc label { display: flex; flex-direction: column; gap: 4px; font-size: 12.5px; }
 .v-seq .sq-hidden { display: none !important; }
+@media (min-width: 1181px) {
+  .v-seq .sq-side { height: calc(var(--roll-h) + var(--under-h)); overflow: hidden; }
+  .v-seq .sq-seqs { flex: 0 1 auto; }
+  .v-seq .sq-list { flex: 0 1 auto; }
+}
+@media (max-width: 1180px) {
+  .v-seq { padding-bottom: 48px; }
+  .v-seq .sq-main { grid-template-columns: minmax(0, 1fr); }
+  .v-seq .sq-roll { height: auto; max-height: 440px; }
+  .v-seq .sq-under { min-height: 0; }
+  .v-seq .sq-side { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 22px var(--gap); align-items: start; }
+  .v-seq .sq-side > .sq-warn, .v-seq .sq-side > .note { grid-column: 1 / -1; }
+  .v-seq .sq-pcs { margin-top: 0; }
+}
 @media (max-width: 760px) {
-  .v-seq .sq-lower { grid-template-columns: minmax(0, 1fr); }
+  .v-seq .sq-side { grid-template-columns: minmax(0, 1fr); }
   .v-seq .sq-roll { max-height: 360px; }
   .v-seq .sq-bar { gap: 18px 28px; }
 }
@@ -196,7 +223,6 @@ function createView(root, ctx) {
   // ── layout ──────────────────────────────────────────────────────────────────────
   const view = h("section", { class: "v-seq", "aria-label": "Sequencer" });
   root.append(view);
-  disposers.push(() => view.remove());
 
   const playBtn = h("button", { type: "button", class: "pill", "data-action": "play", "aria-pressed": "false", onclick: () => T.play() }, "Play");
   const pauseBtn = h("button", { type: "button", class: "pill", "data-action": "pause", "aria-pressed": "false", onclick: () => T.pause() }, "Pause");
@@ -227,24 +253,7 @@ function createView(root, ctx) {
   const inspector = h("div", { class: "sq-inspector sq-hidden", "data-role": "inspector", "aria-label": "The selected note" },
     h("span", { class: "sq-which" }, whichSwatch, whichText), velKnob.el, lenKnob.el, delNote);
 
-  view.append(
-    h("div", { class: "sq-bar" },
-      h("div", { class: "sq-group" },
-        h("div", { class: "sq-transport", role: "group", "aria-label": "Transport" }, playBtn, pauseBtn, stopBtn, pos),
-        h("div", { class: "sq-fields" },
-          h("label", { class: "sq-field" }, bpmIn, h("span", { class: "k-label", text: "Tempo, BPM" })),
-          h("label", { class: "sq-field" }, stepsIn, h("span", { class: "k-label", text: "Steps" })),
-          gridSeg.el, staticMode ? null : clockSeg.el)),
-      h("div", { class: "sq-perf", role: "group", "aria-label": "Performance" }, gateKnob.el, shuffleKnob.el, probKnob.el)),
-    warn,
-    well,
-    h("div", { class: "sq-under" },
-      h("h2", { class: "caption" }, "Piano roll", h("span", { class: "note",
-        text: "Click to add a note; drag right to make it longer. Click a note to select it, double-click to delete it. On the keyboard: arrows move, Enter adds or selects, Delete removes, [ and ] change the length." })),
-      inspector),
-  );
-
-  // the banks and the S-1's patterns (they need the app)
+  // the banks and the S-1's patterns (they need the app): the right column, with the four-notes warning on top
   const nameIn = h("input", { type: "text", placeholder: "Name this sequence", "aria-label": "Sequence name", maxlength: "80" });
   const saveBtn = h("button", { type: "button", class: "pill", "data-action": "save", onclick: () => save(false) }, "Save");
   const confirmBox = h("p", { class: "sq-confirm sq-hidden" });
@@ -252,22 +261,45 @@ function createView(root, ctx) {
   const listNote = h("p", { class: "note" });
   const bankSel = h("select", { "aria-label": "Pattern bank" }, [1, 2, 3, 4].map((b) => h("option", { value: String(b), text: String(b) })));
   const slotSel = h("select", { "aria-label": "Pattern slot" }, Array.from({ length: 16 }, (_, i) => h("option", { value: String(i + 1), text: String(i + 1) })));
-  const pcBtn = h("button", { type: "button", class: "pill", "data-action": "switch-pattern", onclick: switchPattern }, "Switch pattern");
+  const pcBtn = h("button", { type: "button", class: "pill", "data-action": "switch-pattern", onclick: switchPattern,
+    title: "Sends a program change on the pattern channel (16 unless you changed it)." }, "Switch pattern");
+  const side = h("div", { class: "sq-side" }, warn);
   if (staticMode) {
-    view.append(h("p", { class: "note", style: "margin-top:40px" },
+    side.append(h("p", { class: "note" },
       "Saving sequences works when the app runs on your computer. Switching the S-1's own patterns also needs the S-1 plugged in."));
   } else {
     nameIn.addEventListener("keydown", (e) => { if (e.key === "Enter") save(false); });
-    view.append(h("div", { class: "sq-lower" },
-      h("section", { "aria-label": "Sequences" },
+    side.append(
+      h("section", { class: "sq-seqs", "aria-label": "Sequences" },
         h("h2", { class: "heading", text: "Sequences" }),
-        h("p", { class: "note", text: "Save the pattern under a name, or load one you saved." }),
+        h("p", { class: "note", text: "Save the pattern by name, or load a saved one." }),
         h("div", { class: "sq-save" }, nameIn, saveBtn), confirmBox, list, listNote),
-      h("section", { "aria-label": "Patterns on the S-1" },
+      h("section", { class: "sq-pcs", "aria-label": "Patterns on the S-1" },
         h("h2", { class: "heading", text: "Patterns on the S-1" }),
-        h("p", { class: "note", text: "Switch the S-1 to one of its 64 saved patterns. This sends a program change on the pattern channel (16 unless you changed it)." }),
-        h("div", { class: "sq-pc" }, h("label", {}, bankSel, "Bank"), h("label", {}, slotSel, "Slot"), pcBtn))));
+        h("p", { class: "note", text: "Switch the S-1 to one of its 64 saved patterns." }),
+        h("div", { class: "sq-pc" }, h("label", {}, bankSel, "Bank"), h("label", {}, slotSel, "Slot"), pcBtn)));
   }
+
+  view.append(
+    h("div", { class: "sq-bar" },
+      h("div", { class: "sq-transport", role: "group", "aria-label": "Transport" }, playBtn, pauseBtn, stopBtn, pos),
+      h("div", { class: "sq-fields" },
+        h("label", { class: "sq-field" }, bpmIn, h("span", { class: "k-label", text: "Tempo, BPM" })),
+        h("label", { class: "sq-field" }, stepsIn, h("span", { class: "k-label", text: "Steps" })),
+        gridSeg.el, staticMode ? null : clockSeg.el),
+      h("div", { class: "sq-perf", role: "group", "aria-label": "Performance" }, gateKnob.el, shuffleKnob.el, probKnob.el)),
+    h("div", { class: "sq-main" },
+      h("div", { class: "sq-left" },
+        well,
+        h("div", { class: "sq-under" },
+          h("h2", { class: "caption" }, "Piano roll", h("span", { class: "note",
+            text: "Click to add a note; drag right to make it longer. Click a note to select it, double-click to delete it. On the keyboard: arrows move, Enter adds or selects, Delete removes, [ and ] change the length." })),
+          inspector)),
+      side),
+  );
+  // one screen: the design size, scaled down evenly to fit a smaller window (core/fit.js)
+  const fit = fitView(view);
+  disposers.push(() => fit.destroy());
 
   function fail(e) { ctx.toast?.(e?.message ? `The app said: ${e.message}` : "The app did not answer. Check that it is still running."); }
 
@@ -359,7 +391,8 @@ function createView(root, ctx) {
   }
   function pointCell(e) {
     const rect = canvas.getBoundingClientRect();
-    return cellAt(geo, e.clientX - rect.left, e.clientY - rect.top);
+    const k = canvas.offsetWidth ? rect.width / canvas.offsetWidth : 1;   // the fit's scale: the roll is laid out unscaled
+    return cellAt(geo, (e.clientX - rect.left) / k, (e.clientY - rect.top) / k);
   }
   canvas.addEventListener("pointerdown", (e) => {
     const cell = pointCell(e);

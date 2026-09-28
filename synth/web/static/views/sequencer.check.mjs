@@ -1,8 +1,11 @@
 // node synth/web/static/views/sequencer.check.mjs — exit 0 = the Sequencer view's pure parts hold.
 // Covers the grids and beat lines, roll geometry and hit-testing, the four-notes-per-step warning's
-// words, the keyboard cursor, bank names, the position words and the view's KeyHint bar. The step
-// rules (timing, what a step fires, swing, the payload) moved to core/transport.js with the engine:
-// core/transport.check.mjs checks them.
+// words, the keyboard cursor, bank names, the position words, the view's KeyHint bar, and the one-screen
+// layout's contract (round 3; the headless run measures the page itself). The step rules (timing, what a
+// step fires, swing, the payload) moved to core/transport.js with the engine: core/transport.check.mjs.
+import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import assert from "node:assert/strict";
 
 import * as S from "./sequencer.js";
@@ -70,5 +73,18 @@ const hint = Object.fromEntries(S.hints.map((x) => [x.key, x.label]));
 ok(hint.Space === "Play/pause" && hint["⇧ Space"] === "Stop" && hint["?"] === "Keys", "Space Play/pause, ⇧ Space Stop, ? Keys");
 ok(hint["− ="] === "Tempo" && S.hints.length === 4, "plus the tempo keys, and no more: one row (the roll's keys are in its caption and the ? list)");
 ok(S.hints.every((x) => /^[A-Z]/.test(x.label) && !/→/.test(x.label)), "labels in sentence case, no arrows");
+
+// ── one screen (round 3): what the layout promises, read from the source ─────────
+const src = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "sequencer.js"), "utf8");
+for (const a of ["play", "pause", "stop", "delete-note", "save", "switch-pattern"]) ok(src.includes(`"data-action": "${a}"`), `data-action ${a} is kept`);
+for (const r of ["poly-warning", "inspector"]) ok(src.includes(`"data-role": "${r}"`), `data-role ${r} is kept`);
+ok(src.includes("fitView(view)") && src.includes("fit.destroy()"), "the view fits one screen through core/fit.js and takes its box out on unmount");
+ok(src.includes("rect.width / canvas.offsetWidth"), "a click on a scaled-down roll maps back to the unscaled grid");
+// At 1470 × 760 the view has 664 px under the header (640 under the static page's intro line). The bar,
+// the gap and the paddings take about 126 px, so the roll and its caption line get about 514 px; the
+// check keeps 10 px of slack. The right column is exactly that tall; its saved list scrolls inside it.
+const px = (name) => Number(new RegExp(`--${name}: (\\d+)px`).exec(src)[1]);
+ok(px("roll-h") >= 380 && px("roll-h") + px("under-h") <= 504, `the roll (${px("roll-h")} px) and its caption line (${px("under-h")} px) fit the one-screen budget`);
+ok(/\.sq-side \{ height: calc\(var\(--roll-h\) \+ var\(--under-h\)\); overflow: hidden; \}/.test(src), "the right column is as tall as the roll and its caption line, no taller");
 
 console.log(`sequencer view: ${checks} checks passed`);

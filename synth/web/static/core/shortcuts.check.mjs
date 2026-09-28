@@ -140,7 +140,7 @@ const caps = SHEET.flatMap((g) => g.rows.flatMap((r) => r.keys));
 for (const k of ["Space", "⇧ Space", "1", "2", "3", "?", "Esc", "A", "K", "Z", "X", "−", "=", "Delete", "Enter", "[", "]", "←", "→"]) {
   ok(caps.includes(k), `the list names ${k}`);
 }
-eq(SHEET.map((g) => g.title), ["Everywhere", "Synth", "Sequencer"], "grouped by where the keys act");
+eq(SHEET.map((g) => g.title), ["Everywhere", "Synth and Match", "Sequencer"], "grouped by where the keys act");
 const words = SHEET.flatMap((g) => [g.title, ...g.rows.map((r) => r.does)]);
 ok(words.every((w) => /^[A-Z]/.test(w) && !/→/.test(w) && !/\b[A-Z]{4,}\b/.test(w)), "sentence case, no arrows in words, no all-caps");
 

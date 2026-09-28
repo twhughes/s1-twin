@@ -49,6 +49,12 @@ Frame schema (JSON-ready; every key below is on every frame unless noted)::
       gd "starts": int      # how many starts the run makes (a round-4 budget; ``total`` is then
                             # the most gd steps the budget allows, and the run usually stops sooner)
       done "finished": true # the run was told to finish early; the best so far
+    optional (round 6):
+      gd "trying": str      # also a start's words ("Square, filter open", "a random start") or a
+                            # note length the run tries ("note held 0.4 s", "note held to the end")
+      done "held": float    # the key-up time the match used, in seconds (the render's length when
+                            # the note is held through it); its A/B audio uses it. Only when the
+                            # budget scans the length or the plan gives it (``gate_s``)
 
 ``wave.y`` is ``WAVE_CYCLES`` cycles of the lowest note resampled to ``spc`` samples per
 cycle, with 2 samples of margin at each end (what ``design/draw.js plumePts`` needs),
@@ -80,7 +86,7 @@ from typing import Any, AsyncIterator, Callable, Iterator
 
 import numpy as np
 
-from . import WORKING_SR
+from . import ANALYSIS_SECONDS, WORKING_SR
 
 # Optimizer budget. Getting the patch right beats getting it fast. Each descent runs until it
 # stops improving (the plateau rule: no relative gain above ``tol`` over ``patience`` steps, after
@@ -100,16 +106,58 @@ from . import WORKING_SR
 QUALITY_PRESETS: dict[str, dict[str, Any]] = {
     "quick":    {"gd_iters": 90, "restarts": 1, "neighbor_iters": 14,
                  "patience": 15, "min_iters": 30, "tol": 1e-3, "lr_min": 0.008,
-                 "switch_top": 1, "switch_iters": 24, "continue_iters": 40, "polish_iters": 20, "lfo_top": 1},
+                 "switch_top": 1, "switch_iters": 24, "continue_iters": 40, "polish_iters": 20, "lfo_top": 1,
+                 "plain_starts": 1, "prior": 0.02, "gate_scan": 3, "floor_match": 1},
     "thorough": {"gd_iters": 240, "restarts": 4, "neighbor_iters": 24,
                  "patience": 25, "min_iters": 60, "tol": 5e-4, "lr_min": 0.008,
                  "switch_top": 3, "switch_iters": 40, "continue_iters": 120, "polish_iters": 80,
-                 "lfo_top": 1},
+                 "lfo_top": 1, "plain_starts": 4, "prior": 0.02, "gate_scan": 3, "floor_match": 1},
     "deep":     {"gd_iters": 360, "restarts": 8, "neighbor_iters": 32,
                  "patience": 35, "min_iters": 80, "tol": 3e-4, "lr_min": 0.008,
                  "switch_top": -1, "switch_iters": 30, "continue_iters": 160, "polish_iters": 150,
-                 "lfo_top": 2},
+                 "lfo_top": 2, "plain_starts": 8, "prior": 0.02, "gate_scan": 3, "floor_match": 1},
 }
+# Round 6: where the starts begin. A start in the middle of the knob cube sets every extra half up
+# (noise, sub, vibrato, the LFO amounts and depth), and the search often stays in such an "invented
+# extras" basin. So the starts are PLAIN patches scored at the target first (renders only): a saw, a
+# square, both, or either with a sub, the filter open or half open, with the filter envelope off or on,
+# the volume held or short, every extra at 0. The best ``plain_starts`` (distinct in their oscillators
+# and filter) are the starts; random starts fill any rest, with the extras near 0. ``prior``: a mild
+# L1 penalty on the extras' levels (k space) in the search loss only; the done frame's closeness is
+# the plain metric as before.
+EXTRAS = ("noise_lvl", "sub_lvl", "lfo_to_pitch", "lfo_to_cutoff", "lfo_depth")
+PLAIN_MIXES: tuple[tuple[str, dict[str, float]], ...] = (
+    ("Saw", {"saw_lvl": 1.0}),
+    ("Square", {"square_lvl": 1.0}),
+    ("Saw and Square", {"saw_lvl": 0.8, "square_lvl": 0.8}),
+    ("Saw and Sub", {"saw_lvl": 1.0, "sub_lvl": 0.6}),
+    ("Square and Sub", {"square_lvl": 1.0, "sub_lvl": 0.6}),
+)
+PLAIN_FILTERS = (("open", 1.0), ("half open", 0.6))             # cutoff (k)
+PLAIN_ENVELOPES = (0.0, 0.35)                                    # filter envelope amount (k)
+PLAIN_VOLUMES = ({"decay": 0.45, "sustain": 0.6, "release": 0.35},    # held
+                 {"decay": 0.35, "sustain": 0.2, "release": 0.25})    # short
+PLAIN_REST = {"pulse_width": 0.0, "resonance": 0.1, "key_follow": 0.0, "fine_tune": 0.5, "lfo_rate": 0.45,
+              "attack": 0.0}
+# The note's length: where the key goes up. A recording's is unknown; the twin's own is 1.2 s (2.0 s x 0.6),
+# the Match view's test note too. ``gate_scan`` (rounds): before the first descent, other key-up times
+# around it are scored on the best few starts (renders only), stepping on while one wins; the winner is
+# kept (both twins rebuilt, the starts re-scored under it). After the first start's descent the same scan
+# runs at its knobs, and a winner there is kept with a brief re-descent. (Only the first scan finds a
+# short note: a descent under the wrong length fakes it with the envelope, and at those knobs the length
+# hardly shows.) A key-up past the render's end holds the note through the window (HELD).
+GATE_PRE_STARTS = 6
+GATE_DEFAULT = 1.2
+GATE_FACTORS = (0.5, 0.7, 1.4, 2.0)
+GATE_MIN = 0.1
+HELD = 60.0
+# The target's noise floor. A recording (even a 16-bit WAV of the twin) never falls silent: after the
+# note its tail sits at a noise floor (-96 dB for 16-bit), while a render falls to true silence
+# (-180 dB). On a log spectrum that gap outweighs the note (a short note's true settings scored 3.33,
+# 0.03 without the WAV). ``floor_match``: quiet noise at the target's floor (its quietest 20 ms, capped
+# FLOOR_CAP_DB under its peak) is added to every candidate in the search loss, so tails compare alike.
+FLOOR_FRAME_S = 0.02
+FLOOR_CAP_DB = -60.0
 DEFAULT_QUALITY = "thorough"
 LR = 0.08                      # Adam learning rate (the start of each cosine schedule)
 # Adam's first step moves every knob by about the rate, so a descent that starts from good knobs
@@ -281,7 +329,8 @@ class Plan:
     cold_candidates: list[int] | None = None
     init_k: np.ndarray | None = None
     init_s: dict[str, int] = field(default_factory=dict)
-    gate_s: float | None = None                 # how long the key was held (target_prep's guess), or None
+    gate_s: float | None = None                 # the key-up time: target_prep's guess (None: the twin's 1.2 s);
+                                                # the run's note-length scan starts from it
     crop: tuple[float, float] | None = None     # where ``samples`` lie in the upload, in seconds
 
 
@@ -426,7 +475,93 @@ def resolve_budget(quality: str | None, budget: dict[str, Any] | None = None) ->
     b.setdefault("continue_iters", 0)
     b.setdefault("polish_iters", 0)
     b.setdefault("lfo_top", 0)
+    b.setdefault("plain_starts", 0)
+    b.setdefault("prior", 0.0)
+    b.setdefault("gate_scan", 0)
+    b.setdefault("floor_match", 0)
     return b
+
+
+def noise_floor(x: np.ndarray, sr: float) -> float:
+    """The RMS of ``x``'s quietest 20 ms frame that is not digital silence, capped FLOOR_CAP_DB under
+    its peak (a note that never falls quiet has no floor to match); 0 when there is none."""
+    a = np.asarray(x, dtype=np.float64)
+    frame = max(1, int(round(FLOOR_FRAME_S * sr)))
+    n = a.size // frame
+    if n < 1:
+        return 0.0
+    rms = np.sqrt(np.mean(a[: n * frame].reshape(n, frame) ** 2, axis=1))
+    quiet = rms[rms > 0]
+    if not quiet.size:
+        return 0.0
+    return float(min(quiet.min(), np.abs(a).max() * 10.0 ** (FLOOR_CAP_DB / 20.0)))
+
+
+def gate_candidates(gate: float, window: float) -> list[float]:
+    """The key-up times the note-length scan tries around ``gate`` (seconds): x0.5, x0.7, x1.4, x2 and held
+    through; times at or past the search ``window`` all sound held there, so they count once (HELD), and
+    none is shorter than GATE_MIN. ``gate`` itself is left out."""
+    out: list[float] = []
+    for g in [gate * f for f in GATE_FACTORS] + [HELD]:
+        g = HELD if g >= window else max(GATE_MIN, round(g, 3))
+        cur = HELD if gate >= window else gate
+        if g != cur and g not in out:
+            out.append(g)
+    return out
+
+
+def gate_words(gate: float, window: float) -> str:
+    """A key-up time in words, for the frames that try it."""
+    return "note held to the end" if gate >= window else f"note held {gate:.1f} s"
+
+
+def plain_patches() -> list[tuple[np.ndarray, str, tuple[str, str]]]:
+    """The plain starts to score: ``[(k, words, (mix, filter))]``, every extra at 0 (see EXTRAS)."""
+    from .twin import K_NAMES
+
+    at = {n: i for i, n in enumerate(K_NAMES)}
+    out = []
+    for mix, levels in PLAIN_MIXES:
+        for filt, cutoff in PLAIN_FILTERS:
+            for env in PLAIN_ENVELOPES:
+                for volume in PLAIN_VOLUMES:
+                    k = np.zeros(len(K_NAMES))
+                    knobs = {**PLAIN_REST, **volume, **levels, "cutoff": cutoff, "env_to_cutoff": env}
+                    for name, v in knobs.items():
+                        k[at[name]] = v
+                    out.append((k, f"{mix}, filter {filt}", (mix, filt)))
+    return out
+
+
+def pick_plain(scored: list[tuple[float, np.ndarray, str, tuple[str, str]]],
+               n: int) -> list[tuple[np.ndarray, str]]:
+    """The ``n`` best plain starts, best first, one per oscillator mix and filter (then the next best,
+    if fewer kinds score than starts are wanted). ``scored``: ``[(loss, k, words, kind)]``."""
+    order = sorted((row for row in scored if math.isfinite(row[0])), key=lambda row: row[0])
+    picked: list[tuple[np.ndarray, str]] = []
+    kinds: set[tuple[str, str]] = set()
+    for loss, k, words, kind in order:
+        if len(picked) < n and kind not in kinds:
+            kinds.add(kind)
+            picked.append((k, words))
+    for loss, k, words, kind in order:
+        if len(picked) >= n:
+            break
+        if not any(k is p for p, _ in picked):
+            picked.append((k, words))
+    return picked
+
+
+def extras_mask() -> np.ndarray:
+    """1 at the extras' places in k (EXTRAS), else 0: the prior is ``lam * k @ mask``."""
+    from .twin import K_NAMES
+
+    return np.array([1.0 if n in EXTRAS else 0.0 for n in K_NAMES])
+
+
+def _rng(seed: int | None, stream: int) -> np.random.Generator:
+    """The random draws for a start: seed None or 0 gives the round-4 draws exactly; other seeds differ."""
+    return np.random.default_rng(stream if not seed else [int(seed), int(stream)])
 
 
 def lfo_hypotheses(k: np.ndarray, s: dict[str, int],
@@ -476,13 +611,15 @@ def _adam(
     min_iters: int = 0,
     tol: float = 0.0,
     warmup: int = 0,
+    penalty: Callable[[np.ndarray], float] | None = None,
     stop: Any = None,
 ) -> Iterator[tuple[np.ndarray, float, np.ndarray]]:
     """Adam over x in [0,1], yielding ``(x, loss, audio)`` after EACH step, where
     ``audio`` is the step's forward render (so a frame can draw it for free).
 
     The rate follows :func:`cosine_lr` over ``iters`` (constant ``lr`` when ``lr_min`` is None),
-    ramped up linearly over the first ``warmup`` steps (none by default).
+    ramped up linearly over the first ``warmup`` steps (none by default). ``penalty(x)`` is added to
+    each step's loss (round 6: the prior on the extras; ``grad_fn`` must include it too).
     The descent ends early once :func:`plateaued` says it stopped improving, or when ``stop`` (a
     ``threading.Event``: "finish now") is set, checked before each step."""
     x = np.clip(np.asarray(x0, dtype=np.float64), 0.0, 1.0)
@@ -503,7 +640,7 @@ def _adam(
         rate = cosine_lr(t, iters, lr, lr_min) * (min(1.0, t / warmup) if warmup else 1.0)
         x = np.clip(x - rate * mhat / (np.sqrt(vhat) + eps), 0.0, 1.0)
         audio = np.asarray(render(x), dtype=np.float64)
-        loss = float(loss_of(audio))
+        loss = float(loss_of(audio)) + (float(penalty(x)) if penalty is not None else 0.0)
         yield x.copy(), loss, audio
         best = min(best, loss)
         bests.append(best)
@@ -522,6 +659,8 @@ def steps(
     init_s: dict[str, int] | None = None,
     budget: dict[str, Any] | None = None,
     stop: Any = None,
+    seed: int | None = None,
+    gate_s: float | None = None,
 ) -> Iterator[Step]:
     """Run one polyphonic match and yield a :class:`Step` per optimization step.
 
@@ -531,7 +670,11 @@ def steps(
     ``cold_candidates`` is the salience-ranked list for the cold-start note-search.
     ``init_k``/``init_s`` warm-start the FIRST restart (else a near-centre start).
     ``stop`` (a ``threading.Event``) set means "finish now": the search ends at the next step
-    and the best so far is still rendered, scored and yielded as the done frame."""
+    and the best so far is still rendered, scored and yielded as the done frame.
+    ``seed`` varies the random starts only (None or 0: the round-4 draws); plain starts do not vary.
+    ``gate_s``: the note's key-up time in seconds (None: 1.2 s, the twin's own; past the window: held).
+    A round-6 budget scans it too (``gate_scan``), and the done frame then says what it used (``held``)."""
+    import autograd.numpy as anp
     from autograd import grad
 
     from .capture import AudioClip, prepare
@@ -542,9 +685,12 @@ def steps(
     patience, min_iters, tol, lr_min = b["patience"], int(b["min_iters"]), float(b["tol"]), b["lr_min"]
     switch_top, switch_iters = int(b["switch_top"]), int(b["switch_iters"])
     continue_iters, polish_iters = int(b["continue_iters"]), int(b["polish_iters"])
-    lfo_top = int(b["lfo_top"])
+    lfo_top, plain_n, lam = int(b["lfo_top"]), int(b["plain_starts"]), float(b["prior"])
+    mask = extras_mask()
     # Round 4 (a budget with its keys): plateau stops, cosine rates, switch re-descent, a polish.
     new_style = bool(patience or lr_min is not None or (switch_top and switch_iters) or polish_iters)
+    gate_rounds = int(b["gate_scan"]) if new_style else 0
+    floor_on = bool(b["floor_match"]) and new_style
 
     def finishing() -> bool:
         return stop is not None and stop.is_set()
@@ -554,7 +700,7 @@ def steps(
         cosine rate (down to ``floor``, else ``lr_min``; ``warm``: ramped up first, for a descent
         that starts from good knobs) and the plateau rule (the main descent's own patience, scaled
         down for the short switch trials and the polish)."""
-        how: dict[str, Any] = {"stop": stop}
+        how: dict[str, Any] = {"stop": stop, "penalty": prior_of if lam else None}
         if new_style:
             how["lr_min"] = lr_min if floor is None else floor
             how["warmup"] = WARMUP if warm else 0
@@ -564,14 +710,18 @@ def steps(
         return how
 
     t_start = time.perf_counter()
-    full = Twin()
-    # Align the search render's note-off to the full render's absolute time, so the
-    # shorter render keeps the target's envelope shape (mirrors TwinMatcher).
-    note_off_s = full.seconds * full.gate_fraction
-    # The search twin renders the SAME model more cheaply: its caps come from the full rate
-    # (model_sr), and the loss compares only the band both renders hold (band_limit).
-    search = Twin(sr=SEARCH_SR, seconds=SEARCH_SECONDS,
-                  gate_fraction=min(1.0, note_off_s / SEARCH_SECONDS), model_sr=full.sr)
+
+    def twins(gate: float) -> tuple[Any, Any]:
+        """The full twin and the search twin with the key up at ``gate`` seconds. The search render's
+        note-off sits at the same absolute time, so the shorter render keeps the target's envelope
+        shape (mirrors TwinMatcher); it renders the SAME model more cheaply: its caps come from the
+        full rate (model_sr), and the loss compares only the band both renders hold (band_limit)."""
+        f = Twin(gate_fraction=gate / ANALYSIS_SECONDS)
+        return f, Twin(sr=SEARCH_SR, seconds=SEARCH_SECONDS,
+                       gate_fraction=min(1.0, gate / SEARCH_SECONDS), model_sr=f.sr)
+
+    gate = GATE_DEFAULT if gate_s is None else max(GATE_MIN, float(gate_s))
+    full, search = twins(gate)
     fmax = SEARCH_BAND * search.sr
 
     target_full = np.asarray(target_audio, dtype=np.float64)
@@ -579,6 +729,8 @@ def steps(
     n = max(1, int(round(search.seconds * search.sr)))
     tgt_lo = np.concatenate([tgt_lo, np.zeros(n - tgt_lo.shape[0])]) if tgt_lo.shape[0] < n else tgt_lo[:n]
     tgt_lo = np.asarray(band_limit(tgt_lo, search.sr, fmax), dtype=np.float64)
+    floor = noise_floor(tgt_lo, search.sr) if floor_on else 0.0
+    hiss = floor * np.random.default_rng(7).standard_normal(n) if floor > 0 else None
 
     s0 = {**S_DEFAULT, **(init_s or {})}
     notes0 = sorted(int(x) for x in notes)
@@ -599,11 +751,27 @@ def steps(
         return lambda k: search.render_chord(k, s, note_set)
 
     def loss_of(audio: np.ndarray) -> float:
+        if hiss is not None:
+            audio = audio + hiss
         return float(spectral_loss(band_limit(audio, search.sr, fmax), tgt_lo, search.sr))
 
+    def prior_of(k: np.ndarray) -> float:
+        """The mild prior on the extras (round 6), in the search loss only."""
+        return float(lam * np.dot(np.asarray(k, dtype=np.float64), mask)) if lam else 0.0
+
+    def score(k: np.ndarray, s: dict[str, int], note_set: list[int]) -> float:
+        """The search loss of patch ``(k, s)`` on ``note_set``: renders only, no gradient."""
+        return loss_of(np.asarray(search.render_chord(k, s, note_set), dtype=np.float64)) + prior_of(k)
+
     def grad_of(note_set: list[int], s: dict[str, int]) -> Callable[[np.ndarray], np.ndarray]:
-        return grad(lambda k: spectral_loss(band_limit(search.render_chord(k, s, note_set), search.sr, fmax),
-                                            tgt_lo, search.sr))
+        def spectral(k: Any) -> Any:
+            audio = search.render_chord(k, s, note_set)
+            if hiss is not None:
+                audio = audio + hiss
+            return spectral_loss(band_limit(audio, search.sr, fmax), tgt_lo, search.sr)
+        if lam:
+            return grad(lambda k: spectral(k) + lam * anp.dot(k, mask))
+        return grad(spectral)
 
     def frame(phase: str, note_set: list[int], x: np.ndarray, s: dict[str, int],
               audio: np.ndarray, **extra: Any) -> dict[str, Any]:
@@ -616,13 +784,61 @@ def steps(
     n_steps = 0
     best_notes, best_s = list(notes0), dict(s0)
 
+    # ── the starts: a warm start (the synth's knobs) first when given; then (round 6) the best
+    # plain patches, scored at the target with renders only; random starts fill any rest ──
+    plain: list[tuple[np.ndarray, str]] = []
+    gate_given = gate
+    n_plain = min(plain_n, restarts - (1 if init_k is not None else 0)) if new_style else 0
+    scored_plain = []
+    if n_plain > 0 or (gate_rounds and new_style):
+        scored_plain = [(score(k, s0, notes0), k, words, kind) for k, words, kind in plain_patches()]
+        n_steps += len(scored_plain)
+    if gate_rounds:
+        # the note's length, before any descent: on the best few starts (and the warm start)
+        pool = [k for _l, k, _w, _kind in sorted(scored_plain, key=lambda row: row[0])[:GATE_PRE_STARTS]]
+        if init_k is not None:
+            pool.append(np.clip(np.asarray(init_k, dtype=np.float64), 0.0, 1.0))
+        here = min((score(k, s0, notes0) for k in pool), default=math.inf)
+        g_best = gate
+        for _round in range(gate_rounds):
+            tried = []
+            for g in gate_candidates(g_best, SEARCH_SECONDS):
+                srch = twins(g)[1]
+                tried.append((min(loss_of(np.asarray(srch.render_chord(k, s0, notes0), dtype=np.float64))
+                                  + prior_of(k) for k in pool), g))
+            n_steps += len(tried) * len(pool)
+            if not tried or not min(tried)[0] < here:
+                break
+            here, g_best = min(tried)
+        if g_best != gate:
+            gate = g_best
+            full, search = twins(gate)
+            scored_plain = [(score(k, s0, notes0), k, words, kind) for _l, k, words, kind in scored_plain]
+            n_steps += len(scored_plain)
+    if n_plain > 0:
+        plain = pick_plain(scored_plain, n_plain)
+        if gate != gate_given:                     # the first start says the length the scan found
+            plain[0] = (plain[0][0], f"{plain[0][1]}, {gate_words(gate, SEARCH_SECONDS)}")
+
+    def start_of(r: int) -> tuple[np.ndarray, str | None]:
+        """Start ``r``: its knobs, and the words its descent's frames carry (None for none)."""
+        if init_k is not None and r == 0:
+            return np.clip(np.asarray(init_k, dtype=np.float64), 0.0, 1.0), None
+        j = r - (1 if init_k is not None else 0)
+        if j < len(plain):
+            return plain[j][0].copy(), plain[j][1]
+        if r == 0:
+            return np.clip(0.5 + 0.05 * _rng(seed, 0).standard_normal(full.k_dim), 0.0, 1.0), None
+        x = _rng(seed, 1000 + r).uniform(0.15, 0.85, full.k_dim)
+        if plain_n > 0 and new_style:                   # round 6: a random start keeps its extras low
+            x = np.where(mask > 0, _rng(seed, 2000 + r).uniform(0.0, 0.08, full.k_dim), x)
+            return x, "a random start"
+        return x, None
+
     # ── phase 1: pitch (seeded set, or the cold-start detection) ─────────────
-    if init_k is not None:
-        x0_first = np.clip(np.asarray(init_k, dtype=np.float64), 0.0, 1.0)
-    else:
-        x0_first = np.clip(0.5 + 0.05 * np.random.default_rng(0).standard_normal(full.k_dim), 0.0, 1.0)
+    x0_first = start_of(0)[0]
     audio0 = np.asarray(search.render_chord(x0_first, s0, notes0), dtype=np.float64)
-    best_k, best_loss = x0_first.copy(), loss_of(audio0)
+    best_k, best_loss = x0_first.copy(), loss_of(audio0) + prior_of(x0_first)
     n_steps += 1
     yield Step(frame(
         "pitch", notes0, x0_first, s0, audio0, seeded=seeded,
@@ -654,31 +870,61 @@ def steps(
                 iter=counter, total=total_gd, loss=loss, best_loss=best_loss, **fields,
             ), x.copy(), dict(s))
 
+    def scan_gate(s: dict[str, int], mine: dict[str, Any]) -> Iterator[Step]:
+        """The note-length scan (see GATE_DEFAULT): score other key-up times at this start's knobs,
+        renders only, stepping on while one wins; keep the winner (both twins rebuilt, the run's best
+        re-scored under it) and re-descend briefly under it."""
+        nonlocal gate, full, search, best_loss, best_k, best_s, best_notes, n_steps
+        here, g_best = mine["loss"], gate
+        for _round in range(gate_rounds):
+            tried = []
+            for g in gate_candidates(g_best, SEARCH_SECONDS):
+                srch = twins(g)[1]
+                tried.append((loss_of(np.asarray(srch.render_chord(mine["k"], s, notes0), dtype=np.float64))
+                              + prior_of(mine["k"]), g))
+            n_steps += len(tried)
+            if not tried or not min(tried)[0] < here:
+                break
+            here, g_best = min(tried)
+        if g_best == gate:
+            return
+        gate = g_best
+        full, search = twins(gate)
+        # every loss so far was the old key-up's: the run's best, re-scored under the new one
+        best_loss = score(best_k, best_s, best_notes)
+        if here < best_loss:
+            best_k, best_s, best_notes, best_loss = mine["k"].copy(), dict(s), list(notes0), here
+        mine["loss"] = here
+        after = {"k": mine["k"].copy(), "loss": here}
+        cap = max(switch_iters, 24)
+        yield from descend(notes0, s, mine["k"], cap, LR_SWITCH, rule(cap, warm=True), after, restart=0,
+                           trying=gate_words(gate, SEARCH_SECONDS), **extra_new)
+        mine.update(after)
+
     for r in range(restarts):
         if finishing():
             break
         # Restart 0 starts at x0_first; later restarts sample the cube widely so the
         # multi-restart actually escapes the first basin (keep best overall).
-        x_start = x0_first if r == 0 else np.random.default_rng(1000 + r).uniform(0.15, 0.85, full.k_dim)
+        x_start, words0 = (x0_first, start_of(0)[1]) if r == 0 else start_of(r)
         s_r = dict(best_s) if new_style else dict(s0)
         mine = {"k": x_start.copy(), "loss": math.inf}
-        yield from descend(notes0, s_r, x_start, gd_iters, LR, rule(gd_iters), mine, restart=r, **extra_new)
+        yield from descend(notes0, s_r, x_start, gd_iters, LR, rule(gd_iters), mine, restart=r,
+                           **({"trying": words0} if words0 else {}), **extra_new)
+        if r == 0 and gate_rounds and not finishing() and math.isfinite(mine["loss"]):
+            yield from scan_gate(s_r, mine)
         trials = new_style and bool(switch_top and switch_iters)
         if not trials or finishing() or not math.isfinite(mine["loss"]):
             continue
         # ── the switches: score every setting at this start's knobs (renders only), re-descend
         # the most promising briefly, adopt a winner, and keep descending under it ──
-        scored = [(cfg, loss_of(np.asarray(search.render_chord(mine["k"], cfg, notes0), dtype=np.float64)))
-                  for cfg in search.s_configs()]
+        scored = [(cfg, score(mine["k"], cfg, notes0)) for cfg in search.s_configs()]
         n_steps += len(scored)
         tries = [(cfg, mine["k"], switch_words(cfg, s_r), LR_SWITCH)
                  for cfg in switch_candidates(scored, s_r, mine["loss"], switch_top)]
         if lfo_top > 0:
             # the LFO scan: its best settings (one each on the pitch and the filter, for Deep)
-            def lfo_loss(k2: np.ndarray, s2: dict[str, int]) -> float:
-                return loss_of(np.asarray(search.render_chord(k2, s2, notes0), dtype=np.float64))
-
-            hyps = sorted(((lfo_loss(k2, s2), i, k2, s2, w)
+            hyps = sorted(((score(k2, s2, notes0), i, k2, s2, w)
                            for i, (k2, s2, w) in enumerate(lfo_hypotheses(mine["k"], s_r))),
                           key=lambda h: (h[0], h[1]))
             n_steps += len(hyps)
@@ -725,7 +971,8 @@ def steps(
         for cand in cand_sets:
             start_k = best_k.copy()
             for x, loss, audio in _adam(grad_of(cand, best_s), renderer(cand, best_s), loss_of,
-                                        start_k, neighbor_iters, LR, stop=stop):
+                                        start_k, neighbor_iters, LR, stop=stop,
+                                        penalty=prior_of if lam else None):
                 ns_counter += 1
                 n_steps += 1
                 improved = loss < best_loss
@@ -739,7 +986,7 @@ def steps(
     # ── phase 3b: enumerate the discrete switches cheaply (no gradient, no frames) ──
     if not finishing():
         for s_cfg in search.s_configs():
-            loss = loss_of(np.asarray(search.render_chord(best_k, s_cfg, best_notes), dtype=np.float64))
+            loss = score(best_k, s_cfg, best_notes)
             n_steps += 1
             if loss < best_loss:
                 best_loss, best_s = loss, dict(s_cfg)
@@ -770,16 +1017,19 @@ def steps(
         "match_wav_b64": wav_b64(audio, full.sr),
         "target_wav_b64": wav_b64(target_clip.samples, target_clip.samplerate),
     }
+    if gate_rounds or gate_s is not None:
+        done["held"] = round(min(gate, full.seconds), 2)   # the key-up the match used (its A/B too)
     if finishing():
         done["finished"] = True                  # finished early, on request: the best so far
     yield Step(done, best_k.copy(), dict(best_s))
 
 
-def run(p: Plan, budget: dict[str, Any] | None = None, stop: Any = None) -> Iterator[Step]:
-    """:func:`steps` for a parsed :class:`Plan` (``stop``: see :func:`steps`)."""
+def run(p: Plan, budget: dict[str, Any] | None = None, stop: Any = None,
+        seed: int | None = None) -> Iterator[Step]:
+    """:func:`steps` for a parsed :class:`Plan` (``stop``, ``seed``: see :func:`steps`)."""
     return steps(p.samples, p.notes, seeded=p.seeded, quality=p.quality,
                  cold_candidates=p.cold_candidates, init_k=p.init_k, init_s=p.init_s,
-                 budget=budget, stop=stop)
+                 budget=budget, stop=stop, seed=seed, gate_s=p.gate_s)
 
 
 async def astream(p: Plan, throttle: float = 0.0,

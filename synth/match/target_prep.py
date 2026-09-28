@@ -56,6 +56,12 @@ FADE_S = 0.020           # the fade at the end
 MAX_LEAD_S = 0.300       # the onset walks back along the foot at most this far
 MAX_TAIL_S = 0.300       # the tail past the last frame over the threshold: at most this
 MAX_KEEP_S = 4.0         # at most this much sound is kept
+CLEAN_FLOOR_DB = -90.0   # a floor under this is a clean file's (16-bit silence is -96 dB), not a room
+MATCH_TAIL_S = 2.5       # the matcher's copy follows the tail down to the foot (the room's floor), past
+                         # the display's MAX_TAIL_S, at most this far past the onset and never into the next
+                         # sound: a clean release rings on long after its last loud frame, and cut there it
+                         # ended in a cliff the twin never makes (the suite's "sub": 45% cut, 78% whole);
+                         # a recording's tail meets its room within a frame or two, so it ends as before
 NO_SOUND_DB = 6.0        # nothing stands out: the loudest frame is less than this over the floor
 FAINT_DB = 15.0          # the sound barely stands out: less than this over the floor
 QUIET_DBFS = -40.0       # a sound peaking under this is very quiet
@@ -412,13 +418,13 @@ def prepare_target(samples: np.ndarray, sr: int, *, crop: tuple[float, float] | 
     take = _measure(samples, sr)
     warnings: list[str] = []
     if crop is not None:
-        i0, i1, onset, lead, look = _user_crop(take, crop)
+        i0, i1, onset, lead, look, tail = _user_crop(take, crop)
     else:
-        i0, i1, onset, lead, look = _auto_crop(take, warnings)
-    return _finish(take, i0, i1, onset, lead, look, warnings, source)
+        i0, i1, onset, lead, look, tail = _auto_crop(take, warnings)
+    return _finish(take, i0, i1, onset, lead, look, tail, warnings, source)
 
 
-def _user_crop(take: _Take, crop: tuple[float, float]) -> tuple[int, int, int, int, int]:
+def _user_crop(take: _Take, crop: tuple[float, float]) -> tuple[int, int, int, int, int, int]:
     """The user's edges (at least 50 ms); the onset is the first clear rise inside them."""
     x, sr, hop = take.x, take.sr, take.hop
     least = int(0.05 * sr)
@@ -433,10 +439,10 @@ def _user_crop(take: _Take, crop: tuple[float, float]) -> tuple[int, int, int, i
         early = math.sqrt(float(take.power[first:first + 3].max()))
         onset = max(i0, min(i1 - 1, _fine_onset(x, (first - 1) * hop, (first + 1) * hop,
                                                 max(10 ** (foot / 20), 0.25 * early), sr)))
-    return i0, i1, onset, min(int(0.002 * sr), i1 - i0), i1   # a 2 ms fade-in: the cut never clicks
+    return i0, i1, onset, min(int(0.002 * sr), i1 - i0), i1, i1   # a 2 ms fade-in: the cut never clicks
 
 
-def _auto_crop(take: _Take, warnings: list[str]) -> tuple[int, int, int, int, int]:
+def _auto_crop(take: _Take, warnings: list[str]) -> tuple[int, int, int, int, int, int]:
     """Find the main sound's edges (see the module docs); add what to know to ``warnings``."""
     x, sr, hop, power, env, n, fps = take.x, take.sr, take.hop, take.power, take.env, take.n, take.fps
     top_db, floor_db = take.top_db, take.floor_db
@@ -447,7 +453,7 @@ def _auto_crop(take: _Take, warnings: list[str]) -> tuple[int, int, int, int, in
             raise UploadError(NO_SOUND)
         alive = np.flatnonzero(np.abs(x) > SILENT_RMS)
         i0 = int(alive[0]) if alive.size else 0
-        return i0, len(x), i0, 0, len(x)
+        return i0, len(x), i0, 0, len(x), len(x)
 
     thr_db = threshold(take.heard_floor, top_db)
     foot_db = max(take.heard_floor + FOOT_DB, top_db - 60.0)
@@ -506,12 +512,22 @@ def _auto_crop(take: _Take, warnings: list[str]) -> tuple[int, int, int, int, in
     i0 = max(0, onset - int(round(PRE_S * sr)))
     # the key-up fit may look past the crop, down into the floor, but not into what comes next
     look = max(i1, min(len(x), after * hop, i1 + int(round(MAX_TAIL_S * sr))))
-    return i0, i1, onset, onset - i0, look
+    # the matcher's copy: a clean take's release rings on under any threshold into digital silence, and
+    # the twin renders all of it, so all of it is kept (up to MATCH_TAIL_S past the onset, never into the
+    # next sound); a recording's tail sinks into its room, so it goes on only while over the foot
+    b2, stop2 = b, min(after, onset // hop + int(round(MATCH_TAIL_S * fps)))
+    if take.heard_floor < CLEAN_FLOOR_DB:
+        b2 = max(b2, stop2)
+    while b2 < stop2 and env[b2] > foot_db:
+        b2 += 1
+    tail = len(x) if b2 >= n else min(len(x), b2 * hop + int(FADE_S * sr))
+    return i0, i1, onset, onset - i0, look, max(i1, tail)
 
 
-def _finish(take: _Take, i0: int, i1: int, onset: int, lead: int, look: int, warnings: list[str],
+def _finish(take: _Take, i0: int, i1: int, onset: int, lead: int, look: int, tail: int, warnings: list[str],
             source: tuple[np.ndarray, int] | None) -> Prepared:
-    """Cut [i0, i1) (at most MAX_KEEP_S from the onset), fade it in over ``lead`` samples and out
+    """Cut [i0, tail): the heard sound [i0, i1) and its tail (MATCH_TAIL_S), at most MAX_KEEP_S from the
+    onset; fade it in over ``lead`` samples and out
     over the last 20 ms, measure it, and say what to know. The key-up is read from the onset up to
     ``look``."""
     x, sr = take.x, take.sr
@@ -519,8 +535,8 @@ def _finish(take: _Take, i0: int, i1: int, onset: int, lead: int, look: int, war
     if i1 > keep:
         i1 = keep
         warnings.append(LONG)
-    look = min(look, keep)
-    crop = np.array(x[i0:i1], dtype=np.float64)
+    look, tail = min(look, keep), min(max(i1, tail), keep)
+    crop = np.array(x[i0:tail], dtype=np.float64)             # the tail too: see MATCH_TAIL_S
     if lead > 0:                                         # the kept lead rises from nothing
         crop[:lead] *= np.linspace(0.0, 1.0, lead, endpoint=False)
     fade = min(len(crop), int(round(FADE_S * sr)))

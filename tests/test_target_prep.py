@@ -75,7 +75,8 @@ def test_noise_then_a_note_then_noise() -> None:
     assert ONSET + HELD + 0.1 < p.t1 < ONSET + 1.6, "the end keeps the release, not the room after it"
     assert abs(_key_up(p) - (ONSET + HELD)) < KEY_UP_TOL
     assert p.warnings == []
-    assert len(p.samples) == pytest.approx((p.t1 - p.t0) * SR, abs=2)
+    assert (p.t1 - p.t0) * SR - 2 <= len(p.samples) <= (p.onset + tp.MATCH_TAIL_S - p.t0) * SR + 2, \
+        "the heard sound and its quiet tail (MATCH_TAIL_S), never the next sound"
     assert abs(p.samples[0]) < 1e-3 and abs(p.samples[-1]) < 1e-3, "faded in over the lead, out at the end"
     assert p.noise_db == pytest.approx(20 * np.log10(0.003), abs=1.5)
     assert p.duration == pytest.approx(len(x) / SR)
@@ -266,7 +267,7 @@ def test_plan_crops_the_upload_and_keeps_the_edges() -> None:
 
     p = ts.plan(_wav(_take()), "48", "quick")
     assert p.crop is not None and abs(p.crop[0] - (ONSET - tp.PRE_S)) < 0.005
-    assert len(p.samples) == pytest.approx((p.crop[1] - p.crop[0]) * SR, abs=2)
+    assert (p.crop[1] - p.crop[0]) * SR - 2 <= len(p.samples) <= (tp.MATCH_TAIL_S + 0.01) * SR, "and its tail"
     assert p.gate_s is not None and abs(p.gate_s - HELD) < KEY_UP_TOL
     cold = ts.plan(_wav(_take()))
     assert cold.notes == [48] and not cold.seeded, "cold-start detection runs on the crop"

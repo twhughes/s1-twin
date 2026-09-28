@@ -76,7 +76,10 @@ def test_it_says_what_the_matcher_will_get(client: TestClient) -> None:
     assert len(got["peaks"]) == match_ws.PEAK_COLUMNS and max(got["peaks"]) == 1.0
     assert got["sr"] == WORKING_SR
     audio, sr = sf.read(io.BytesIO(base64.b64decode(got["wav_b64"])), dtype="float32")
-    assert sr == WORKING_SR and len(audio) / sr == pytest.approx(t1 - t0, abs=0.002), "the crop, to the ms"
+    from synth.match.target_prep import MATCH_TAIL_S
+
+    most = got["onset"] + MATCH_TAIL_S - t0 + 0.002
+    assert sr == WORKING_SR and t1 - t0 - 0.002 <= len(audio) / sr <= most, "the crop and its quiet tail"
     assert np.abs(audio).max() == pytest.approx(match_ws.PREVIEW_PEAK, abs=0.01), "the crop to listen to"
 
 

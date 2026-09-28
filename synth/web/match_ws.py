@@ -13,9 +13,13 @@ Query parameters (all optional):
 
 * ``throttle`` — seconds between frames (default 0.02, clamped to 0..0.4);
 * ``notes`` — seeded MIDI notes, e.g. ``60,64,67`` (absent → cold-start detection);
-* ``quality`` — ``quick`` or ``thorough`` (default ``thorough``);
+* ``quality`` — ``quick``, ``thorough`` or ``deep`` (default ``thorough``);
 * ``init`` — a JSON CC map, e.g. ``{"74": 90, "22": 1}``: the synth's current knobs,
   used as the first start of the descent.
+
+While the match runs, the client may send the text message ``"finish"``: the search ends at
+the next step and the done frame still comes, with the best patch so far rendered and scored
+(``"finished": true``). Closing the socket ends the search too, with no done frame.
 
 A bad request gets ``{"phase": "error", "detail": <what happened and what to do>}``
 and a close. Localhost only: the same host + origin guard as the cockpit's HTTP
@@ -131,13 +135,32 @@ async def ws_match(websocket: WebSocket) -> None:
         return
     plan.init_k, plan.init_s = init_k, init_s
 
-    stream = session.astream(plan, throttle)
+    # "finish" from the client (or a closed socket) ends the search at the next step.
+    stop = threading.Event()
+
+    async def listen() -> None:
+        while not stop.is_set():
+            try:
+                msg = await websocket.receive()
+            except Exception:  # noqa: BLE001 - the socket is gone
+                stop.set()
+                return
+            if msg.get("type") == "websocket.disconnect":
+                stop.set()
+                return
+            if msg.get("text") == "finish":
+                stop.set()
+
+    reader = asyncio.create_task(listen())
+    stream = session.astream(plan, throttle, stop=stop)
     try:
         async for step in stream:
             await websocket.send_json(step.frame)
     except (WebSocketDisconnect, RuntimeError):
         return                                   # the client left; the finally below ends the run
     finally:
+        stop.set()
+        reader.cancel()
         await stream.aclose()
     with contextlib.suppress(Exception):
         await websocket.close()

@@ -19,7 +19,10 @@ Phases (the ``"phase"`` of each frame):
 1. ``pitch`` — the note SET: the user's seeded notes (``seeded: true``), or the cold-
    start harmonic-salience detection. One frame, at the starting patch.
 2. ``gd`` — Adam on the shared patch against the whole chord, with random restarts
-   (keep the best). ``restart`` says which start the frame belongs to.
+   (keep the best). ``restart`` says which start the frame belongs to. Round 4: each descent
+   runs until it stops improving (capped), at a cosine learning rate; after each start the
+   other switch settings are tried with a short re-descent (their frames carry ``trying``),
+   a winner is kept, and a final polish runs from the overall best.
 3. ``note-search`` — cold start only: transpose the set ±12, drop the weakest voice,
    add the next candidate; re-descend briefly at each; ``improved`` marks a win.
    Then (no frames) the discrete switches are enumerated at the best patch.
@@ -41,6 +44,11 @@ Frame schema (JSON-ready; every key below is on every frame unless noted)::
      "target_wave": {"spc", "y", "level"}}      # pitch + done frames: the target's cycles
     done adds: "closeness": float (0..100, the plain metric), "seconds": float,
                "steps": int, "match_wav_b64": str, "target_wav_b64": str
+    optional (round 4; old readers ignore them):
+      gd "trying": str      # a switch trial ("Volume shape: Gate") or "a final polish"
+      gd "starts": int      # how many starts the run makes (a round-4 budget; ``total`` is then
+                            # the most gd steps the budget allows, and the run usually stops sooner)
+      done "finished": true # the run was told to finish early; the best so far
 
 ``wave.y`` is ``WAVE_CYCLES`` cycles of the lowest note resampled to ``spc`` samples per
 cycle, with 2 samples of margin at each end (what ``design/draw.js plumePts`` needs),
@@ -74,15 +82,46 @@ import numpy as np
 
 from . import WORKING_SR
 
-# Optimizer budget. Getting the patch right beats getting it fast: THOROUGH (the
-# default) spends generous iterations across several random restarts (keep best);
-# QUICK is the watchable budget. Time also scales ~N× with the chord's voice count.
-QUALITY_PRESETS: dict[str, dict[str, int]] = {
-    "quick":    {"gd_iters": 45,  "restarts": 1, "neighbor_iters": 14},
-    "thorough": {"gd_iters": 160, "restarts": 4, "neighbor_iters": 24},
+# Optimizer budget. Getting the patch right beats getting it fast. Each descent runs until it
+# stops improving (the plateau rule: no relative gain above ``tol`` over ``patience`` steps, after
+# ``min_iters``), capped at ``gd_iters``, with a cosine learning rate from LR down to ``lr_min``.
+# After each start's descent every switch setting (sub octave, LFO wave, volume shape) is scored at
+# its knobs, and the ``switch_top`` most promising ones (-1: all) are re-descended briefly
+# (``switch_iters``); a winner is adopted and the descent continues under it
+# (``continue_iters``). The LFO wave only shows at about the right rate, which a descent rarely finds
+# on its own, so the same stage also scans LFO settings (each wave x rates x on the pitch or the
+# filter; renders only) and re-descends the ``lfo_top`` best. A final low-step polish
+# (``polish_iters``) starts from the overall best.
+# QUICK is the watchable budget (about half a minute); THOROUGH the default (2-3 minutes); DEEP
+# many starts and every switch setting (up to about 10 minutes). Time scales ~N x with the
+# chord's voice count. A budget without the round-4 keys runs the old search exactly: a fixed
+# ``gd_iters`` per start at a constant LR, and one silent switch sweep at the end (tests pin tiny
+# budgets that way; tools/match_benchmark.py runs "old" that way).
+QUALITY_PRESETS: dict[str, dict[str, Any]] = {
+    "quick":    {"gd_iters": 90, "restarts": 1, "neighbor_iters": 14,
+                 "patience": 15, "min_iters": 30, "tol": 1e-3, "lr_min": 0.008,
+                 "switch_top": 1, "switch_iters": 24, "continue_iters": 40, "polish_iters": 20, "lfo_top": 1},
+    "thorough": {"gd_iters": 240, "restarts": 4, "neighbor_iters": 24,
+                 "patience": 25, "min_iters": 60, "tol": 5e-4, "lr_min": 0.008,
+                 "switch_top": 3, "switch_iters": 40, "continue_iters": 120, "polish_iters": 80,
+                 "lfo_top": 1},
+    "deep":     {"gd_iters": 360, "restarts": 8, "neighbor_iters": 32,
+                 "patience": 35, "min_iters": 80, "tol": 3e-4, "lr_min": 0.008,
+                 "switch_top": -1, "switch_iters": 30, "continue_iters": 160, "polish_iters": 150,
+                 "lfo_top": 2},
 }
 DEFAULT_QUALITY = "thorough"
-LR = 0.08                      # Adam learning rate
+LR = 0.08                      # Adam learning rate (the start of each cosine schedule)
+# Adam's first step moves every knob by about the rate, so a descent that starts from good knobs
+# starts gently or it throws them away (the LFO probes: 0.05 lost the scan's gain, 0.02 kept it).
+LR_SWITCH = 0.03               # re-descending under another switch setting
+LR_LFO = 0.02                  # re-descending from an LFO setting the scan found
+LR_CONTINUE = 0.02             # continuing under a winner
+LR_POLISH = 0.015              # the final polish: small steps from the overall best
+LFO_WAVES = (2, 3, 0)          # the LFO waves the matcher tries (twin.py S_PARAMS lfo_shape)
+WARMUP = 8                     # ...and ramps its rate up over its first steps (the probes: without it,
+                               # a trial from the scan's LFO lost its start and stopped before recovering)
+POLISH_WORDS = "a final polish"
 MAX_NOTES = 4                  # a chord target is at most 4 notes
 MAX_UPLOAD_BYTES = 25 * 1024 * 1024
 PHASES = ("pitch", "gd", "note-search", "done")
@@ -299,6 +338,112 @@ def wave_snippet(audio: np.ndarray, sr: int, f0: float, t0: float) -> dict[str, 
     return {"spc": WAVE_SPC, "y": [round(float(v), 4) for v in y], "level": round(level, 3)}
 
 
+# ── the search's rules (pure) ────────────────────────────────────────────────
+def cosine_lr(t: int, cap: int, lr_max: float, lr_min: float | None) -> float:
+    """The learning rate at step ``t`` (1-based) of a descent capped at ``cap`` steps: a half cosine
+    from ``lr_max`` down to ``lr_min`` over the cap (constant ``lr_max`` when ``lr_min`` is None)."""
+    if lr_min is None or cap <= 1:
+        return float(lr_max)
+    frac = min(1.0, max(0.0, (t - 1) / (cap - 1)))
+    return float(lr_min + 0.5 * (lr_max - lr_min) * (1.0 + math.cos(math.pi * frac)))
+
+
+def plateaued(bests: list[float], patience: int | None, tol: float = 0.0, min_iters: int = 0) -> bool:
+    """True when a descent should stop: after ``min_iters`` steps, its best loss has improved by no
+    more than ``tol`` (relative) over the last ``patience`` steps. ``bests[i]`` is the best loss after
+    step i+1. No ``patience`` (None or 0) means never: the descent runs to its cap."""
+    if not patience or len(bests) < max(int(min_iters), int(patience) + 1):
+        return False
+    then, now = bests[-1 - int(patience)], bests[-1]
+    if not math.isfinite(then):
+        return False
+    return (then - now) <= tol * max(abs(then), 1e-12)
+
+
+# The switches in plain words, as the Match view names them (views/match.js STAGES; match.check.mjs
+# holds the two to the same words).
+SWITCH_WORDS: dict[str, tuple[str, dict[int, str]]] = {
+    "sub_octave": ("Sub octave", {2: "\u22121", 1: "\u22122", 0: "\u22122 asym"}),
+    "lfo_shape": ("LFO wave", {0: "Saw", 1: "Inverse saw", 2: "Triangle", 3: "Square",
+                               4: "Random", 5: "Noise"}),
+    "amp_env_mode": ("Volume shape", {0: "Gate", 1: "Envelope"}),
+}
+
+
+def switch_words(s: dict[str, int], base: dict[str, int]) -> str:
+    """The switches in ``s`` that differ from ``base``, in words: "Volume shape: Gate" or
+    "Sub octave: −2, LFO wave: Square" (in the order the view lists them)."""
+    parts = []
+    for name in ("sub_octave", "lfo_shape", "amp_env_mode"):
+        if name in s and s.get(name) != base.get(name):
+            label, words = SWITCH_WORDS[name]
+            parts.append(f"{label}: {words.get(int(s[name]), s[name])}")
+    return ", ".join(parts)
+
+
+def switch_candidates(scored: list[tuple[dict[str, int], float]], current: dict[str, int],
+                      current_loss: float, top: int) -> list[dict[str, int]]:
+    """The most promising other switch settings, best first, from ``scored`` = [(setting, loss at
+    the start's best knobs)]. A setting that renders exactly as the current one does (its switch
+    does nothing at these knobs, e.g. the sub octave with Sub at 0) is left out, and settings that
+    sound the same as each other count once (the one that changes fewest switches). ``top`` < 0
+    keeps them all."""
+    def rel_same(a: float, b: float) -> bool:
+        return abs(a - b) <= 1e-9 * max(abs(a), abs(b), 1e-12)
+
+    def changes(cfg: dict[str, int]) -> int:
+        return sum(cfg.get(k) != current.get(k) for k in cfg)
+
+    alts = [(cfg, loss) for cfg, loss in scored
+            if cfg != current and math.isfinite(loss) and not rel_same(loss, current_loss)]
+    alts.sort(key=lambda cl: (cl[1], changes(cl[0])))
+    kept: list[tuple[dict[str, int], float]] = []
+    for cfg, loss in alts:
+        if not any(rel_same(loss, k_loss) for _, k_loss in kept):
+            kept.append((cfg, loss))
+    picked = [cfg for cfg, _ in kept]
+    return picked if top < 0 else picked[:max(0, int(top))]
+
+
+def resolve_budget(quality: str | None, budget: dict[str, Any] | None = None) -> dict[str, Any]:
+    """The budget a run uses: ``budget`` as given (tests and tools), else the preset for
+    ``quality``. Round-4 keys a budget leaves out default to the old search (see QUALITY_PRESETS)."""
+    b = dict(budget or QUALITY_PRESETS.get(quality or "", QUALITY_PRESETS[DEFAULT_QUALITY]))
+    b.setdefault("patience", None)
+    b.setdefault("min_iters", 0)
+    b.setdefault("tol", 0.0)
+    b.setdefault("lr_min", None)
+    b.setdefault("switch_top", 0)
+    b.setdefault("switch_iters", 0)
+    b.setdefault("continue_iters", 0)
+    b.setdefault("polish_iters", 0)
+    b.setdefault("lfo_top", 0)
+    return b
+
+
+def lfo_hypotheses(k: np.ndarray, s: dict[str, int],
+                   rates: int = 9) -> list[tuple[np.ndarray, dict[str, int], str]]:
+    """The LFO settings the switch stage scans at knobs ``k``: each wave the matcher tries, at
+    ``rates`` rates across the range, on the pitch (a vibrato) or on the filter, with Mod wheel to
+    LFO at half. Returns ``[(knobs, switches, words)]``; the words say what a trial tries."""
+    from .twin import K_NAMES
+
+    i_rate, i_pitch, i_cut, i_depth = (K_NAMES.index(n)
+                                       for n in ("lfo_rate", "lfo_to_pitch", "lfo_to_cutoff", "lfo_depth"))
+    label, waves = SWITCH_WORDS["lfo_shape"]
+    out = []
+    for wave in LFO_WAVES:
+        s2 = {**s, "lfo_shape": wave}
+        for r in np.linspace(0.1, 0.9, rates):
+            for where, amount in (("pitch", 0.1), ("filter", 0.4)):
+                k2 = np.array(k, dtype=np.float64)
+                k2[i_rate], k2[i_depth] = r, 0.5
+                k2[i_pitch] = amount if where == "pitch" else 0.0
+                k2[i_cut] = amount if where == "filter" else 0.0
+                out.append((k2, s2, f"{label}: {waves[wave]}, rate {int(round(r * 127))}, on the {where}"))
+    return out
+
+
 # ── the stream ────────────────────────────────────────────────────────────────
 @dataclass(frozen=True)
 class Step:
@@ -317,23 +462,45 @@ def _adam(
     x0: np.ndarray,
     iters: int,
     lr: float,
+    *,
+    lr_min: float | None = None,
+    patience: int | None = None,
+    min_iters: int = 0,
+    tol: float = 0.0,
+    warmup: int = 0,
+    stop: Any = None,
 ) -> Iterator[tuple[np.ndarray, float, np.ndarray]]:
     """Adam over x in [0,1], yielding ``(x, loss, audio)`` after EACH step, where
-    ``audio`` is the step's forward render (so a frame can draw it for free)."""
+    ``audio`` is the step's forward render (so a frame can draw it for free).
+
+    The rate follows :func:`cosine_lr` over ``iters`` (constant ``lr`` when ``lr_min`` is None),
+    ramped up linearly over the first ``warmup`` steps (none by default).
+    The descent ends early once :func:`plateaued` says it stopped improving, or when ``stop`` (a
+    ``threading.Event``: "finish now") is set, checked before each step."""
     x = np.clip(np.asarray(x0, dtype=np.float64), 0.0, 1.0)
     m = np.zeros_like(x)
     v = np.zeros_like(x)
     b1, b2, eps = 0.9, 0.999, 1e-8
+    bests: list[float] = []
+    best = math.inf
     for t in range(1, iters + 1):
+        if stop is not None and stop.is_set():
+            return
         gr = np.asarray(grad_fn(x), dtype=np.float64)
         gr = np.where(np.isfinite(gr), gr, 0.0)
         m = b1 * m + (1 - b1) * gr
         v = b2 * v + (1 - b2) * gr * gr
         mhat = m / (1 - b1 ** t)
         vhat = v / (1 - b2 ** t)
-        x = np.clip(x - lr * mhat / (np.sqrt(vhat) + eps), 0.0, 1.0)
+        rate = cosine_lr(t, iters, lr, lr_min) * (min(1.0, t / warmup) if warmup else 1.0)
+        x = np.clip(x - rate * mhat / (np.sqrt(vhat) + eps), 0.0, 1.0)
         audio = np.asarray(render(x), dtype=np.float64)
-        yield x.copy(), float(loss_of(audio)), audio
+        loss = float(loss_of(audio))
+        yield x.copy(), loss, audio
+        best = min(best, loss)
+        bests.append(best)
+        if plateaued(bests, patience, tol, min_iters):
+            return
 
 
 def steps(
@@ -345,7 +512,8 @@ def steps(
     cold_candidates: list[int] | None = None,
     init_k: np.ndarray | None = None,
     init_s: dict[str, int] | None = None,
-    budget: dict[str, int] | None = None,
+    budget: dict[str, Any] | None = None,
+    stop: Any = None,
 ) -> Iterator[Step]:
     """Run one polyphonic match and yield a :class:`Step` per optimization step.
 
@@ -353,14 +521,39 @@ def steps(
     ``seeded`` True means the user fixed the notes, so the note-search is skipped.
     ``quality`` picks the budget (``budget`` overrides it — tests use a tiny one).
     ``cold_candidates`` is the salience-ranked list for the cold-start note-search.
-    ``init_k``/``init_s`` warm-start the FIRST restart (else a near-centre start)."""
+    ``init_k``/``init_s`` warm-start the FIRST restart (else a near-centre start).
+    ``stop`` (a ``threading.Event``) set means "finish now": the search ends at the next step
+    and the best so far is still rendered, scored and yielded as the done frame."""
     from autograd import grad
 
     from .capture import AudioClip, prepare
     from .twin import Twin, _closeness_vs, midi_to_hz, spectral_loss
 
-    b = dict(budget or QUALITY_PRESETS.get(quality, QUALITY_PRESETS[DEFAULT_QUALITY]))
+    b = resolve_budget(quality, budget)
     gd_iters, restarts, neighbor_iters = int(b["gd_iters"]), int(b["restarts"]), int(b["neighbor_iters"])
+    patience, min_iters, tol, lr_min = b["patience"], int(b["min_iters"]), float(b["tol"]), b["lr_min"]
+    switch_top, switch_iters = int(b["switch_top"]), int(b["switch_iters"])
+    continue_iters, polish_iters = int(b["continue_iters"]), int(b["polish_iters"])
+    lfo_top = int(b["lfo_top"])
+    # Round 4 (a budget with its keys): plateau stops, cosine rates, switch re-descent, a polish.
+    new_style = bool(patience or lr_min is not None or (switch_top and switch_iters) or polish_iters)
+
+    def finishing() -> bool:
+        return stop is not None and stop.is_set()
+
+    def rule(cap: int, floor: float | None = None, warm: bool = False) -> dict[str, Any]:
+        """How a descent capped at ``cap`` runs: it always hears "finish"; a round-4 budget adds the
+        cosine rate (down to ``floor``, else ``lr_min``; ``warm``: ramped up first, for a descent
+        that starts from good knobs) and the plateau rule (the main descent's own patience, scaled
+        down for the short switch trials and the polish)."""
+        how: dict[str, Any] = {"stop": stop}
+        if new_style:
+            how["lr_min"] = lr_min if floor is None else floor
+            how["warmup"] = WARMUP if warm else 0
+        if patience:
+            how.update(patience=max(6, min(int(patience), cap // 3)),
+                       min_iters=min(min_iters, max(8, cap // 3)), tol=tol)
+        return how
 
     t_start = time.perf_counter()
     full = Twin()
@@ -377,7 +570,14 @@ def steps(
 
     s0 = {**S_DEFAULT, **(init_s or {})}
     notes0 = sorted(int(x) for x in notes)
-    total_gd = max(1, gd_iters * restarts)
+    n_configs = len(search.s_configs())
+    per_start = gd_iters
+    if new_style:
+        tried = (n_configs - 1 if switch_top < 0 else min(switch_top, n_configs - 1)) + max(0, lfo_top)
+        per_start += (tried * switch_iters + continue_iters) if switch_iters else 0
+    # ``total``: every gd step the budget allows (the old search runs exactly this many; a round-4
+    # search usually stops sooner, as its descents stop improving).
+    total_gd = max(1, per_start * restarts + (polish_iters if new_style else 0))
     t0 = loudest_time(tgt_lo, search.sr)
 
     def f0_of(note_set: list[int]) -> float:
@@ -418,24 +618,79 @@ def steps(
     ), x0_first.copy(), dict(s0))
 
     # ── phase 2: gradient descent on the shared patch, multi-restart ─────────
-    g0, r0 = grad_of(notes0, s0), renderer(notes0, s0)
+    # Each start descends under the best switches so far (the defaults at first; the old search
+    # keeps them throughout), then (round 4) tries the other switch settings at its best knobs.
     counter = 0
+    extra_new = {"starts": restarts} if new_style else {}
+
+    def descend(note_set: list[int], s: dict[str, int], x_start: np.ndarray, cap: int, lr: float,
+                rule: dict[str, Any], state: dict[str, Any], **fields: Any) -> Iterator[Step]:
+        """One descent from ``x_start`` under ``s``, one gd frame a step; ``state`` tracks this
+        descent's best (``k``, ``loss``) and the run's best (the enclosing variables)."""
+        nonlocal counter, n_steps, best_loss, best_k, best_s
+        for x, loss, audio in _adam(grad_of(note_set, s), renderer(note_set, s), loss_of,
+                                    x_start, cap, lr, **rule):
+            counter += 1
+            n_steps += 1
+            if loss < state["loss"]:
+                state["loss"], state["k"] = loss, x.copy()
+            if loss < best_loss:
+                best_loss, best_k, best_s = loss, x.copy(), dict(s)
+            yield Step(frame(
+                "gd", note_set, x, s, audio,
+                iter=counter, total=total_gd, loss=loss, best_loss=best_loss, **fields,
+            ), x.copy(), dict(s))
+
     for r in range(restarts):
+        if finishing():
+            break
         # Restart 0 starts at x0_first; later restarts sample the cube widely so the
         # multi-restart actually escapes the first basin (keep best overall).
         x_start = x0_first if r == 0 else np.random.default_rng(1000 + r).uniform(0.15, 0.85, full.k_dim)
-        for x, loss, audio in _adam(g0, r0, loss_of, x_start, gd_iters, LR):
-            counter += 1
-            n_steps += 1
-            if loss < best_loss:
-                best_loss, best_k, best_s = loss, x.copy(), dict(s0)
-            yield Step(frame(
-                "gd", notes0, x, s0, audio,
-                iter=counter, total=total_gd, restart=r, loss=loss, best_loss=best_loss,
-            ), x.copy(), dict(s0))
+        s_r = dict(best_s) if new_style else dict(s0)
+        mine = {"k": x_start.copy(), "loss": math.inf}
+        yield from descend(notes0, s_r, x_start, gd_iters, LR, rule(gd_iters), mine, restart=r, **extra_new)
+        trials = new_style and bool(switch_top and switch_iters)
+        if not trials or finishing() or not math.isfinite(mine["loss"]):
+            continue
+        # ── the switches: score every setting at this start's knobs (renders only), re-descend
+        # the most promising briefly, adopt a winner, and keep descending under it ──
+        scored = [(cfg, loss_of(np.asarray(search.render_chord(mine["k"], cfg, notes0), dtype=np.float64)))
+                  for cfg in search.s_configs()]
+        n_steps += len(scored)
+        tries = [(cfg, mine["k"], switch_words(cfg, s_r), LR_SWITCH)
+                 for cfg in switch_candidates(scored, s_r, mine["loss"], switch_top)]
+        if lfo_top > 0:
+            # the LFO scan: its best settings (one each on the pitch and the filter, for Deep)
+            def lfo_loss(k2: np.ndarray, s2: dict[str, int]) -> float:
+                return loss_of(np.asarray(search.render_chord(k2, s2, notes0), dtype=np.float64))
+
+            hyps = sorted(((lfo_loss(k2, s2), i, k2, s2, w)
+                           for i, (k2, s2, w) in enumerate(lfo_hypotheses(mine["k"], s_r))),
+                          key=lambda h: (h[0], h[1]))
+            n_steps += len(hyps)
+            places: set[str] = set()
+            for loss, _i, k2, s2, words in hyps:
+                place = words.rsplit(" ", 1)[-1]
+                if math.isfinite(loss) and place not in places and len(places) < lfo_top:
+                    places.add(place)
+                    tries.append((s2, k2, words, LR_LFO))
+        won: dict[str, Any] | None = None
+        for cfg, k_try, words, lr_try in tries:
+            if finishing():
+                break
+            trial = {"k": k_try.copy(), "loss": math.inf}
+            yield from descend(notes0, cfg, k_try, switch_iters, lr_try, rule(switch_iters, warm=True),
+                               trial, restart=r, trying=words, **extra_new)
+            if trial["loss"] < mine["loss"] and (won is None or trial["loss"] < won["loss"]):
+                won = {"s": dict(cfg), "k": trial["k"], "loss": trial["loss"]}
+        if won is not None and continue_iters and not finishing():
+            kept = {"k": won["k"].copy(), "loss": won["loss"]}
+            yield from descend(notes0, won["s"], won["k"], continue_iters, LR_CONTINUE,
+                               rule(continue_iters, warm=True), kept, restart=r, **extra_new)
 
     # ── phase 3a: note-search over the SET (cold start only) ─────────────────
-    if not seeded:
+    if not seeded and not finishing():
         ranked = list(cold_candidates or notes0)
         weakest = next((nb for nb in reversed(ranked) if nb in best_notes),
                        best_notes[-1] if best_notes else None)
@@ -457,7 +712,7 @@ def steps(
         for cand in cand_sets:
             start_k = best_k.copy()
             for x, loss, audio in _adam(grad_of(cand, best_s), renderer(cand, best_s), loss_of,
-                                        start_k, neighbor_iters, LR):
+                                        start_k, neighbor_iters, LR, stop=stop):
                 ns_counter += 1
                 n_steps += 1
                 improved = loss < best_loss
@@ -469,11 +724,19 @@ def steps(
                 ), x.copy(), dict(best_s))
 
     # ── phase 3b: enumerate the discrete switches cheaply (no gradient, no frames) ──
-    for s_cfg in search.s_configs():
-        loss = loss_of(np.asarray(search.render_chord(best_k, s_cfg, best_notes), dtype=np.float64))
-        n_steps += 1
-        if loss < best_loss:
-            best_loss, best_s = loss, dict(s_cfg)
+    if not finishing():
+        for s_cfg in search.s_configs():
+            loss = loss_of(np.asarray(search.render_chord(best_k, s_cfg, best_notes), dtype=np.float64))
+            n_steps += 1
+            if loss < best_loss:
+                best_loss, best_s = loss, dict(s_cfg)
+
+    # ── phase 3c (round 4): a final polish, small steps from the overall best ────
+    if new_style and polish_iters and not finishing():
+        polish = {"k": best_k.copy(), "loss": best_loss}
+        yield from descend(best_notes, dict(best_s), best_k.copy(), polish_iters, LR_POLISH,
+                           rule(polish_iters, LR_POLISH / 10, warm=True),
+                           polish, restart=max(0, restarts - 1), trying=POLISH_WORDS, **extra_new)
 
     # ── done: render the best at FULL resolution, score, A/B WAVs ────────────
     audio = np.asarray(full.render_chord(best_k, best_s, best_notes), dtype=np.float64)
@@ -482,7 +745,8 @@ def steps(
     f0 = f0_of(best_notes)
     done = {
         "phase": "done", **note_fields(best_notes), "seeded": seeded,
-        "iter": total_gd, "total": total_gd, "restart": restarts,
+        "iter": counter if new_style else total_gd, "total": counter if new_style else total_gd,
+        "restart": restarts,
         "loss": best_loss, "best_loss": best_loss,
         "cc": {str(c): int(v) for c, v in full.k_to_cc(best_k, best_s).items()},
         "wave": wave_snippet(audio, full.sr, f0, t0),
@@ -493,22 +757,25 @@ def steps(
         "match_wav_b64": wav_b64(audio, full.sr),
         "target_wav_b64": wav_b64(target_clip.samples, target_clip.samplerate),
     }
+    if finishing():
+        done["finished"] = True                  # finished early, on request: the best so far
     yield Step(done, best_k.copy(), dict(best_s))
 
 
-def run(p: Plan, budget: dict[str, int] | None = None) -> Iterator[Step]:
-    """:func:`steps` for a parsed :class:`Plan`."""
+def run(p: Plan, budget: dict[str, Any] | None = None, stop: Any = None) -> Iterator[Step]:
+    """:func:`steps` for a parsed :class:`Plan` (``stop``: see :func:`steps`)."""
     return steps(p.samples, p.notes, seeded=p.seeded, quality=p.quality,
                  cold_candidates=p.cold_candidates, init_k=p.init_k, init_s=p.init_s,
-                 budget=budget)
+                 budget=budget, stop=stop)
 
 
 async def astream(p: Plan, throttle: float = 0.0,
-                  budget: dict[str, int] | None = None) -> AsyncIterator[Step]:
+                  budget: dict[str, Any] | None = None, stop: Any = None) -> AsyncIterator[Step]:
     """Yield :func:`run`'s steps on the event loop while each step computes on a
     worker thread (a gradient step blocks for tens of ms; the cockpit's other sockets
-    must stay live). ``throttle`` seconds are slept between frames (not after done)."""
-    it = run(p, budget)
+    must stay live). ``throttle`` seconds are slept between frames (not after done).
+    Setting ``stop`` finishes the run early; its done frame still comes."""
+    it = run(p, budget, stop)
     try:
         while True:
             step = await asyncio.to_thread(next, it, None)

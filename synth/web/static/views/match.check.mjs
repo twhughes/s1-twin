@@ -220,6 +220,38 @@ ok(M.COPY.closeness.length <= 150 && M.COPY.honest.length <= 150, "the closeness
 ok(M.testGoWords([48]) === "C3, from scratch: a minute or two" && M.testGoWords([48]).length <= 36, "a test's words fit beside Match");
 ok(Object.values(M.COPY).every((w) => w === w.trim() && /^[A-Z]/.test(w) && !/→/.test(w)), "sentence case, plain, no arrows");
 
+// ── round 4: the search tries harder (synth/match/twin_session.py) ─────────────────
+const sessionPy = py("../../../match/twin_session.py");
+ok(/POLISH_WORDS = "([^"]+)"/.exec(sessionPy)[1] === M.POLISH_WORDS, "the polish's words match the server's");
+{ // the switch words the server sends in "trying" are the view's own option names
+  const block = /SWITCH_WORDS[^=]*= \{([\s\S]*?)\n\}/.exec(sessionPy)[1];
+  const words = (name) => Object.fromEntries([...new RegExp(`"${name}": \\("[^"]+", \\{([^}]*)\\}`).exec(block)[1]
+    .matchAll(/(\d+): "([^"]+)"/g)].map((m) => [+m[1], JSON.parse(`"${m[2]}"`)]));
+  for (const [name, cc] of [["sub_octave", 22], ["lfo_shape", 12], ["amp_env_mode", 28]]) {
+    const w = words(name);
+    ok(Object.keys(w).length >= 2 && Object.entries(w).every(([v, word]) => M.valueText(cc, +v) === word), `${name}: the server's words are the view's`);
+  }
+}
+const r4 = [
+  { phase: "pitch", ...base, seeded: true, iter: 0, total: 900, restart: 0, loss: 8, best_loss: 8, cc: cc(1), wave, target_wave: wave },
+  { phase: "gd", ...base, iter: 1, total: 900, restart: 0, starts: 4, loss: 6, best_loss: 6, cc: cc(2), wave },
+  { phase: "gd", ...base, iter: 2, total: 900, restart: 0, starts: 4, trying: "Volume shape: Gate", loss: 5, best_loss: 5, cc: cc(3), wave },
+  { phase: "gd", ...base, iter: 3, total: 900, restart: 1, starts: 4, loss: 7, best_loss: 5, cc: cc(4), wave },
+  { phase: "gd", ...base, iter: 4, total: 900, restart: 3, starts: 4, trying: M.POLISH_WORDS, loss: 4.9, best_loss: 4.9, cc: cc(5), wave },
+  { phase: "done", ...base, seeded: true, iter: 4, total: 4, restart: 4, loss: 4.9, best_loss: 4.9, cc: cc(5), wave, target_wave: wave,
+    closeness: 80, seconds: 9, steps: 30, match_wav_b64: "A", target_wav_b64: "B", finished: true },
+];
+let q = M.initialRun();
+const qs = r4.map((f) => (q = M.reduceFrame(q, f)));
+ok(M.phaseText(qs[1]).detail === "Step 1, start 1 of 4", "an open-ended run counts steps and starts, not a fixed total");
+ok(M.phaseText(qs[2]).detail === "Step 2, start 1 of 4, trying Volume shape: Gate", "…and says what it is trying");
+ok(qs[3].trying === null && M.phaseText(qs[3]).detail === "Step 3, start 2 of 4", "a plain step clears it");
+ok(M.phaseText(qs[4]).detail === "Step 4, start 4 of 4, trying a final polish", "the polish is named");
+eq(qs[4].marks.map((m) => m.label), ["Start 2", "Polish"], "leaders at the new start and at the polish (not at every trial)");
+ok(M.expectedSteps(qs[2]) === 40 && M.expectedSteps({ ...qs[2], points: new Array(90) }) === 90, "the axis grows with an open-ended run");
+ok(q.done.finished === true && M.phaseText(q).detail.endsWith("30 steps, finished early"), "a run told to finish says so");
+ok(M.reduceFrame(M.initialRun(), frames[1]).starts === 0 && M.phaseText(states[1]).detail === "Step 1 of 4", "old frames read as before");
+
 // the pitches a key press sounds: the same as the twin's own voice layer (twin/dsp.js)
 const { Engine } = await import("../twin/dsp.js");
 for (const p of [{}, { 14: 0 }, { 14: 5 }, { 80: 0 }, { 80: 1 }, { 80: 3 }, { 80: 3, 85: 71, 86: 67, 87: 76 },

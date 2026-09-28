@@ -48,8 +48,10 @@ const DEFAULTS = { 20: 0, 19: 127, 21: 0, 23: 0, 15: 0, 13: 0, 76: 64, 22: 2, 74
 export function initialRun() {
   return { phase: "idle", count: 0, points: [], marks: [], notes: [], seeded: null, chord: "",
     cc: null, bestCC: null, bestWave: null, wave: null, targetWave: null, iter: 0, total: 0, restart: 0,
-    nsTotal: 0, improved: false, done: null, error: null };
+    nsTotal: 0, improved: false, done: null, error: null, trying: null, starts: 0 };
 }
+/** The words a polish frame carries in "trying" (synth/match/twin_session.py POLISH_WORDS). */
+export const POLISH_WORDS = "a final polish";
 
 const num = (x) => (typeof x === "number" && Number.isFinite(x) ? x : NaN);
 export const prettyChord = (s) => String(s || "").replaceAll("#", "♯").replaceAll("+", " + ");
@@ -66,19 +68,27 @@ export function reduceFrame(s, f) {
   if (f.target_wave) next.targetWave = f.target_wave;
   if (f.phase === "done") {
     next.done = { closeness: num(f.closeness), seconds: num(f.seconds), steps: f.steps | 0, cc: f.cc || s.bestCC,
-      notes: next.notes, matchWav: f.match_wav_b64 || null, targetWav: f.target_wav_b64 || null };
+      notes: next.notes, matchWav: f.match_wav_b64 || null, targetWav: f.target_wav_b64 || null, finished: f.finished === true };
+    next.trying = null;
     next.bestCC = f.cc || s.bestCC;
     return next;
   }
   const prev = s.points[s.points.length - 1];
-  const point = { loss: num(f.loss), best: num(f.best_loss), phase: f.phase, restart: f.restart ?? (prev ? prev.restart : 0) };
+  const point = { loss: num(f.loss), best: num(f.best_loss), phase: f.phase, restart: f.restart ?? (prev ? prev.restart : 0),
+    polish: f.trying === POLISH_WORDS };
   next.points = [...s.points, point];
-  // Leaders on the curve: where a new start begins, and where the note search begins.
+  // Leaders on the curve: where a new start begins, where the note search begins, and the polish.
   if (prev && point.phase === "note-search" && prev.phase !== "note-search") {
     next.marks = [...s.marks, { i: next.points.length - 1, label: "Nearby notes" }];
+  } else if (prev && point.polish && !prev.polish) {
+    next.marks = [...s.marks, { i: next.points.length - 1, label: "Polish" }];
   } else if (prev && point.phase === "gd" && point.restart > 0 && prev.restart !== point.restart) {
     next.marks = [...s.marks, { i: next.points.length - 1, label: `Start ${point.restart + 1}` }];
   }
+  // Round 4: a gd frame may say what it is trying (a switch setting, or the polish), and how many starts
+  // the run makes; its descents stop when they stop improving, so the step count is open-ended.
+  next.trying = f.phase === "gd" && typeof f.trying === "string" && f.trying ? f.trying : null;
+  if (Number.isFinite(f.starts)) next.starts = f.starts | 0;
   // The frame that sets (or ties) the best loss carries the best candidate so far.
   if (f.cc && Number.isFinite(point.loss) && point.loss === point.best) { next.bestCC = f.cc; next.bestWave = f.wave || s.bestWave; }
   if (f.phase === "note-search") { next.nsTotal = f.total | 0; next.improved = !!f.improved; next.iter = f.iter | 0; }
@@ -98,6 +108,10 @@ export function phaseText(s, { staticMode = false, loaded = false, recording = f
     case "connecting": return { word: "Opening the matcher", detail: "" };
     case "pitch": return { word: "Finding the notes", detail: (s.seeded ? "Marked: " : "Found: ") + s.chord };
     case "gd": {
+      if (s.starts) {
+        return { word: "Descending", detail: `Step ${s.iter}, start ${Math.min(s.restart + 1, s.starts)} of ${s.starts}`
+          + (s.trying ? `, trying ${s.trying}` : "") };
+      }
       const last = s.total && s.iter >= s.total && s.seeded;
       return { word: "Descending", detail: `Step ${s.iter} of ${s.total}` + (s.restart ? `, start ${s.restart + 1}` : "")
         + (last ? ", choosing the switches" : "") };
@@ -108,7 +122,7 @@ export function phaseText(s, { staticMode = false, loaded = false, recording = f
         + (last ? ", choosing the switches" : "") };
     }
     case "done": return { word: "Done", detail: (s.chord ? `${s.chord}, ` : "")
-      + (s.done ? `${fmtSeconds(s.done.seconds)}, ${s.done.steps} steps` : "") };
+      + (s.done ? `${fmtSeconds(s.done.seconds)}, ${s.done.steps} steps` + (s.done.finished ? ", finished early" : "") : "") };
     case "stopped": return { word: "Stopped", detail: s.bestCC ? "The best patch so far is on the knobs." : "" };
     case "error": return { word: s.errorWord || "Could not match", detail: s.error || "" };
     case "making": return { word: "Making the test note",
@@ -138,6 +152,8 @@ export function expectedSteps(s) {
   // A recorded run may be thinned (tools/thin_match.py): its x axis is the frames it kept, not the
   // steps the live run announced, or 130 kept frames would crowd into a fifth of the well.
   if (s.frameCount) return Math.max(s.points.length, s.frameCount, 2);
+  // Round 4: the run stops when it stops improving, so the axis grows with it (from a short start).
+  if (s.starts) return Math.max(s.points.length, 40);
   return Math.max(s.points.length, 1 + (s.total || 0) + (s.nsTotal || 0), 2);
 }
 
@@ -419,7 +435,7 @@ export const COPY = {
   intro: "Give it one note or a chord of up to four. The matcher turns the twin's knobs until the twin sounds like it.",
   test: "A test: can the matcher find the knobs as set now?",
   notes: "Mark up to four, or let the matcher find them.",
-  search: "Thorough makes four starts; it takes longer.",
+  search: "Quick: 15 s. Thorough: 2 min. Deep: 5 to 10 min.",
   loss: "The loss, lower is closer. The bright line is the best so far.",
   plume: "Solid: the target. Dotted: the guess.",
   closeness: "Closeness is the app's own measure of how alike the two sound. No one has checked it by ear yet, so trust your ears first.",
@@ -621,6 +637,7 @@ function createView(root, ctx) {
   let running = false;          // a live match or a replay is streaming
   let recorded = false;         // the frames on screen come from a recorded run
   let socket = null;
+  let finishing = false;        // "finish" was sent; the done frame is on its way
   let replayTimers = [];
   let fileBytes = null, targetBuffer = null, targetLabel = "";
   let quality = "quick", startFrom = "scratch";
@@ -677,11 +694,12 @@ function createView(root, ctx) {
 
   const keys = h("div", { class: "mx-keys", role: "group", "aria-label": "Notes to match" });
   const marked = h("span", { class: "mx-marked", "aria-live": "polite" });
-  const qualitySeg = seg({ label: "Search", value: quality, options: [{ value: "quick", label: "Quick" }, { value: "thorough", label: "Thorough" }],
+  const qualitySeg = seg({ label: "Search", value: quality, options: [{ value: "quick", label: "Quick" },
+    { value: "thorough", label: "Thorough" }, { value: "deep", label: "Deep" }],
     onInput: (v) => { quality = v; } });
-  const startSeg = seg({ label: "Start from", value: startFrom, options: [{ value: "scratch", label: "Scratch" }, { value: "current", label: "The synth's knobs" }],
+  const startSeg = seg({ label: "Start from", value: startFrom, options: [{ value: "scratch", label: "Scratch" }, { value: "current", label: "Current knobs" }],
     onInput: (v) => { startFrom = v; } });
-  const matchBtn = h("button", { type: "button", class: "pill", disabled: true, "data-action": "match", onclick: () => (running ? stopRun() : startMatch()) }, "Match");
+  const matchBtn = h("button", { type: "button", class: "pill", disabled: true, "data-action": "match", onclick: () => (running ? finishRun() : startMatch()) }, "Match");
   const goNote = h("span", { class: "note", style: "margin:0" });
 
   if (!staticMode) {
@@ -1121,10 +1139,9 @@ function createView(root, ctx) {
     making = false;
     if (destroyed) return;
     await loadTarget(bytes, `${from === "s1" ? "The S-1's" : "The twin's"} current sound, ${noteName(note)}`, info);
-    // A test searches thoroughly: from scratch, one Quick descent often stops in a wrong valley
+    // A test searches at least thoroughly: from scratch, one Quick descent often stops in a wrong valley
     // (Saw traded for Square and Sub), which would grade the matcher on bad luck, not on the model.
-    quality = "thorough";
-    qualitySeg.set("thorough");
+    if (quality !== "deep") { quality = "thorough"; qualitySeg.set("thorough"); }
     startMatch();
   }
   const plain = (msg) => Object.assign(new Error(msg), { plain: true });
@@ -1224,7 +1241,10 @@ function createView(root, ctx) {
     setRunning(true);
     renderAll();
     revealRun();
-    const q = new URLSearchParams({ throttle: "0.02", quality });
+    finishing = false;
+    // Quick keeps a small pause between frames, so its short run stays watchable; the long searches
+    // stream as fast as they compute (the view draws at its own frame rate anyway).
+    const q = new URLSearchParams({ throttle: quality === "quick" ? "0.02" : "0", quality });
     // A test gives the matcher its own note and always starts from scratch (the knobs are the answer).
     const notes = test ? test.notes : [...seeds].sort((a, b) => a - b);
     if (notes.length) q.set("notes", notes.join(","));
@@ -1237,17 +1257,27 @@ function createView(root, ctx) {
     ws.onmessage = (ev) => {
       let f; try { f = JSON.parse(ev.data); } catch (_) { return; }
       apply(f);
-      if (f.phase === "done" || f.phase === "error") { socket = null; setRunning(false); try { ws.close(); } catch (_) { /* closed */ } }
+      if (f.phase === "done" || f.phase === "error") { socket = null; finishing = false; setRunning(false); try { ws.close(); } catch (_) { /* closed */ } }
     };
     ws.onclose = () => {
       if (socket !== ws) return;
       socket = null;
+      finishing = false;
       if (run.phase !== "done" && run.phase !== "error" && run.phase !== "stopped") {
         setError("The connection to the app closed before the match finished. Check that the app is still running, then try again.");
       }
     };
   }
+  /** Stop means finish: the server ends the search at its next step and still sends the done frame
+   *  (the best so far, scored, with A/B). With no open socket, stop as before: close, keep the best. */
+  function finishRun() {
+    if (socket && socket.readyState === 1 && !recorded) {
+      try { socket.send("finish"); finishing = true; syncControls(); return; } catch (_) { /* fall back below */ }
+    }
+    stopRun();
+  }
   function stopRun() {
+    finishing = false;
     if (socket) { const ws = socket; socket = null; try { ws.close(); } catch (_) { /* closed */ } }
     replayTimers.forEach(clearTimeout); replayTimers = [];
     if (running) run = { ...run, phase: "stopped" };
@@ -1268,8 +1298,8 @@ function createView(root, ctx) {
   /** What each control can do now: a run, a recording and a test note each hold the target. */
   function syncControls() {
     const b = busy();
-    matchBtn.textContent = running ? "Stop" : "Match";
-    matchBtn.disabled = !running && (!fileBytes || making || !!rec);
+    matchBtn.textContent = !running ? "Match" : finishing ? "Finishing" : "Finish now";
+    matchBtn.disabled = running ? finishing : (!fileBytes || making || !!rec);
     drop.setAttribute("aria-disabled", String(b));
     recBtn.textContent = rec ? "Stop" : "Record";
     recBtn.classList.toggle("on", !!rec);

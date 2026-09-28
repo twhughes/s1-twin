@@ -62,20 +62,47 @@ def test_it_says_what_the_matcher_will_get(client: TestClient) -> None:
     r = _post(client, _take())
     assert r.status_code == 200, r.text
     got = r.json()
-    assert set(got) == {"duration", "crop", "onset", "gate_s", "noise_db", "peak_db", "notes", "warnings",
-                        "peaks", "sr", "wav_b64"}
+    assert set(got) == {"duration", "crop", "onset", "gate_s", "noise_db", "peak_db", "notes", "cents",
+                        "wobble", "confidence", "reach", "warnings", "peaks", "sr", "wav_b64"}
     assert got["duration"] == pytest.approx(5.6, abs=0.01)
     t0, t1 = got["crop"]
     assert abs(got["onset"] - 2.0) < 0.005 and t0 == pytest.approx(got["onset"] - 0.005, abs=0.002)
     assert 2.9 < t1 < 3.6, "the release is kept, the room after it is not"
     assert abs(got["gate_s"] - 0.8) < 0.06
     assert got["notes"] == [48], "the note is found in the crop (C3)"
+    assert abs(got["cents"]) < 5 and got["wobble"] < 5 and got["confidence"] > 0.9, "a steady note, in tune"
+    assert got["reach"]["vowel_like"] is False and got["reach"]["irregular"] < 5
     assert got["warnings"] == [] and got["noise_db"] < -40 and got["peak_db"] > -20
     assert len(got["peaks"]) == match_ws.PEAK_COLUMNS and max(got["peaks"]) == 1.0
     assert got["sr"] == WORKING_SR
     audio, sr = sf.read(io.BytesIO(base64.b64decode(got["wav_b64"])), dtype="float32")
     assert sr == WORKING_SR and len(audio) / sr == pytest.approx(t1 - t0, abs=0.002), "the crop, to the ms"
     assert np.abs(audio).max() == pytest.approx(match_ws.PREVIEW_PEAK, abs=0.01), "the crop to listen to"
+
+
+def test_a_sung_note_says_its_pitch_and_what_the_s1_cannot_make(client: TestClient) -> None:
+    """Round 9 (W-voice): a sung vowel, C#3 28 cents flat with vibrato (synthetic: tests/voices.py),
+    recorded with a second of room before it. One note, how flat, how it wavers, and its two
+    resonances like a vowel's (what the S-1's one filter cannot make)."""
+    from tests.voices import take, vowel
+
+    got = _post(client, take(vowel())).json()
+    assert got["notes"] == [49], "one note, not a cluster"
+    assert abs(got["cents"] - (-28)) <= 10 and 20 < got["wobble"] < 60 and got["confidence"] > 0.8
+    reach = got["reach"]
+    hz = [r["hz"] for r in reach["resonances"]]
+    assert reach["vowel_like"] is True and len(hz) == 2
+    assert abs(hz[0] / 500 - 1) < 0.12 and abs(hz[1] / 1500 - 1) < 0.12
+    cold = ts.detect(tp.prepare_upload(take(vowel()))[1].samples)[0]
+    assert cold == got["notes"], "the cold start's own notes"
+
+
+def test_a_chord_has_no_cents(client: TestClient) -> None:
+    from tests.voices import saws, take
+
+    got = _post(client, take(saws(48, 55))).json()
+    assert got["notes"] == [48, 55] and got["cents"] is None and got["wobble"] is None
+    assert got["confidence"] < 0.2 and got["reach"]["resonances"] == []
 
 
 def test_the_users_edges_win(client: TestClient) -> None:

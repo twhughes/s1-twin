@@ -10,6 +10,10 @@
 // (POST /api/match/prepare, synth/match/target_prep.py): the well draws the crop the matcher gets,
 // the found notes are marked, "Play target" plays that crop and "Play my patch" plays the marked
 // note on the synth. A to K play the synth here too.
+// Round 9 (W-voice): the found line says how the one note found is tuned and how it wavers (the
+// server's pitch tracker, synth/match/pitch.py), and after a match one or two plain lines say what
+// in the sound the S-1 could not make, and why (synth/match/reach.py: a vowel's two resonances
+// against the S-1's one filter, a pitch that wavers unevenly against its even LFO, breath).
 
 import { knob } from "../design/knob.js";
 import { seg, GLYPHS } from "../design/seg.js";
@@ -262,9 +266,10 @@ export const CURVE_DEFAULTS = {
   attack: { lo: 0.001, hi: 2, kind: "exp" }, decay: { lo: 0.005, hi: 4, kind: "exp" },
   sustain: { lo: 0, hi: 1, kind: "linear" }, lfo_to_pitch: { lo: 0, hi: 12, kind: "linear" },
   lfo_to_cutoff: { lo: 0, hi: 4, kind: "linear" }, lfo_depth: { lo: 0, hi: 1, kind: "linear" },
+  env_to_cutoff: { lo: 0, hi: 6, kind: "linear" },
 };
 const CURVE_OF_CC = { 20: "saw_lvl", 19: "square_lvl", 21: "sub_lvl", 23: "noise_lvl", 74: "cutoff", 26: "key_follow",
-  73: "attack", 75: "decay", 30: "sustain", 13: "lfo_to_pitch", 25: "lfo_to_cutoff", 17: "lfo_depth" };
+  73: "attack", 75: "decay", 30: "sustain", 13: "lfo_to_pitch", 25: "lfo_to_cutoff", 17: "lfo_depth", 24: "env_to_cutoff" };
 const curveFor = (cc, curves) => curves?.curves?.[CURVE_OF_CC[cc]] || CURVE_DEFAULTS[CURVE_OF_CC[cc]];
 /** A knob value 0..127 in the model's units (twin.py Curve.__call__). */
 const physical = (c, v) => {
@@ -498,11 +503,15 @@ export const meterLevel = (peak) => Math.max(0, Math.min(1, (20 * Math.log10(Mat
 /** Seconds as the found line says them: "2.1 s" (to the hundredth when `fine`: a short sound). */
 const secs = (t, fine = false) => `${t.toFixed(fine ? 2 : 1)} s`;
 /** The one line under a prepared target: "Note C3, held 0.8 s, from 2.1 s to 3.4 s" ("Notes C3 + E3",
- *  and no "held" when the key-up could not be seen). */
+ *  and no "held" when the key-up could not be seen). One note the pitch tracker followed says its
+ *  tuning and wobble ("Note C♯3, 28 cents flat, wavering ±36 cents, …"), or "No clear pitch, maybe
+ *  C♯4" when the tracker is unsure. */
 export function foundLine(prep) {
   const notes = Array.isArray(prep?.notes) ? prep.notes.filter(Number.isFinite) : [];
   const parts = [];
-  if (notes.length) parts.push(`${notes.length > 1 ? "Notes" : "Note"} ${notes.map(noteName).join(" + ")}`);
+  const followed = notes.length === 1 && Number.isFinite(prep?.cents);   // the tracker's own note
+  if (followed && Number.isFinite(prep.confidence) && prep.confidence < UNSURE) parts.push(`No clear pitch, maybe ${noteName(notes[0])}`);
+  else if (notes.length) parts.push(`${notes.length > 1 ? "Notes" : "Note"} ${notes.map(noteName).join(" + ")}`, ...pitchWords(prep));
   if (Number.isFinite(prep?.gate_s)) parts.push(`held ${secs(prep.gate_s)}`);
   const [t0, t1] = Array.isArray(prep?.crop) ? prep.crop : [];
   if (Number.isFinite(t0) && Number.isFinite(t1)) {
@@ -564,6 +573,82 @@ export function dragCrop(crop, which, frac, duration, least = 0.05) {
   const [t0, t1] = crop;
   const r = (v) => Math.round(v * 1000) / 1000;
   return which === "from" ? [r(Math.max(0, Math.min(t, t1 - least))), t1] : [t0, r(Math.min(duration, Math.max(t, t0 + least)))];
+}
+
+// ── pure: the pitch the tracker heard, and what the S-1 cannot make (round 9, W-voice) ─────────────
+// POST /api/match/prepare adds cents, wobble, confidence (synth/match/pitch.py) and reach
+// (synth/match/reach.py): {resonances: [{hz, db}], vowel_like, breath_db, wobble, irregular, vibrato_hz}.
+export const UNSURE = 0.5;       // a pitch tracker less sure than this says "No clear pitch"
+export const IN_TUNE = 5;        // cents: nearer the note than this goes unsaid
+export const STEADY = 10;        // cents: a wobble narrower than this goes unsaid
+export const UNEVEN = 20;        // cents: pitch movement no even LFO wave follows, worth a sentence
+export const BREATHY = -3;       // dB: breath this near the tone, or louder, is worth a sentence
+export const RESONANT = 40;      // Resonance (CC71) from here makes a peak worth naming
+export const NEAR_OCTAVES = 0.5; // the match's filter peak is "at" a resonance within half an octave of it
+/** A pitch movement's size: "±36 cents"; from a semitone up, "±7.2 semitones". */
+export function spanWords(c) {
+  const a = Math.abs(c);
+  if (a < 99.5) return `±${Math.round(a)} cents`;
+  const st = (a / 100).toFixed(1);
+  return `±${st} semitone${st === "1.0" ? "" : "s"}`;
+}
+/** The one note's pitch, for the found line: ["28 cents flat", "wavering ±36 cents"]; [] when it is in
+ *  tune and steady (a synth note), or unknown. */
+export function pitchWords(prep) {
+  const out = [];
+  const c = prep?.cents, w = prep?.wobble;
+  if (Number.isFinite(c) && Math.abs(c) >= IN_TUNE) out.push(`${Math.round(Math.abs(c))} cents ${c < 0 ? "flat" : "sharp"}`);
+  if (Number.isFinite(w) && w >= STEADY) out.push(`wavering ${spanWords(w)}`);
+  return out;
+}
+/** Hz as the reach lines say them, to the nearest 10 ("490", "1220"). */
+const hzWords = (hz) => String(Math.round(hz / 10) * 10);
+const COUNT = ["", "one", "two", "three"];
+/** Where the found patch puts its filter's peak, in Hz, at `note`: Cutoff, moved by Key follow and by
+ *  Env amount at the sustain level (twin.py render: log2 cutoff + key follow + env amount × env). */
+export function filterPeak(cc, note, curves = null) {
+  const C = (n) => curveFor(n, curves);
+  const fc = physical(C(74), read(cc, 74));
+  const kf = physical(C(26), read(cc, 26)) * (note - 60) / 12;
+  const env = physical(C(24), read(cc, 24)) * physical(C(30), read(cc, 30));
+  return fc * 2 ** (kf + env);
+}
+/**
+ * What in the sound the S-1 could not make, and why: one or two plain sentences after a match ([] when
+ * nothing applies). `reach` is /api/match/prepare's; `cc` the found patch (the done frame's), `notes`
+ * its notes. A vowel first (two or more resonances against the S-1's one filter; where the match put its
+ * one, by Cutoff and Resonance), then a pitch that wavers unevenly (against the even, repeating LFO),
+ * then breath. Plain words: no jargon but "resonance" (and the knob names the view shows).
+ */
+export function reachLines(reach, { cc = null, notes = [TEST_NOTE], curves = null } = {}) {
+  if (!reach || typeof reach !== "object") return [];
+  const said = [];
+  const res = (Array.isArray(reach.resonances) ? reach.resonances : [])
+    .filter((r) => Number.isFinite(r?.hz) && r.hz > 0).sort((a, b) => a.hz - b.hz);
+  if (reach.vowel_like === true && res.length >= 2) {
+    const n = Math.min(3, res.length), list = res.slice(0, n);
+    said.push(`your sound has ${COUNT[n]} resonances, near ${listText(list.map((r) => hzWords(r.hz)))} Hz, like a vowel.`);
+    const which = n === 2 ? ["the lower one", "the upper one"] : ["the lowest one", `the one near ${hzWords(list[1].hz)} Hz`, "the highest one"];
+    if (!cc) said.push("The S-1's filter makes one.");
+    else if (read(cc, 71) < RESONANT) said.push("The S-1's filter makes one, and the match keeps its Resonance low.");
+    else {
+      const peak = filterPeak(cc, Math.min(...(notes.length ? notes : [TEST_NOTE])), curves);
+      const dist = list.map((r) => Math.abs(Math.log2(peak / r.hz)));
+      const at = dist.indexOf(Math.min(...dist));
+      said.push(dist[at] <= NEAR_OCTAVES ? `The S-1's filter makes one, so the match keeps ${which[at]}.`
+        : `The S-1's filter makes one, and the match puts it near ${hzWords(peak)} Hz, ${peak < list[0].hz ? "below" : peak > list[n - 1].hz ? "above" : "between"} them.`);
+    }
+  }
+  if (Number.isFinite(reach.irregular) && reach.irregular >= UNEVEN) {
+    const vib = cc && physical(curveFor(13, curves), read(cc, 13)) * physical(curveFor(17, curves), read(cc, 17)) >= 0.05;
+    said.push(`${said.length ? "Your pitch also wavers" : "your pitch wavers"} unevenly (${spanWords(reach.irregular)}), and the S-1 wavers a pitch only evenly, `
+      + (vib ? "so the match follows it with an even vibrato." : "so the match holds one pitch."));
+  }
+  if (said.length < 3 && Number.isFinite(reach.breath_db) && reach.breath_db >= BREATHY) {
+    said.push(`${said.length ? "Your sound is also" : "your sound is"} about as much breath as tone, and the S-1 adds noise only as a plain hiss through the same filter.`);
+  }
+  if (!said.length) return [];
+  return [`Out of the S-1's reach: ${said[0]}`, ...said.slice(1)];
 }
 
 // ── the view ─────────────────────────────────────────────────────────────────────────
@@ -644,7 +729,8 @@ const CSS = `
 .v-match .mx-close b { font: 300 36px/1 var(--sans); font-variant-numeric: tabular-nums; letter-spacing: -0.01em; }
 .v-match .mx-close span { font-size: 13.5px; color: var(--ink-2); }
 .v-match .mx-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; }
-.v-match .mx-run > .mx-closenote, .v-match .mx-run > .mx-warn { margin: 3px 0 0; max-width: none; }
+.v-match .mx-run > .mx-closenote, .v-match .mx-run > .mx-warn, .v-match .mx-run > .mx-reach { margin: 3px 0 0; max-width: none; }
+.v-match .mx-run > .mx-reach { color: var(--ink); }
 .v-match .mx-panelhead { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 28px; margin-top: 14px; }
 .v-match .mx-panelhead .seg .k-label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 .v-match .mx-panelhead .mx-close b { font-size: 26px; }
@@ -853,6 +939,8 @@ function createView(root, ctx) {
   const closeNum = h("b");
   const closeNote = h("p", { class: "note mx-closenote", text: COPY.closeness });
   const warnLine = h("p", { class: "note mx-warn mx-hidden", role: "status", "data-role": "warnings" });
+  // after a match: what in the sound the S-1 could not make, and why (reachLines)
+  const reachLine = h("p", { class: "note mx-reach mx-hidden", "data-role": "reach" });
   const playTarget = h("button", { type: "button", class: "pill", "data-action": "play-target", onclick: () => playBuffer("target") }, "Play target");
   const playMatch = h("button", { type: "button", class: "pill", "data-action": "play-match", onclick: () => playBuffer("match") }, "Play match");
   const loadBtn = h("button", { type: "button", class: "pill", "data-action": "load", onclick: loadIntoSynth }, "Load into the synth");
@@ -882,6 +970,7 @@ function createView(root, ctx) {
     tag,
     h("div", { class: "mx-row" }, h("p", { class: "mx-status", role: "status" }, word, detail), result),
     warnLine,
+    reachLine,
     closeNote,
     panelHead,
     h("div", { class: "mx-panel" }, knobsBox, report),
@@ -1696,6 +1785,11 @@ function createView(root, ctx) {
     const warns = !rec && run.phase === "idle" && prepState === "ok" ? prep.warnings || [] : [];
     warnLine.textContent = warns.join(" ");
     warnLine.classList.toggle("mx-hidden", !warns.length);
+    // after a match of a sound (not a test of the synth's own): what the S-1 could not make, and why
+    const reach = !rec && !test && !recorded && run.phase === "done" && run.done?.cc && prepState === "ok"
+      ? reachLines(prep?.reach, { cc: run.done.cc, notes: run.done.notes, curves: ctx.twin?.curves }) : [];
+    reachLine.textContent = reach.join(" ");
+    reachLine.classList.toggle("mx-hidden", !reach.length);
     tag.classList.toggle("mx-hidden", !(recorded && currentRec));
     if (recorded && currentRec) {
       tag.replaceChildren(h("b", { text: "Recorded run" }),

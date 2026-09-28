@@ -49,3 +49,30 @@ def test_quick_still_reproduces_the_default_square() -> None:
     assert run["closeness"] >= 70.0, run
     assert run["found"]["19"] >= 100 and run["found"]["21"] <= 20 and run["found"]["23"] <= 20, run["found"]
     assert run["switches"], run["missed"]
+
+
+# Round 9 (W-voice): the cold start's notes for every case, clean and recorded (twin_session.detect on
+# the crop plan() makes). The pitch tracker (synth/match/pitch.py) left 15 of the 18 as they were;
+# three were wrong before and are now the note played: "vibrato" (a square LFO's trill, 53+54+55+56)
+# and "bass@rec" (35+36+37+38) were clusters of neighbours, "wobble" (40+45) read its sub-oscillator's
+# third harmonic as a note. "sub" and "bass" still do (a sub-oscillator under 50 Hz: the sound repeats
+# more slowly than any pitch the tracker follows, so the chord detector decides, as before).
+COLD_START = {
+    "square": [48], "saw": [60], "gate": [48], "sub": [40, 47], "vibrato": [55], "wobble": [45],
+    "pluck": [48], "bass": [36, 43], "high": [72], "pad": [55], "short": [50], "chord": [48, 52, 55],
+    "square@rec": [48], "gate@rec": [48], "pluck@rec": [48], "bass@rec": [36], "pad@rec": [55],
+    "short@rec": [50],
+}
+
+
+@pytest.mark.parametrize("case", sorted(COLD_START))
+def test_cold_start_notes(case: str) -> None:
+    from synth.match import twin_session as ts
+    from synth.match.target_prep import prepare_upload
+
+    wav, _truth, _notes = suite.target(case)
+    assert ts.detect(prepare_upload(wav)[1].samples)[0] == COLD_START[case]
+
+
+def test_every_case_has_its_cold_start() -> None:
+    assert set(COLD_START) == set(suite.all_case_names())

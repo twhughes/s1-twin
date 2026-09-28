@@ -308,17 +308,19 @@ def decode_upload(raw: bytes) -> np.ndarray:
 
 
 def detect(samples: np.ndarray) -> tuple[list[int], list[int]]:
-    """Cold start: the detected note set (low→high) and the salience-ranked candidate
-    list (strongest first, one past the set) the note-search draws from."""
-    from .analyze import _harmonic_salience_notes, detect_notes, probe_note
+    """Cold start: the detected note set (low→high) and the ranked candidate list (strongest
+    first) the note-search draws from. One note for a sound whose pitch can be followed (a voice,
+    a whistle, one synth note), whatever its wobble; otherwise the harmonic-salience chord
+    detector, never a cluster of neighbouring semitones (:func:`synth.match.pitch.detect`)."""
+    from .analyze import probe_note
     from .capture import AudioClip
+    from .pitch import detect as detect_pitch
 
-    clip = AudioClip(np.asarray(samples, dtype=np.float32), WORKING_SR)
-    notes = detect_notes(clip, max_notes=MAX_NOTES)
+    found = detect_pitch(np.asarray(samples, dtype=np.float64), WORKING_SR, max_notes=MAX_NOTES)
+    notes = found.notes
     if not notes:  # unpitched material: fall back to the probe note (C3 when unvoiced)
-        notes = [probe_note(clip)]
-    ranked = [nb for nb, _sal in _harmonic_salience_notes(clip, max_notes=MAX_NOTES + 1)]
-    return sorted(notes), ranked
+        notes = [probe_note(AudioClip(np.asarray(samples, dtype=np.float32), WORKING_SR))]
+    return sorted(notes), found.ranked or list(notes)
 
 
 @dataclass

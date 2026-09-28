@@ -261,15 +261,44 @@ def _harmonic_salience_notes(
     return out
 
 
+def merge_neighbours(ranked: list[tuple[int, float]]) -> list[tuple[int, float]]:
+    """``(note, salience)`` pairs (strongest first) with every run of neighbouring semitones merged
+    into its strongest member: one wavering note smears its partials over the semitones next to
+    it, and a cluster of neighbours is never a chord this matcher should play. Notes a whole tone
+    or more apart (a real chord's second, third, fifth) stay apart. Order is kept."""
+    notes = sorted({int(n) for n, _ in ranked})
+    rank = {}
+    for i, (n, _s) in enumerate(ranked):
+        rank.setdefault(int(n), i)
+    keep: set[int] = set()
+    run: list[int] = []
+    for n in notes + [None]:
+        if run and (n is None or n != run[-1] + 1):
+            keep.add(min(run, key=lambda m: rank[m]))
+            run = []
+        if n is not None:
+            run.append(n)
+    seen: set[int] = set()
+    out = []
+    for n, sal in ranked:
+        if int(n) in keep and int(n) not in seen:
+            seen.add(int(n))
+            out.append((int(n), sal))
+    return out
+
+
 def detect_notes(clip: AudioClip, max_notes: int = 4) -> list[int]:
     """Detect the set of MIDI notes sounding in ``clip`` (chords up to ``max_notes``).
 
     Iterative harmonic salience: sum each candidate fundamental's harmonic
     magnitudes, pick the strongest, subtract its partials, repeat — stopping when
     a peeled note's salience falls below :data:`_SALIENCE_REL_THRESHOLD` of the
-    first note's, or ``max_notes`` is reached. Returns MIDI notes **low→high**;
-    a mono (single-pitch) input yields exactly one note, so this never regresses
-    the single-note path.
+    first note's, or ``max_notes`` is reached. Neighbouring semitones are then
+    merged into the strongest (:func:`merge_neighbours`): never a cluster. Returns
+    MIDI notes **low→high**; a mono (single-pitch) input yields exactly one note,
+    so this never regresses the single-note path. (A voice, a whistle or any one
+    wavering note: :func:`synth.match.pitch.detect` follows the pitch frame by
+    frame first, and comes here only when the sound is not one note.)
 
     Honest scope: this is reliable on **clean, steady, harmonic** material — synth
     chords with clear fundamentals, exactly what the twin renders. It degrades on
@@ -281,12 +310,12 @@ def detect_notes(clip: AudioClip, max_notes: int = 4) -> list[int]:
     if not ranked:
         return [C3_FALLBACK]
     top = ranked[0][1]
-    kept = [ranked[0][0]]
+    kept = [ranked[0]]
     for note, sal in ranked[1:]:
         if sal < _SALIENCE_REL_THRESHOLD * top:
             break
-        kept.append(note)
-    return sorted(set(kept))
+        kept.append((note, sal))
+    return sorted({n for n, _sal in merge_neighbours(kept)})
 
 
 # ── envelope segmentation (ADSR regions) ─────────────────────────────────────

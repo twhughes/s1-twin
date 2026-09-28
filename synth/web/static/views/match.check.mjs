@@ -325,4 +325,58 @@ ok(longest.length <= 110, `the found line fits the status row beside its word ($
 ok(M.hints.map((x) => x.key).join(" ") === "A – K Z  X Space ?" && M.hints.every((x) => /^[A-Z]/.test(x.label)) && M.default.hints === M.hints,
   "the keys in the bottom strip: A to K play here too");
 
+// ── round 9 (W-voice): the pitch the tracker heard, and what the S-1 cannot make ─────────────────
+// (synth/match/pitch.py, reach.py; POST /api/match/prepare adds cents, wobble, confidence, reach)
+const sung = { ...prep, notes: [49], cents: -28.2, wobble: 36.4, confidence: 0.96 };
+ok(M.foundLine(sung) === "Note C♯3, 28 cents flat, wavering ±36 cents, held 0.8 s, from 2.0 s to 3.1 s", "a sung note: how flat, how it wavers");
+ok(M.foundLine({ ...sung, cents: 12.4, wobble: 4 }) === "Note C♯3, 12 cents sharp, held 0.8 s, from 2.0 s to 3.1 s", "sharp, and steady goes unsaid");
+ok(M.foundLine({ ...prep, cents: 0.8, wobble: 0.1, confidence: 1 }) === "Note C3, held 0.8 s, from 2.0 s to 3.1 s", "a synth note in tune: as before");
+ok(M.foundLine({ ...sung, wobble: 719 }).includes("wavering ±7.2 semitones") && M.spanWords(100) === "±1.0 semitone" && M.spanWords(99) === "±99 cents",
+  "a glide in semitones");
+ok(M.foundLine({ ...sung, confidence: 0.3 }) === "No clear pitch, maybe C♯3, held 0.8 s, from 2.0 s to 3.1 s", "a rough voice: no clear pitch");
+ok(M.foundLine({ ...prep, notes: [48, 55], cents: null, wobble: null, confidence: 0 }) === "Notes C3 + G3, held 0.8 s, from 2.0 s to 3.1 s",
+  "a chord: no cents, and never 'no clear pitch'");
+ok(M.foundLine({ ...prep, notes: [36], cents: null, confidence: 0 }) === "Note C2, held 0.8 s, from 2.0 s to 3.1 s", "one note the tracker did not follow: as before");
+eq(M.pitchWords({ cents: -4.9, wobble: 9.9 }), [], "within 5 cents and 10 cents of wobble: nothing to say");
+const longSung = `${M.foundLine({ duration: 99, crop: [12.3, 14.5], gate_s: 1.2, notes: [61], cents: -28, wobble: 99, confidence: 0.9 })}. Check the marked notes, then press Match.`;
+ok(longSung.length <= 125, `the longest sung found line fits the status row beside its word (${longSung.length}; one line at 1470 px in the browser)`);
+
+// after a match: what the S-1 could not make, and why
+const vowelReach = { resonances: [{ hz: 488.2, db: 0 }, { hz: 1219.4, db: -9 }], vowel_like: true, breath_db: -16, wobble: 64, irregular: 12, vibrato_hz: 2.9 };
+const patch = (over) => ({ 74: 64, 71: 60, 26: 0, 24: 0, 30: 25, 13: 0, 17: 15, ...over });
+const knob = (hz) => Math.round((127 * Math.log(hz / 30)) / Math.log(400));      // twin.py's cutoff curve, inverted
+eq(M.reachLines(vowelReach, { cc: patch({ 74: knob(490) }), notes: [49] }),
+  ["Out of the S-1's reach: your sound has two resonances, near 490 and 1220 Hz, like a vowel.", "The S-1's filter makes one, so the match keeps the lower one."],
+  "a vowel, the match's peak on the lower resonance");
+eq(M.reachLines(vowelReach, { cc: patch({ 74: knob(1200) }), notes: [49] })[1], "The S-1's filter makes one, so the match keeps the upper one.", "...on the upper one");
+const high = patch({ 74: knob(2600) }), highHz = Math.round(M.filterPeak(high, 49) / 10) * 10;
+ok(highHz > 2400 && highHz < 2800, `the peak lands near 2600 Hz (${highHz})`);
+eq(M.reachLines(vowelReach, { cc: high, notes: [49] })[1], `The S-1's filter makes one, and the match puts it near ${highHz} Hz, above them.`, "...above both");
+eq(M.reachLines(vowelReach, { cc: patch({ 71: 10 }), notes: [49] })[1], "The S-1's filter makes one, and the match keeps its Resonance low.", "...no peak at all");
+ok(Math.abs(M.filterPeak(patch({ 74: knob(490), 26: 127 }), 72) / 490 - 2) < 0.03, "Key follow moves the peak with the note (an octave up at C5)");
+ok(Math.abs(M.filterPeak(patch({ 74: knob(490), 24: 127, 30: 127 }), 60) / (490 * 64) - 1) < 0.03, "Env amount at full sustain: 6 octaves up");
+const three = { ...vowelReach, resonances: [{ hz: 484, db: -11 }, { hz: 2125, db: -7 }, { hz: 3340, db: 0 }] };
+ok(M.reachLines(three, { cc: patch({ 74: knob(2100) }) }).join(" ").includes("three resonances, near 480, 2130 and 3340 Hz")
+  && M.reachLines(three, { cc: patch({ 74: knob(2100) }) })[1].endsWith("keeps the one near 2130 Hz."), "three resonances");
+const wavers = { ...vowelReach, vowel_like: false, irregular: 38.2 };
+eq(M.reachLines(wavers, { cc: patch({}) }),
+  ["Out of the S-1's reach: your pitch wavers unevenly (±38 cents), and the S-1 wavers a pitch only evenly, so the match holds one pitch."],
+  "a pitch that wavers unevenly");
+ok(M.reachLines(wavers, { cc: patch({ 13: 40, 17: 60 }) })[0].endsWith("so the match follows it with an even vibrato."), "...and the match's vibrato");
+const both = M.reachLines({ ...vowelReach, irregular: 38.2, breath_db: 2 }, { cc: patch({ 74: knob(490) }), notes: [49] });
+ok(both.length === 3 && both[2].startsWith("Your pitch also wavers unevenly") && !both.join(" ").includes("breath"), "a vowel and a wobble: no room for breath");
+eq(M.reachLines({ ...vowelReach, vowel_like: false, breath_db: -1 }, { cc: patch({}) }),
+  ["Out of the S-1's reach: your sound is about as much breath as tone, and the S-1 adds noise only as a plain hiss through the same filter."], "breath");
+eq(M.reachLines({ resonances: [{ hz: 800, db: 0 }], vowel_like: false, breath_db: -30, wobble: 3, irregular: 2 }, { cc: patch({}) }), [],
+  "a synth note (one resonance, steady, no breath): nothing out of reach, nothing said");
+eq([M.reachLines(null), M.reachLines({}), M.reachLines({ ...vowelReach, resonances: [{ hz: 500, db: 0 }] })], [[], [], []], "nothing known: nothing said");
+ok(M.reachLines(vowelReach, {}).join(" ").endsWith("The S-1's filter makes one."), "no patch to compare: the plain fact");
+const longest2 = M.reachLines({ ...three, irregular: 719 }, { cc: patch({ 74: knob(9000) }) }).join(" ");
+ok(longest2.length <= 300, `the longest reach words fit two lines of the run column (${longest2.length}; checked in the browser)`);
+ok([vowelReach, wavers, three, { ...wavers, breath_db: 0 }].every((r) => M.reachLines(r, { cc: patch({}) })
+  .every((x) => /^[A-Z]/.test(x) && x.endsWith(".") && !/→|;|\bLFO\b|formant|harmonic/i.test(x))),
+  "sentence case, whole sentences, no jargon but resonance");
+const reachPy = py("../../../match/reach.py");
+ok(+/VOWEL_RATIO = ([\d.]+)/.exec(reachPy)[1] >= 1.3, "the server calls resonances half an octave apart or more a vowel; the view only names them");
+
 console.log(`match view: ${checks} checks passed`);

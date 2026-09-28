@@ -50,12 +50,22 @@ already being recorded, or the take is silent.
 ``POST /api/match/prepare`` (W-rec2) — the body is the audio file's bytes, as the WebSocket
 takes them (the same 25 MB cap; the cockpit's localhost guard, like every HTTP route). The
 answer says what the matcher will get from it: ``{duration, crop: [t0, t1], onset, gate_s,
-noise_db, peak_db, notes, warnings, peaks, sr, wav_b64}`` — the main sound's edges in the take
-(seconds), when the key went up (seconds after the onset; null when it cannot be seen), the
-floor and the peak (dBFS), the notes found in the crop, plain warnings, the whole take's
-outline for drawing (``peaks``: one 0..1 value a column), and the crop itself as a WAV (peak at
-0.9) to listen to. ``?crop=t0,t1`` uses those edges instead. ``413`` too large, ``422`` no
-clear sound (a plain ``detail``), ``503`` the matcher's extras are missing.
+noise_db, peak_db, notes, cents, wobble, confidence, reach, warnings, peaks, sr, wav_b64}`` — the
+main sound's edges in the take (seconds), when the key went up (seconds after the onset; null when
+it cannot be seen), the floor and the peak (dBFS), the notes found in the crop (the cold start's
+own, :func:`session.detect`), plain warnings, the whole take's outline for drawing (``peaks``: one
+0..1 value a column), and the crop itself as a WAV (peak at 0.9) to listen to. ``?crop=t0,t1``
+uses those edges instead. ``413`` too large, ``422`` no clear sound (a plain ``detail``), ``503``
+the matcher's extras are missing.
+
+W-voice (round 9, Tyler: "this has to work with recorded sounds like vocal sounds ... and i need
+to know why"): the pitch as the pitch tracker heard it (:mod:`synth.match.pitch`): ``cents`` how
+far the one note found sits from it (-50..50) and ``wobble`` how far it wavers (cents, a
+half-range), both null unless the notes are one note the tracker followed; ``confidence`` 0..1 how
+sure the tracker is of a single pitch (low for a rough voice, and for a chord). ``reach``
+(:mod:`synth.match.reach`) is what in the sound the S-1 cannot make: ``{resonances: [{hz, db}],
+vowel_like, breath_db, wobble, irregular, vibrato_hz}``; after a match the Match view says it in
+plain words, beside the patch the match found.
 """
 
 from __future__ import annotations
@@ -373,10 +383,14 @@ def prepare_answer(raw: bytes, crop: str | None = None) -> dict:
     decode and crop as :func:`session.plan` (both are ``target_prep.prepare_upload``), so the page
     shows exactly what the matcher gets. Raises :class:`session.UploadError`."""
     from ..match import WORKING_SR
+    from ..match.pitch import detect as detect_pitch
+    from ..match.reach import reach
     from ..match.target_prep import prepare_upload
 
     samples, prep = prepare_upload(raw, crop)
-    notes, _ranked = session.detect(prep.samples)
+    found = detect_pitch(prep.samples, WORKING_SR, max_notes=session.MAX_NOTES)   # session.detect's own
+    notes, heard = found.notes, found.pitch
+    one = len(notes) == 1 and heard.note == notes[0]     # the one note is the pitch the tracker followed
     peak = float(np.abs(prep.samples).max()) if prep.samples.size else 0.0
     preview = prep.samples * (PREVIEW_PEAK / peak) if peak > 0 else prep.samples
     return {
@@ -387,6 +401,10 @@ def prepare_answer(raw: bytes, crop: str | None = None) -> dict:
         "noise_db": round(prep.noise_db, 1),
         "peak_db": round(prep.peak_db, 1),
         "notes": [int(n) for n in notes],
+        "cents": round(float(heard.cents), 1) if one and heard.cents is not None else None,
+        "wobble": round(float(heard.wobble), 1) if one and heard.wobble is not None else None,
+        "confidence": round(float(heard.confidence), 2),
+        "reach": reach(prep.samples, WORKING_SR, heard),
         "warnings": list(prep.warnings),
         "peaks": outline(samples),
         "sr": WORKING_SR,

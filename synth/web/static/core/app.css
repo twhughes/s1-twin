@@ -227,6 +227,10 @@ body.drawer-open .keyhint { right: auto; left: 14px; }       /* never over the d
 @media (hover: none), (max-width: 640px) {
   .keyhint { display: none; }
 }
+/* Narrow windows keep the floating KeyHint bar: room at the end of the page so the last words scroll clear of it. */
+@media (max-width: 1180px) and (min-width: 641px) and (hover: hover) {
+  body { padding-bottom: 52px; }
+}
 
 /* The static page's one intro line (shown only when no cockpit server answers). */
 .intro { position: relative; z-index: 1; max-width: 1480px; margin: 10px auto 0; padding: 0 var(--gutter);

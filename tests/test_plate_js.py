@@ -13,7 +13,7 @@ import pytest
 
 STATIC = Path(__file__).resolve().parent.parent / "synth" / "web" / "static"
 CHECKS = ["core/layout.check.mjs", "core/ctx.check.mjs", "core/transport.check.mjs",
-          "core/shortcuts.check.mjs", "core/wav.check.mjs", "views/sequencer.check.mjs",
+          "core/shortcuts.check.mjs", "core/wav.check.mjs", "core/fit.check.mjs", "views/sequencer.check.mjs",
           "views/match.check.mjs", "design/kit.check.mjs"]
 
 

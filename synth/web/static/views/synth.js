@@ -16,9 +16,17 @@ import { rgbOf, rgba, noteName } from "../design/colors.js";
 import { plateLayout, linkWeights } from "../core/layout.js";
 import { buildControl, bindControls } from "../core/controls.js";
 import { readHash, isStill } from "../core/flags.js";
+import { fitView } from "../core/fit.js";
 
 export const id = "synth";
 export const title = "Synth";
+// The bottom strip's key hints on this view (app.js); the ? list has every key.
+export const hints = [
+  { key: "A – K", label: "Play" },
+  { key: "Z  X", label: "Octave" },
+  { key: "Space", label: "Play/pause" },
+  { key: "?", label: "Keys" },
+];
 
 const IDLE_NOTE = 45;                          // A2: what the wells draw while nothing is held
 const AMP_T = 1.5, FX_T = 2.8, GATE = 0.62;    // seconds in the Amplifier / Effects wells; key up
@@ -26,8 +34,6 @@ const STAGES = ["osc", "filter", "amp", "fx", "out"];
 const RAW_MS = 66;                             // the S-1's live plume: about 15 polls a second
 const RENDER_MS = 80;                          // while a knob moves, the wells re-render this often
 const LINKED = new Set([13, 15, 16, 24, 25, 28]);
-const FIT_MIN = 0.7;                           // the plate scales down to fit a small window, not below this
-const STACKED = 1180;                          // at or below this width the plate stacks and scrolls (app.css)
 const ENV_CCS = new Set([73, 75, 30, 72]);
 // The envelope drawing's time curves mirror synth/match/twin.py DEFAULT_CURVES (seconds).
 const expCurve = (lo, hi) => (v) => lo * (hi / lo) ** (v / 127);
@@ -37,7 +43,7 @@ let developed = false;                         // the page-load exposure happens
 let plate = null;
 export function mount(root, ctx) { plate = new Plate(root, ctx); }
 export function unmount() { plate?.destroy(); plate = null; }
-export default { id, title, mount, unmount };
+export default { id, title, mount, unmount, hints };
 
 const el = (tag, cls, text) => {
   const e = document.createElement(tag);
@@ -139,14 +145,12 @@ class Plate {
     this.renderSoon(IDLE_NOTE, 0);
     this.onStatus();
 
-    this.resize = new ResizeObserver(() => { this.fitSoon(); this.drawADSR(); this.dirty = true; });
+    this.resize = new ResizeObserver(() => { this.drawOverlay(); this.drawADSR(); this.dirty = true; });
     this.resize.observe(this.grid);
-    this.onWindow = () => this.fitSoon();
-    window.addEventListener("resize", this.onWindow);
     const ready = document.fonts && document.fonts.ready ? document.fonts.ready : Promise.resolve();
     ready.then(() => {
       if (!this.alive) return;
-      this.fit();
+      this.fit.refit();
       this.drawOverlay();
       this.drawADSR();
       this.develop();
@@ -168,9 +172,9 @@ class Plate {
     this.grid.setAttribute("aria-label", "The synth, in signal order");
     for (const b of this.layout.plate) this.grid.append(this.block(b));
     page.append(this.overlay, this.grid);
-    this.box = el("div", "plate-box");            // holds the plate's scaled size (see fit())
-    this.box.append(page);
-    this.root.append(this.box);
+    this.root.append(page);
+    // one screen: the plate's design size, scaled down evenly to fit a smaller window (core/fit.js)
+    this.fit = fitView(page, { onFit: () => this.drawOverlay() });
   }
 
   block(b) {
@@ -235,7 +239,7 @@ class Plate {
         const det = el("details", "more");
         det.append(el("summary", null, r.title));
         this.rows(r.rows, det);
-        det.addEventListener("toggle", () => { this.drawOverlay(); this.fitSoon(); });
+        det.addEventListener("toggle", () => { this.fit.refit(); });
         const above = into.lastElementChild;
         (above && above.classList.contains("row") ? above : into).append(det);
         continue;
@@ -288,7 +292,7 @@ class Plate {
     const touch = typeof matchMedia === "function" && matchMedia("(hover: none)").matches;
     this.hint.textContent = touch
       ? "Touch the keys to play."
-      : "Play with A to K. Z and X change the octave. Space plays the sequence, and ? shows every key.";
+      : "Play with A to K on your keyboard. Z and X change the octave.";
     if (this.ctx.keys) this.octRange.textContent = this.ctx.keys.range();
   }
 
@@ -301,7 +305,6 @@ class Plate {
 
   onStatus() {
     this.caption();
-    this.fitSoon();
     const poll = this.ctx.server && !this.ctx.status.demo && this.ctx.soundSource === "s1"
       && this.ctx.status.monitor && this.ctx.status.monitor.running;
     if (poll) this.startPolling(); else this.stopPolling();
@@ -583,36 +586,6 @@ class Plate {
     draw.keyUpMark(c, w, h, (pts[3][0] - 10) / (w - 20));
   }
 
-  // ── one screen: the whole plate in the window, at 100% zoom ─────────────────
-  /** A wide window shows every control and the keys at once (docs/design/ROUND2.md §4). Above the
-   *  stacking width the plate has one design size (app.css: 1470 px wide, laid out to fit a laptop
-   *  screen at 100%). A window narrower or shorter than that scales the whole plate down evenly, like
-   *  a plugin window, never below FIT_MIN and never up; nothing reflows. A narrow window stacks the
-   *  plate instead, and that scrolls. */
-  fit() {
-    if (!this.alive) return;
-    const page = this.el, box = this.box;
-    page.style.transform = "";
-    page.style.marginLeft = "";
-    box.style.height = "";
-    this.scale = 1;
-    if (window.innerWidth <= STACKED) return;
-    const room = box.clientWidth || document.documentElement.clientWidth;
-    const natural = page.offsetHeight, width = page.offsetWidth;
-    const top = box.getBoundingClientRect().top + window.scrollY;
-    const s = Math.max(FIT_MIN, Math.min(1, room / width, (window.innerHeight - top) / natural));
-    page.style.marginLeft = `${Math.max(0, (room - width * s) / 2).toFixed(1)}px`;
-    if (s > 0.9995) return;
-    this.scale = s;
-    page.style.transform = `scale(${s.toFixed(4)})`;
-    box.style.height = `${(natural * s).toFixed(1)}px`;   // the page flows (and scrolls) by the scaled size
-  }
-
-  fitSoon() {
-    if (this.fitRaf) return;
-    this.fitRaf = requestAnimationFrame(() => { this.fitRaf = 0; this.fit(); this.drawOverlay(); });
-  }
-
   // ── the signal line and the leaders ───────────────────────────────────────
   drawOverlay() {
     if (!this.alive || getComputedStyle(this.overlay).display === "none") return;
@@ -699,8 +672,7 @@ class Plate {
   destroy() {
     this.alive = false;
     cancelAnimationFrame(this.raf);
-    cancelAnimationFrame(this.fitRaf);
-    window.removeEventListener("resize", this.onWindow);
+
     clearTimeout(this.renderTimer);
     clearInterval(this.demoTimer);
     this.stopPolling();
@@ -708,6 +680,6 @@ class Plate {
     this.offs.forEach((off) => off());
     this.ctx.keys?.qwerty(false);
     this.board?.destroy();
-    this.box.remove();
+    this.fit.destroy();
   }
 }

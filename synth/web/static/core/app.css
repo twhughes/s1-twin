@@ -37,12 +37,13 @@
 
 /* ---------- the plate ---------- */
 /* One screen (docs/design/ROUND2.md §4): at 1470 × 760, every control and the keys show at 100% zoom.
-   Above the stacking width the plate has one design size, 1470 px wide; views/synth.js scales it down
+   Above the stacking width every view has one design size, 1470 px wide; core/fit.js scales it down
    evenly to fit a smaller window (from its top left corner, then centers it). */
-.plate { position: relative; max-width: 1480px; margin: 0 auto; padding: 16px var(--gutter) 14px; transform-origin: 0 0; }
+.plate { position: relative; max-width: 1480px; margin: 0 auto; padding: 12px var(--gutter) 8px; }
+.fit-page { transform-origin: 0 0; }
 @media (min-width: 1181px) {
-  .plate { width: 1470px; max-width: none; margin: 0; }
-  .plate-box { overflow: clip; }          /* the plate's unscaled layout box never makes the page scroll */
+  .fit-box > .fit-page { width: 1470px; max-width: none; margin: 0; }
+  .fit-box { overflow: clip; }            /* the unscaled layout box never makes the page scroll */
 }
 .overlay { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; overflow: visible; }
 .overlay .sig, .overlay .heads {
@@ -164,6 +165,27 @@ details.more.prm { margin-top: 30px; }
   position: relative; z-index: 1;
   max-width: 1480px; margin: 0 auto; padding: 0 var(--gutter) 40px;
   color: var(--ink-2); font-size: 12.5px; max-inline-size: 1480px;
+}
+
+/* ---------- the bottom strip (wide windows): the legal line on the left, the key hints on the right ----------
+   Like a desktop app's status bar: every view fits above it (core/fit.js reads --strip-h), so nothing
+   floats over a control. Narrow windows keep the footer at the end of the page. */
+:root { --strip-h: 0px; --strip-x: max(var(--gutter), calc((100vw - 1480px) / 2 + var(--gutter))); }
+@media (min-width: 1181px) {
+  :root { --strip-h: 34px; }
+  body { padding-bottom: var(--strip-h); }
+  .foot {
+    position: fixed; left: 0; right: 0; bottom: 0; z-index: 7; height: var(--strip-h);
+    max-width: none; margin: 0; padding: 0 45% 0 var(--strip-x);
+    display: block; line-height: var(--strip-h); background: var(--field); border-top: 1px solid var(--ink-4);
+    font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .keyhint {                                /* its own z-index stays: "Esc Close" shows above a drawer's scrim */
+    right: var(--strip-x); bottom: 0; height: var(--strip-h); max-width: 44%;
+    padding: 0; background: none; border: 0; border-radius: 0; align-items: center; flex-wrap: nowrap;
+  }
+  body.drawer-open .keyhint { left: var(--strip-x); right: auto; }
+  .toast { bottom: calc(var(--strip-h) + 16px); }
 }
 
 /* ---------- the page-load exposure: a paler print that darkens (views/synth.js) ---------- */

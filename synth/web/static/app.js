@@ -269,14 +269,12 @@ async function boot() {
     $("send").disabled = false;
   });
 
-  // The KeyHint bar: Esc while a drawer or the list of keys is open; else the view's own `hints`
-  // export, or the one key every view has. The Synth view shows no bar: on the one-screen plate its
-  // corner is the keyboard, so the plate carries its hints inline (ROUND2.md §2).
+  // The KeyHint bar (in the bottom strip on wide windows, core/app.css): Esc while a drawer or the list
+  // of keys is open; else the view's own `hints` export, or the one key every view has.
   const overlayOpen = () => document.body.classList.contains("drawer-open") || Boolean(ctx.shortcuts?.sheet.open);
   const hints = (overlay = overlayOpen()) => {
     if (!window.KeyHint) return;
     if (overlay) window.KeyHint.set([{ key: "Esc", label: "Close" }]);
-    else if (hints.view === "synth") window.KeyHint.hide();
     else window.KeyHint.set(hints.items && hints.items.length ? hints.items : [{ key: "?", label: "Keys" }]);
   };
   const drawer = drawers(ctx, hints);

@@ -124,6 +124,11 @@ W-rec (round 2) adds `POST /api/match/record-note` in `match_ws.router`: `{note,
 `audio/wav`, one note of the S-1's current sound from the running monitor (`SynthDriver.probe(None)`); 409 and
 a plain `detail` when the S-1 cannot play it now.
 
+W-sys (round 13) adds this Mac's own sound as a target in `match_ws.router`: `GET /api/match/system/sources`
+(every app; Logic Pro while it runs), `POST /api/match/system/start` `{app: null | "com.apple.logic10"}` and
+`POST /api/match/system/stop` → `audio/wav`. The recording is a Core Audio process tap in a small Swift helper
+(`synth/native/systap.swift`, built on first use into `~/.synth/bin/`); 409, 422 and 503 carry a plain `detail`.
+
 ## 3. Design rules (from DIRECTION.md, restated as checks)
 
 1. Colors come only from `tokens.css`. Hues appear only for pitch (`colors.js`) and the hardware (`--bronze`).

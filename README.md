@@ -58,7 +58,8 @@ minutes on a laptop:
 
 ![How close it came back: 15 of 17 settings within 10, each with its true value and the value the matcher found; Volume shape Gate found](docs/images/recovery.png)
 
-**Record anything.** Record from a microphone or the S-1, or drop in a file. The matcher finds the
+**Record anything.** Record from a microphone, the S-1 or this Mac's own sound (a Logic Pro
+instrument, say; macOS 14.2 or later), or drop in a file. The matcher finds the
 sound in the take, whatever silence, noise or clicks surround it, marks the note it hears (one sung
 note is one note, with its cents), and works out how long the key was held. **Play target** plays
 exactly what the matcher gets; **Play my patch** plays the synth's current sound beside it. When a

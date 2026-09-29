@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- Linked into the systap helper (synth/native/systap.py builds it): macOS reads why the helper
+     records system audio from here, and asks about the helper itself (see becomeResponsible in
+     systap.swift). -->
+<plist version="1.0">
+<dict>
+	<key>CFBundleIdentifier</key>
+	<string>io.github.twhughes.synth.systap</string>
+	<key>CFBundleName</key>
+	<string>systap</string>
+	<key>CFBundleInfoDictionaryVersion</key>
+	<string>6.0</string>
+	<key>CFBundleVersion</key>
+	<string>1</string>
+	<key>NSAudioCaptureUsageDescription</key>
+	<string>The synth app records this Mac's sound (Logic Pro, or every app) so its Match view can match it.</string>
+</dict>
+</plist>

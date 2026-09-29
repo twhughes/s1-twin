@@ -379,4 +379,34 @@ ok([vowelReach, wavers, three, { ...wavers, breath_db: 0 }].every((r) => M.reach
 const reachPy = py("../../../match/reach.py");
 ok(+/VOWEL_RATIO = ([\d.]+)/.exec(reachPy)[1] >= 1.3, "the server calls resonances half an octave apart or more a vowel; the view only names them");
 
+// ── round 13 (W-sys): this Mac's own sound as a source, and a word about Bluetooth mics ────────────────
+// (synth/native/systap.py; GET /api/match/system/sources, POST /api/match/system/start and /stop)
+const macSources = [{ app: null, label: "This Mac's sound (all apps)" }, { app: "com.apple.logic10", label: "Logic Pro" }];
+eq(M.systemOptions(macSources), [{ value: "system:", label: "This Mac's sound (all apps)" },
+  { value: "system:com.apple.logic10", label: "Logic Pro" }], "the picker's options for this Mac's sound");
+eq([M.systemOptions(null), M.systemOptions([{ app: "x" }, null, { label: "" }])], [[], []],
+  "no server (the static page) or no label: no option");
+ok(M.systemApp("system:") === null && M.systemApp("system:com.apple.logic10") === "com.apple.logic10", "every app, or one app");
+ok([M.systemApp("default"), M.systemApp(""), M.systemApp(undefined)].every((v) => v === undefined), "a browser input is not this Mac's sound");
+ok(M.systemWhere("com.apple.logic10", "Logic Pro") === "in Logic Pro" && M.systemWhere(null, "x") === "on this Mac", "where to play");
+const sysOpening = M.phaseText(M.initialRun(), { recording: "opening", where: "in Logic Pro" });
+ok(sysOpening.word === "Opening the input" && sysOpening.detail === "If macOS asks about system audio, allow it.", "while the tap starts");
+ok(M.phaseText(M.initialRun(), { recording: true, where: "in Logic Pro" }).detail
+  === `Play the sound in Logic Pro, then press Stop. It stops by itself at ${M.RECORD_MAX_S} s.`, "while it records Logic Pro");
+ok(M.phaseText(M.initialRun(), { recording: true }).detail === `Play the sound, then press Stop. It stops by itself at ${M.RECORD_MAX_S} s.`
+  && M.phaseText(M.initialRun(), { recording: "opening" }).detail === "If the browser asks, allow the microphone.", "a microphone take: as before");
+ok(M.systemError({ status: 503, message: "macOS blocked system audio." }) === "macOS blocked system audio."
+  && M.systemError(new TypeError("Failed to fetch")) === "Could not reach the app. Check that it is still running, then press Record again.",
+  "the server's words, else what to do");
+ok(["Tyler's New Airpods", "Default - AirPods Pro (Bluetooth)", "Powerbeats Pro", "Galaxy Buds2 Pro", "Jabra Hands-Free", "Pixel Earbuds"]
+  .every(M.isBluetoothLabel),
+  "Bluetooth headset mics, by name");
+ok(!["MacBook Air Microphone", "S-1", "Scarlett 2i2 USB", "BeatStep", ""].some(M.isBluetoothLabel), "not the Mac's own mic, the S-1 or a USB interface");
+ok(M.BLUETOOTH_WORDS === "AirPods and other Bluetooth mics lose the top of the sound; the Mac's own mic or a USB mic matches better.",
+  "the Bluetooth word");
+const systapPy = py("../../../native/systap.py");
+ok(systapPy.includes(`ALL_APPS = "This Mac's sound (all apps)"`) && systapPy.includes(`"com.apple.logic10": "Logic Pro"`),
+  "the server's labels are the ones checked here");
+ok(["sources", "start", "stop"].every((r) => matchJs.includes(`"/api/match/system/${r}"`)), "the routes the view calls");
+
 console.log(`match view: ${checks} checks passed`);

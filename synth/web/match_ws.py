@@ -66,6 +66,22 @@ sure the tracker is of a single pitch (low for a rough voice, and for a chord). 
 (:mod:`synth.match.reach`) is what in the sound the S-1 cannot make: ``{resonances: [{hz, db}],
 vowel_like, breath_db, wobble, irregular, vibrato_hz}``; after a match the Match view says it in
 plain words, beside the patch the match found.
+
+W-sys (round 13, Tyler: "also can we record from system audio perhaps? like me playing a logic pro
+instrument"): Record can take this Mac's own sound, every app or just Logic Pro, through a Core Audio
+process tap (:mod:`synth.native.systap`; a Swift helper built on first use). The take then goes the
+same way as a microphone take (``/api/match/prepare``, the crop, the notes, the match).
+
+* ``GET /api/match/system/sources`` — ``{available, detail, permission, sources: [{app, label}]}``:
+  every app's sound whenever the cockpit runs on a Mac, plus Logic Pro while it runs.
+* ``POST /api/match/system/start`` ``{"app": null | "com.apple.logic10"}`` (no body: every app) —
+  ``{recording, app, label, rate}`` once the tap runs; one take at a time.
+* ``POST /api/match/system/stop`` — the take as ``audio/wav`` (mono, 16-bit, the device's rate); its
+  temporary file is deleted before the answer.
+
+Plain ``detail`` on ``409`` (already recording, nothing recording, the app is not running), ``422``
+(not an app id; the take is empty or silent) and ``503`` (not a Mac, macOS older than 14.2, no Swift
+compiler, macOS blocked system audio, the helper failed).
 """
 
 from __future__ import annotations
@@ -87,6 +103,7 @@ from pydantic import BaseModel, Field
 import synth.engine as engine_module
 
 from ..match import twin_session as session
+from ..native import systap
 from ..paths import data_dir
 
 router = APIRouter()
@@ -425,3 +442,38 @@ async def prepare(request: Request) -> dict:
         return await asyncio.to_thread(prepare_answer, raw, request.query_params.get("crop"))
     except session.UploadError as exc:
         raise HTTPException(422, str(exc)) from exc
+
+
+# ── this Mac's own sound: every app, or Logic Pro (W-sys, round 13) ──────────────────────────────────
+class SystemStartReq(BaseModel):
+    app: str | None = Field(None, description="one app's bundle id (Logic Pro: com.apple.logic10); "
+                                              "null: every app's sound")
+
+
+@router.get("/api/match/system/sources", tags=["match"],
+            summary="What this Mac's own sound can be recorded from: every app, and Logic Pro while it runs")
+def system_sources() -> dict:
+    """See the module docstring; never fails (``available`` false and a plain ``detail`` instead)."""
+    return systap.sources()
+
+
+@router.post("/api/match/system/start", tags=["match"], summary="Start recording this Mac's own sound")
+def system_start(req: SystemStartReq | None = None) -> dict:
+    """Start the tap (every app when ``app`` is null or there is no body). ``409``, ``422`` and ``503``
+    carry a plain ``detail`` (see the module docstring)."""
+    try:
+        return systap.start(req.app if req else None)
+    except systap.TapError as exc:
+        raise HTTPException(exc.status, exc.detail) from exc
+
+
+@router.post("/api/match/system/stop", tags=["match"], response_class=Response,
+             summary="Stop recording this Mac's own sound; the take as audio/wav")
+def system_stop() -> Response:
+    """The take as a mono 16-bit WAV at the device's rate. ``409``, ``422`` and ``503`` carry a plain
+    ``detail`` (see the module docstring)."""
+    try:
+        raw = systap.stop()
+    except systap.TapError as exc:
+        raise HTTPException(exc.status, exc.detail) from exc
+    return Response(content=raw, media_type="audio/wav", headers={"Cache-Control": "no-store"})

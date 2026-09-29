@@ -14,6 +14,9 @@
 // server's pitch tracker, synth/match/pitch.py), and after a match one or two plain lines say what
 // in the sound the S-1 could not make, and why (synth/match/reach.py: a vowel's two resonances
 // against the S-1's one filter, a pitch that wavers unevenly against its even LFO, breath).
+// Round 13 (W-sys): "From" also offers this Mac's own sound, every app or Logic Pro while it runs. The cockpit
+// records it through a Core Audio tap (synth/native/systap.py), and the take goes the way of a microphone take.
+// A Bluetooth mic (AirPods) gets one plain line under Record: it loses the top of the sound.
 
 import { knob } from "../design/knob.js";
 import { seg, GLYPHS } from "../design/seg.js";
@@ -113,13 +116,16 @@ export function reduceFrame(s, f) {
 }
 
 /** The phase in plain words, plus a detail line. `target` (idle, a sound loaded): what the server
- *  found in it, {state: "pending" | "ok" | "failed" | "unavailable", prep, error} (POST /api/match/prepare). */
-export function phaseText(s, { staticMode = false, loaded = false, recording = false, target = null } = {}) {
+ *  found in it, {state: "pending" | "ok" | "failed" | "unavailable", prep, error} (POST /api/match/prepare).
+ *  `where`, while recording this Mac's own sound: where to play ("in Logic Pro", "on this Mac"). */
+export function phaseText(s, { staticMode = false, loaded = false, recording = false, where = "", target = null } = {}) {
   switch (s.phase) {
     case "idle":
       if (staticMode) return { word: "Choose a recorded run", detail: "" };
-      if (recording === "opening") return { word: "Opening the input", detail: "If the browser asks, allow the microphone." };
-      if (recording) return { word: "Recording", detail: `Play the sound, then press Stop. It stops by itself at ${RECORD_MAX_S} s.` };
+      if (recording === "opening") {
+        return { word: "Opening the input", detail: where ? "If macOS asks about system audio, allow it." : "If the browser asks, allow the microphone." };
+      }
+      if (recording) return { word: "Recording", detail: `Play the sound${where ? ` ${where}` : ""}, then press Stop. It stops by itself at ${RECORD_MAX_S} s.` };
       if (!loaded) return { word: "Waiting for a sound", detail: "" };
       if (target?.state === "failed") return { word: "No clear sound", detail: target.error || "" };
       if (target?.state === "pending") return { word: "Ready to match", detail: "Finding the sound in the take." };
@@ -498,6 +504,30 @@ export function recordError(e) {
 }
 /** A peak level as 0..1 on a −60..0 dBFS scale: the live recording well. */
 export const meterLevel = (peak) => Math.max(0, Math.min(1, (20 * Math.log10(Math.max(peak, 1e-9)) + 60) / 60));
+/** True for a Bluetooth headset's microphone (AirPods and the like): 16 to 24 kHz, and heavily processed. */
+export const isBluetoothLabel = (label) => /airpods|bluetooth|\bbeats\b|powerbeats|buds|hands-?free/i.test(String(label || ""));
+export const BLUETOOTH_WORDS = "AirPods and other Bluetooth mics lose the top of the sound; the Mac's own mic or a USB mic matches better.";
+
+// ── pure: this Mac's own sound (round 13, W-sys; synth/native/systap.py, /api/match/system/...) ──────
+// The "From" picker offers it beside the browser inputs: every app's sound, and Logic Pro while it runs.
+// Record starts the cockpit's tap, Stop (or RECORD_MAX_S) ends it, and the take then goes the way of a
+// microphone take. The static page has no server, so no system sound.
+export const SYSTEM = "system:";                  // a "From" value: "system:" (every app) or "system:<bundle id>"
+/** The picker's options for this Mac's sound, from the server's sources ({app, label}). */
+export function systemOptions(sources) {
+  return (Array.isArray(sources) ? sources : []).filter((s) => s && typeof s.label === "string" && s.label)
+    .map((s) => ({ value: SYSTEM + (typeof s.app === "string" ? s.app : ""), label: s.label }));
+}
+/** The app a "From" value records: null for every app, a bundle id, or undefined for a browser input. */
+export function systemApp(value) {
+  if (typeof value !== "string" || !value.startsWith(SYSTEM)) return undefined;
+  return value.slice(SYSTEM.length) || null;
+}
+/** Where to play, in the status line: "in Logic Pro", or "on this Mac" for every app. */
+export const systemWhere = (app, label) => (app ? `in ${label || "that app"}` : "on this Mac");
+/** A failed start or stop, in plain words: the server's own, else that the app could not be reached. */
+export const systemError = (e) => (e && e.status && e.message ? e.message
+  : "Could not reach the app. Check that it is still running, then press Record again.");
 
 // ── pure: the target the matcher gets (round 7; the server decides, POST /api/match/prepare) ────
 /** Seconds as the found line says them: "2.1 s" (to the hundredth when `fine`: a short sound). */
@@ -682,9 +712,12 @@ const CSS = `
 .v-match .mx-rec .pill.on { border-color: var(--ink); }
 .v-match .mx-from { display: flex; align-items: center; gap: 8px; flex: 1 1 150px; min-width: 0; font-size: 13px; color: var(--ink-2); }
 .v-match .mx-from select { flex: 1; min-width: 0; background: var(--deep); color: var(--ink); border: 1px solid var(--ink-3); border-radius: 3px;
-  padding: 7px 8px; font: 400 13.5px var(--sans); }
+  padding: 7px 5px 7px 7px; font: 400 13px var(--sans); }   /* room for "This Mac's sound (all apps)" beside the arrow */
 .v-match .mx-from select:disabled { opacity: .45; }
 .v-match .mx-recmsg:empty { display: none; }
+/* up to three lines under Record (macOS's permission words are that long): the test's own note steps aside meanwhile, so
+   the column keeps its height in every state */
+.v-match .mx-input > .mx-recmsg:not(:empty) ~ .mx-testbox .note { display: none; }
 .v-match .mx-test { text-align: left; padding: 1px 0; }
 .v-match .mx-test:disabled { opacity: .45; cursor: default; color: var(--ink-2); }
 .v-match .mx-sub { font: italic 400 19px/1.1 var(--serif); margin: 0; }
@@ -826,8 +859,10 @@ function createView(root, ctx) {
   let destroyed = false;
   let test = null;              // the loaded target is a test of the current sound: {truth, notes, note, source, synced, unison}
   let making = false;           // the test note is being made (rendered by the twin, or played by the S-1)
-  let rec = null;               // a recording in progress (see startRecording)
+  let rec = null;               // a recording in progress (see startRecording; startSystem for this Mac's sound)
   let inputs = [], chosenInput = "";
+  let systemSources = [];       // this Mac's own sound, as the server offers it: [{app, label}]
+  let recError = "";            // under Record: what went wrong with the last take (else a Bluetooth word)
   // What the server found in the loaded target (POST /api/match/prepare): the crop the matcher gets,
   // the key-up, the notes, warnings. state: "none" | "pending" | "ok" | "failed" (no clear sound) |
   // "unavailable" (the server could not say; the match still crops on its own).
@@ -876,7 +911,7 @@ function createView(root, ctx) {
   const listenRow = h("div", { class: "mx-listen mx-hidden", "data-role": "listen" }, playCrop, playPatchBtn, resetCrop);
   const recBtn = h("button", { type: "button", class: "pill", "data-action": "record",
     onclick: () => (rec ? stopRecording() : startRecording()) }, "Record");
-  const inputSel = h("select", { "data-role": "input", onchange: () => { chosenInput = inputSel.value; } },
+  const inputSel = h("select", { "data-role": "input", onchange: () => { chosenInput = inputSel.value; recError = ""; paintRecMsg(); } },
     h("option", { value: "" }, "The default input"));
   const recRow = h("div", { class: "mx-rec" }, recBtn, h("label", { class: "mx-from" }, h("span", { text: "From" }), inputSel));
   const recMsg = h("p", { class: "note mx-recmsg", role: "status", "data-role": "record-message" });
@@ -1166,6 +1201,10 @@ function createView(root, ctx) {
     if (!dropCanvas.isConnected) return;
     const [c, w, hh] = draw.fit(dropCanvas);
     const above = Math.max(20, hh - 22);  // the sound draws above the well's name line
+    if (rec && rec.system) {             // this Mac's sound: the record head only (the level stays in the cockpit)
+      if (rec.t0) draw.playhead(c, w, above, Math.min(1, systemSeconds(rec) / RECORD_MAX_S));
+      return;
+    }
     if (rec && rec.sr) {                 // recording: each 20 ms's peak on a dB scale, drawn up to the record head
       const frac = Math.min(1, rec.total / (RECORD_MAX_S * rec.sr));
       draw.hatchShape(c, w, above, Array.from(rec.bins, meterLevel), { step: 2, reveal: frac });
@@ -1276,14 +1315,39 @@ function createView(root, ctx) {
     echoCancellation: false, noiseSuppression: false, autoGainControl: false } });
   const stopTracks = (stream) => stream?.getTracks().forEach((t) => { try { t.stop(); } catch (_) { /* gone */ } });
 
+  let inputsAsked = 0;          // the newest refreshInputs wins: an older, slower answer is dropped
   async function refreshInputs() {
-    try { inputs = ((await media()?.enumerateDevices?.()) || []).filter((d) => d.kind === "audioinput"); } catch (_) { inputs = []; }
-    if (destroyed) return;
-    const want = pickInput(inputs, chosenInput);
-    inputSel.replaceChildren(...inputOptions(inputs).map((o) => h("option", { value: o.value }, o.label)));
-    inputSel.value = inputs.some((d) => d.deviceId === want) ? want : inputSel.options[0]?.value ?? "";
+    const mine = ++inputsAsked;
+    let got = [];
+    try { got = ((await media()?.enumerateDevices?.()) || []).filter((d) => d.kind === "audioinput"); } catch (_) { got = []; }
+    if (destroyed || mine !== inputsAsked) return;
+    inputs = got;
+    paintInputs();
   }
   const onDeviceChange = () => { refreshInputs(); };
+  /** This Mac's own sound, as the cockpit can record it: every app, and Logic Pro while it runs. */
+  async function refreshSources() {
+    let got = [];
+    try { got = (await ctx.server.api("GET", "/api/match/system/sources"))?.sources || []; } catch (_) { got = []; }
+    if (destroyed) return;
+    systemSources = got;
+    if (!rec) paintInputs();
+  }
+  const onFocus = () => { if (!rec) refreshSources(); };   // back from Logic Pro: is it running now?
+  /** The "From" picker: the browser's inputs, then this Mac's own sound. The user's choice holds while it
+   *  is offered (Logic Pro comes back to it); else the S-1, else the default input. */
+  function paintInputs() {
+    const options = [...inputOptions(inputs), ...systemOptions(systemSources)], values = options.map((o) => o.value);
+    inputSel.replaceChildren(...options.map((o) => h("option", { value: o.value }, o.label)));
+    const want = values.includes(chosenInput) ? chosenInput : pickInput(inputs, chosenInput);
+    inputSel.value = values.includes(want) ? want : values[0] ?? "";
+    paintRecMsg();
+  }
+  /** Under Record: what went wrong with the last take, else a word about a Bluetooth mic when one is chosen. */
+  function paintRecMsg() {
+    const device = systemApp(inputSel.value) === undefined ? inputs.find((d) => d.deviceId === inputSel.value) : null;
+    recMsg.textContent = recError || (device && isBluetoothLabel(device.label) ? BLUETOOTH_WORDS : "");
+  }
 
   async function recorderNode(A, token) {
     if (A.audioWorklet && typeof AudioWorkletNode === "function") {
@@ -1308,9 +1372,12 @@ function createView(root, ctx) {
 
   async function startRecording() {
     if (busy() || staticMode) return;
-    recMsg.textContent = "";
+    recError = ""; paintRecMsg();
+    const app = systemApp(inputSel.value);
+    if (app !== undefined) { startSystem(app); return; }
     if (!media()?.getUserMedia) {
-      recMsg.textContent = "This browser cannot record here. Open the app in Chrome, Safari or Firefox on this computer.";
+      recError = "This browser cannot record here. Open the app in Chrome, Safari or Firefox on this computer.";
+      paintRecMsg();
       return;
     }
     const token = rec = { chunks: [], total: 0, bins: new Float32Array(REC_BINS), sr: 0, stream: null, source: null, node: null, sink: null };
@@ -1344,7 +1411,7 @@ function createView(root, ctx) {
     } catch (e) {
       teardownRecording(token);
       if (rec === token) rec = null;
-      recMsg.textContent = recordError(e);
+      recError = recordError(e); paintRecMsg();
       syncControls(); renderAll();
     }
   }
@@ -1377,6 +1444,7 @@ function createView(root, ctx) {
   async function stopRecording() {
     const token = rec;
     if (!token || token.stopping) return;
+    if (token.system) { stopSystem(token); return; }
     token.stopping = true;
     if (token.worklet && token.node) {   // the worklet sends what it still holds, then "done"
       await new Promise((resolve) => {
@@ -1397,7 +1465,8 @@ function createView(root, ctx) {
     const samples = joinChunks(token.chunks, RECORD_MAX_S * token.sr);
     const peak = peakOf(samples);
     if (peak < 1e-4) {
-      recMsg.textContent = "The recording is silent. Check that the input is plugged in and turned up, then press Record again.";
+      recError = "The recording is silent. Check that the input is plugged in and turned up, then press Record again.";
+      paintRecMsg();
       dropFile.textContent = targetLabel;
       syncControls(); renderAll(); drawDrop();
       return;
@@ -1406,13 +1475,76 @@ function createView(root, ctx) {
     await loadTarget(encodeWav(samples, token.sr), "Recording");
   }
 
+  // ── recording this Mac's own sound (round 13): the cockpit's tap, not a browser input ──────────────
+  // POST /api/match/system/start starts it; Stop, or RECORD_MAX_S, collects the take (/stop, a WAV),
+  // and the take is loaded like a microphone take. The well shows the record head only: the level
+  // stays in the cockpit.
+  const systemSeconds = (token) => (token.t0 ? (performance.now() - token.t0) / 1000 : 0);
+  async function startSystem(app) {
+    const label = systemSources.find((s) => (s.app ?? null) === app)?.label || "";
+    const token = rec = { system: true, app, where: systemWhere(app, label),
+      name: app ? `Recording from ${label || "that app"}` : "Recording from this Mac", t0: 0, ticker: 0 };
+    stopSound();
+    syncControls(); renderAll();
+    try {
+      await ctx.server.api("POST", "/api/match/system/start", { app });
+    } catch (e) {
+      if (rec !== token) return;           // stopped meanwhile: nothing to say
+      rec = null;
+      recError = systemError(e); paintRecMsg();
+      syncControls(); renderAll();
+      if (e?.status === 409 && app) refreshSources();      // e.g. Logic Pro was closed
+      return;
+    }
+    if (rec !== token) {                   // Stop was pressed (or the view closed) while it started
+      ctx.server.api("POST", "/api/match/system/stop").catch(() => {});
+      return;
+    }
+    token.t0 = performance.now();
+    token.ticker = setInterval(() => {
+      if (rec !== token || token.stopping) return;
+      const t = systemSeconds(token);
+      dropFile.textContent = `Recording, ${fmtSeconds(Math.min(t, RECORD_MAX_S))}`;
+      scheduleDrop();
+      if (t >= RECORD_MAX_S) stopRecording();
+    }, 100);
+    drop.classList.add("recording");
+    dropFile.textContent = `Recording, ${fmtSeconds(0)}`;
+    syncControls(); renderAll(); drawDrop();
+  }
+  async function stopSystem(token) {
+    token.stopping = true;
+    clearInterval(token.ticker);
+    if (!token.t0) {                       // still starting: its answer stops it (startSystem)
+      rec = null;
+      dropFile.textContent = targetLabel;
+      syncControls(); renderAll(); drawDrop();
+      return;
+    }
+    syncControls();
+    let bytes = null, failed = null;
+    try {
+      bytes = await (await ctx.server.api("POST", "/api/match/system/stop")).arrayBuffer();
+    } catch (e) { failed = e; }
+    if (rec !== token) return;             // the view closed meanwhile
+    rec = null;
+    drop.classList.remove("recording");
+    if (!bytes) {
+      recError = systemError(failed); paintRecMsg();
+      dropFile.textContent = targetLabel;
+      syncControls(); renderAll(); drawDrop();
+      return;
+    }
+    await loadTarget(bytes, token.name);
+  }
+
   // ── a test: match the synth's current sound ────────────────────────────────────────
   // Snapshot the 21 twin settings, make one note with them (the twin renders it, before its
   // browser-only effects; or the S-1 plays it and the cockpit records it), and match it from
   // scratch with the note given: never from the knobs, which would start at the answer.
   async function matchCurrentSound() {
     if (busy() || staticMode) return;
-    recMsg.textContent = "";
+    recError = ""; paintRecMsg();
     const note = testNote(seeds);
     const { notes, unison } = soundingNotes(note, ctx.params);
     const from = ctx.soundSource === "s1" ? "s1" : "twin";
@@ -1777,7 +1909,8 @@ function createView(root, ctx) {
   function renderAll() {
     // While recording, the status line speaks for the take (the last run stays until it replaces the target).
     const target = { state: prepState, prep, error: prepError };
-    const t = rec ? phaseText(initialRun(), { recording: rec.sr ? true : "opening" })
+    const live = rec && (rec.system ? rec.t0 : rec.sr);
+    const t = rec ? phaseText(initialRun(), { recording: live ? true : "opening", where: rec.system ? rec.where : "" })
       : phaseText(run, { staticMode, loaded: !!fileBytes, target });
     word.textContent = t.word;
     detail.textContent = t.detail;
@@ -1827,7 +1960,10 @@ function createView(root, ctx) {
   if (staticMode) loadIndex();
   else {
     refreshInputs();
+    refreshSources();
     media()?.addEventListener?.("devicechange", onDeviceChange);
+    window.addEventListener("focus", onFocus);
+    disposers.push(() => window.removeEventListener("focus", onFocus));
     disposers.push(() => media()?.removeEventListener?.("devicechange", onDeviceChange));
   }
 
@@ -1838,7 +1974,15 @@ function createView(root, ctx) {
       replayTimers.forEach(clearTimeout); replayTimers = [];
       if (raf) cancelAnimationFrame(raf);
       if (dropRaf) cancelAnimationFrame(dropRaf);
-      if (rec) { const token = rec; rec = null; teardownRecording(token); }   // the input's light goes off
+      if (rec) {
+        const token = rec;
+        rec = null;
+        if (!token.system) teardownRecording(token);                          // the input's light goes off
+        else if (token.t0 && !token.stopping) {                               // the cockpit's tap stops too
+          clearInterval(token.ticker);
+          ctx.server.api("POST", "/api/match/system/stop").catch(() => {});
+        }
+      }
       if (recorderURL) URL.revokeObjectURL(recorderURL);
       for (const [n, t] of auditions) { clearTimeout(t); noteOff(n); }
       prepToken++;                      // a late answer from the server finds nothing to fill

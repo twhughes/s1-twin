@@ -620,6 +620,13 @@ def _to_value(x: Any) -> Any:
 # perceptually MOTIVATED, not perceptually VALIDATED (FABLE).
 # ─────────────────────────────────────────────────────────────────────────────
 _EPS = 1e-7
+# The loss's dynamic range (round 14). A spectrogram cell more than LOSS_FLOOR_DB below its own
+# spectrogram's peak is clamped there, in the log-mel and the log-STFT terms alike. Before, the loss
+# looked about 100 dB down, so resampling residue, room noise and echo tails counted as much as the note
+# itself: on a recording the matcher then preferred a wrong patch that imitated the room, and on clean
+# notes those cells hid real differences. 50 dB: the suite's Thorough closeness 68 -> 75% on the clean
+# notes, settings back 52 -> 68% on the recorded ones (docs/match-benchmarks.md). None: the old loss.
+LOSS_FLOOR_DB: float | None = 50.0
 
 
 def _stft_mag(x: Any, n_fft: int, hop: int) -> Any:
@@ -684,6 +691,9 @@ def logmel_loss(a: Any, b: Any, sr: float = WORKING_SR, n_fft: int = 1024,
     lb = anp.log(anp.dot(fb, mb * mb) + 1e-8)
     la = la - anp.max(la)
     lb = lb - anp.max(lb)
+    if LOSS_FLOOR_DB is not None:          # power: 10 dB per ln(10)
+        floor = -LOSS_FLOOR_DB * math.log(10.0) / 10.0
+        la, lb = anp.maximum(la, floor), anp.maximum(lb, floor)
     return anp.mean(anp.abs(la - lb))
 
 
@@ -699,6 +709,9 @@ def multiscale_stft_loss(a: Any, b: Any, sr: float = WORKING_SR,
         hop = max(1, n_fft // 4)
         la = anp.log(_stft_mag(a, n_fft, hop) + _EPS)
         lb = anp.log(_stft_mag(b, n_fft, hop) + _EPS)
+        if LOSS_FLOOR_DB is not None:      # magnitude: 20 dB per ln(10), below each one's own peak
+            span = LOSS_FLOOR_DB * math.log(10.0) / 20.0
+            la, lb = anp.maximum(la, anp.max(la) - span), anp.maximum(lb, anp.max(lb) - span)
         total = total + anp.mean(anp.abs(la - lb))
         used += 1
     if used == 0:  # pragma: no cover - signal shorter than every scale

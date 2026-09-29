@@ -1,5 +1,5 @@
 # STATUS — synth
-*updated 2026-09-28 night (**Record takes this Mac's own sound (Logic Pro); not yet pushed**); 2026-09-28 evening (**recordings, voices and a reproduction suite; not yet pushed**); 2026-09-27 late night (**published: github.com/twhughes/s1-twin, tylerwhughes.com/s1-twin/, CI green**); 2026-09-27 night (**Tyler's first-use fixes are in (round 2): one-screen plate, global transport + shortcuts, record + self-test in Match; 840 tests; README rebuilt** — see the round-2 bullet); earlier 2026-09-27 (the cyanotype build integrated); 2026-09-07 (venv rebuilt, merge prep); 2026-08-08 (soft synth + twin); 2026-08-07 (chassis build); 2026-08-01 (canonical s1.json)*
+*updated 2026-09-29 (**the loss ignores what lies 50 dB under the note; the optimizer race; not yet pushed**); 2026-09-28 night (**Record takes this Mac's own sound (Logic Pro); not yet pushed**); 2026-09-28 evening (**recordings, voices and a reproduction suite; not yet pushed**); 2026-09-27 late night (**published: github.com/twhughes/s1-twin, tylerwhughes.com/s1-twin/, CI green**); 2026-09-27 night (**Tyler's first-use fixes are in (round 2): one-screen plate, global transport + shortcuts, record + self-test in Match; 840 tests; README rebuilt** — see the round-2 bullet); earlier 2026-09-27 (the cyanotype build integrated); 2026-09-07 (venv rebuilt, merge prep); 2026-08-08 (soft synth + twin); 2026-08-07 (chassis build); 2026-08-01 (canonical s1.json)*
 
 - **state:** active
 - **what:** The Roland S-1 hardware synth, fully present in software: one `s1` command starts a local web cockpit (FastAPI) with every panel knob and menu setting live-synced both directions, a piano-roll sequencer with MIDI clock out, auto-monitored USB audio with a live oscilloscope (drift-servo resampled passthrough, ~35 ms, glitch-free), MIDI-keyboard forwarding, .PRM export ("Save to S-1") *and* import (the librarian), synesthesia note-coloring, and a full REST/WS agent API. The Textual TUI is retired. Plus the CMA-ES sound-matching engine behind `[studio]` and now a differentiable digital twin (`match/twin.py`, autograd, `[twin]`). 615 tests. A standalone headless twin of the monitor+forwarding lives at `music/tools/s1_rig.py` (launch: `music/rig.sh`).
@@ -13,6 +13,18 @@
   launcher convention: **`synth`** (`bin/synth`) runs the venv's `synth --no-browser`
   detached, waits on `/api/status`, opens the cockpit — `synth off` stops it. Appears on the
   HQ control panel (:8800).
+- **2026-09-29 — rounds 12 and 14, the search against the loss (local, not yet pushed):** Tyler: "u sure this
+  is the best algorithm for optimization?", then "yea 1,2 please" (starts at once on every core; CMA-ES first).
+  **Diagnosis first:** the loss at the true patch against the found one, per suite case. The search missed a
+  much lower basin on vibrato, wobble and high (3-5x lower at the truth); on the recorded copies the loss itself
+  preferred a patch that imitates the room, so no optimizer could help. **Race** (7 search-limited cases,
+  closeness): Thorough 62.9, starts at once 67.2, CMA-ES 62.7 (nothing), mixes lower; kept unmerged on branch
+  `r12/global` (`pool.py`). **The loss was the bigger limit:** its log terms looked ~100 dB down (hiss 70 dB
+  under a tone scored 7.4). `twin.LOSS_FLOOR_DB = 50`: Thorough clean closeness 68.3 → 74.6% (vibrato 62 → 80,
+  wobble 42 → 71, short 35 → 71, pad 90 → 96), settings back on the recordings 52 → 68%; new
+  `docs/match-baseline.json`. Worse: high 62 → 55 (the fake-gate basin; starts at once fix it), bass 40 → 35,
+  and the closeness number on recordings (27 → 16: it still counts the room 80 dB down). Tyler's takes by the
+  old measure: 16.1 → 11.6% mean, same notes; A/B files for his ears in `~/.synth/listen/2026-09-29/`.
 - **2026-09-28 (night) — round 13, Record takes this Mac's own sound (local, not yet pushed):** Tyler: "also can
   we record from system audio perhaps? like me playing a logic pro instrument". The Match view's "From" picker
   offers "This Mac's sound (all apps)", and "Logic Pro" while it runs; the take then goes the way of a mic take.

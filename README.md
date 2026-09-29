@@ -103,7 +103,8 @@ flowchart LR
   they clearly help. After each start it scores every setting of the 3 switches (sub octave, LFO
   wave, volume shape) and re-tunes the knobs under the most promising ones; it also scans the LFO's
   wave and rate, and how long the note was held. A slow final polish starts from the best patch. The loss is a log-mel distance, plus a multi-resolution spectrogram term and an
-  envelope term, on loudness-normalized audio. **Quick** is one start (about 30 seconds),
+  envelope term, on loudness-normalized audio. It ignores whatever lies more than 50 dB below the
+  note: room noise and echo tails there used to count as much as the note itself. **Quick** is one start (about 30 seconds),
   **Thorough** four starts (2 to 3 minutes), and **Deep** eight starts with every switch setting
   (up to 10 minutes). **Finish now** stops early and keeps the best patch so far.
 - **The browser twin** is the same model in an AudioWorklet. Every test run checks it against the
@@ -117,13 +118,15 @@ flowchart LR
   test checks that the matcher's idea of "closer" agrees with a listener. Until that session runs,
   a match is only as true as the twin.
 - On the twin's own sounds the matcher brings the settings back (the self-test above). The
-  reproduction suite (`tools/match_suite.py`, 12 twin-made sounds) reaches 74 to 90% closeness on
-  nine of them with Thorough; a low bass, a short note and a wobble are weaker (35 to 42%). Their
-  "recorded" copies, through a small speaker and a room with noise around them, reach 9 to 39%.
-  Closeness is not yet checked by ear (`docs/match-benchmarks.md`, `docs/match-baseline.json`).
+  reproduction suite (`tools/match_suite.py`, 12 twin-made sounds) reaches 71 to 96% closeness on
+  ten of them with Thorough, with every setting back within 10 on nine; a low bass and a high narrow
+  pulse are weaker (35 and 55%). Their "recorded" copies, through a small speaker and a room with
+  noise around them, get two thirds of their settings back; their closeness reads 12 to 19%, because
+  that number still counts the room's echo and noise. Closeness is not yet checked by ear
+  (`docs/match-benchmarks.md`, `docs/match-baseline.json`).
 - **Voices are out of the S-1's reach.** A vowel is two or more resonances; the S-1 has one filter,
   so the matcher gets the pitch, the loudness shape and one resonance, not the vowel. On six sung
-  and whistled takes the matcher now hears the right single note every time, and reaches 6 to 28%
+  and whistled takes the matcher now hears the right single note every time, and reaches 6 to 24%
   closeness. Draw and Chop, which the twin does not model yet, may reach further.
 - Delay, reverb, chorus and the voice modes are browser extras outside the model: they sound, but
   the matcher does not fit them. Draw and Chop need the real S-1.

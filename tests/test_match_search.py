@@ -148,8 +148,8 @@ def test_a_switch_re_descent_finds_gate_on_a_tiny_budget() -> None:
     phases = [f["phase"] for f in frames]
     assert phases[0] == "pitch" and phases[-1] == "done" and set(phases[1:-1]) == {"gd"}
     trials = [f for f in frames if f.get("trying") and f["trying"] != ts.POLISH_WORDS]
-    gate_words = ("Volume shape: Gate", "Volume shape: Gate, with a filter envelope")
-    assert trials and all(f["trying"] in gate_words for f in trials), "both Gate trials"
+    # (the Gate trials; one may also change a switch that barely sounds here, such as the LFO wave)
+    assert trials and all("Volume shape: Gate" in f["trying"] for f in trials), "Gate trials only"
     assert all(f["cc"]["28"] == 0 for f in trials), "a trial frame's candidate is under the tried switch"
     polish = [f for f in frames if f.get("trying") == ts.POLISH_WORDS]
     assert 0 < len(polish) <= TINY_NEW["polish_iters"]
@@ -347,9 +347,12 @@ def test_the_noise_floor() -> None:
     assert ts.noise_floor(np.zeros(24000), sr) == 0.0 and ts.noise_floor(np.zeros(10), sr) == 0.0
 
 
-def test_the_floor_lets_a_short_notes_truth_score() -> None:
-    """A WAV target's tail sits at its noise floor; a render's falls silent. Matching the floor, the true
-    settings score far better (the log spectrum no longer weighs the silence)."""
+def test_the_floor_lets_a_short_notes_truth_score(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A WAV target's tail sits at its noise floor; a render's falls silent. The loss's 50 dB range
+    (round 14) leaves that silence out, so the true settings score well with or without the hiss; under
+    the old full-range loss, matching the floor with hiss (round 6) is what let them score."""
+    from synth.match import twin as twin_module
+
     target = _wav_target(SHORT, 0.35)
     k, _s = ts.cc_init(SHORT)
     budget = {**TINY_R6, "plain_starts": 0, "gate_scan": 0}
@@ -360,6 +363,8 @@ def test_the_floor_lets_a_short_notes_truth_score() -> None:
         first = next(run)
         return first.frame["loss"]
 
+    assert truth_loss(0) < 0.05 and truth_loss(1) < 0.05
+    monkeypatch.setattr(twin_module, "LOSS_FLOOR_DB", None)
     assert truth_loss(1) < 0.5 * truth_loss(0)
 
 

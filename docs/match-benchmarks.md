@@ -275,3 +275,102 @@ every take is one correct note. Closeness: 0.4 → 22.0 (a C#3 vowel), 0.9 → 6
 10.6 → 10.9, 26.8 → 27.7 and 20.0 → 18.1 (whistles). Vowels stay low because the S-1's one filter cannot make
 two resonances; the whistles score badly even from a hand-made pure tone (loss 12.96), so something else in
 those takes dominates: the next thing to look at.
+
+## Rounds 12 and 14: is the search the limit, or the loss? (2026-09-29)
+
+Tyler: "u sure this is the best algorithm for optimization?", then "yea 1,2 please": (1) run the starts at once
+on every core, (2) a global phase (CMA-ES) before the gradient descent.
+
+**First: where can any search gain at all?** For each suite case, the search loss of the true patch, of the
+true patch after 80 local Adam steps (the bottom of its basin), and of the patch Thorough found (the baseline
+run). A truth basin lower than the found patch is a search failure; a found patch as low or lower means the
+loss itself prefers the wrong patch, and no optimizer can fix that.
+
+| case | truth | truth, polished | found | verdict |
+|---|---|---|---|---|
+| square | 0.426 | 0.426 | 0.438 | tie |
+| saw | 0.236 | 0.212 | 0.211 | tie |
+| gate | 0.378 | 0.374 | 0.400 | search missed (a little) |
+| sub | 0.325 | 0.322 | 0.332 | search missed (a little) |
+| vibrato | 0.343 | 0.343 | 1.825 | **search missed** |
+| wobble | 0.394 | 0.394 | 1.457 | **search missed** |
+| pluck | 0.336 | 0.332 | 0.357 | search missed (a little) |
+| bass | 4.325 | 3.215 | 3.247 | tie |
+| high | 0.966 | 0.870 | 1.526 | **search missed** |
+| pad | 1.010 | 0.810 | 0.809 | tie |
+| short | 1.680 | 1.587 | 1.674 | search missed (a little) |
+| chord | 0.135 | 0.129 | 0.110 | the loss prefers the found patch |
+| square@rec | 3.496 | 1.626 | 1.513 | the loss prefers the found patch |
+| gate@rec | 5.466 | 2.749 | 2.654 | the loss prefers the found patch |
+| pluck@rec | 4.531 | 1.483 | 1.479 | tie |
+| bass@rec | 10.754 | 1.781 | 1.027 | the loss prefers the found patch |
+| pad@rec | 2.223 | 1.346 | 0.893 | the loss prefers the found patch |
+| short@rec | 1.966 | 1.182 | 1.182 | tie |
+
+So on the recorded copies no search could help: the loss scored a patch that imitates the room better than
+the true one. Split by term, the log-mel term carried it (square@rec 2.38 true against 0.96 found).
+
+**The race (round 12),** on the seven cases where the search can gain, the notes given, closeness. A is
+Thorough; B its starts at once (14 lanes on 7 cores); C a CMA-ES phase per promising switch setting, then the
+descents from its best 2; C-freeze leaves LFO rate and fine tune to CMA-ES; D mixes B and C. Each took 3 to 4x
+A's steps. The times are not comparable: other apps held this Mac at load 20 to 150 during the race.
+
+| case | A | B | C | C-freeze | D | A, floor | B, floor |
+|---|---|---|---|---|---|---|---|
+| vibrato | 62.5 | 58.0 | 59.2 | 60.1 | 43.9 | 80.5 | 80.5 |
+| wobble | 42.4 | 63.8 | 54.3 | 54.1 | 54.4 | 70.6 | 54.7 |
+| high | 61.9 | 74.9 | 61.0 | 62.0 | 60.6 | 54.7 | 78.0 |
+| gate | 74.4 | 74.7 | 74.2 | 74.6 | 74.7 | 74.6 | 74.7 |
+| sub | 78.4 | 78.4 | 78.6 | 78.4 | 78.4 | 76.6 | 78.5 |
+| pluck | 85.9 | 85.9 | 70.7 | 70.4 | 85.9 | 86.2 | 86.2 |
+| short | 34.9 | 34.9 | 40.8 | 34.1 | 34.4 | 71.1 | 71.1 |
+| mean | 62.9 | 67.2 | 62.7 | 61.9 | 61.8 | 73.5 | 74.8 |
+
+CMA-ES brought nothing. Starts at once helped a little (+4.3; +1.3 once the loss was fixed) for 3x the compute
+on every core, and it traded cases (high up, wobble down). Neither is merged; the contenders are kept on the
+branch `r12/global` (`synth/match/pool.py`, `twin_session.RACE_BUDGETS`).
+
+**The loss was the bigger limit (round 14).** The log-mel and log-STFT terms looked about 100 dB below each
+spectrogram's peak. White noise 70 dB under a tone alone scored 7.4, more than two different patches usually
+differ by; resampling residue, room noise and echo tails counted like the note. `twin.LOSS_FLOOR_DB = 50`
+clamps every cell 50 dB below its spectrogram's peak (that noise now scores 0.0001; noise 20 dB under the
+tone still scores 2.0). Quick first (closeness; mean over the 12 clean cases / the 6 recorded ones):
+
+| Quick | no floor | 60 dB | 50 dB |
+|---|---|---|---|
+| clean, closeness | 62.5 | 70.5 | 70.8 |
+| recorded, closeness | 27.0 | 14.4 | 15.6 |
+| recorded, settings back within 10 | 43 of 93 | 48 of 82 | 58 of 84 |
+
+Then Thorough, 50 dB, against the baseline (the new `docs/match-baseline.json`):
+
+| case | baseline | floor 50 dB |
+|---|---|---|
+| square | 89.8, 14 of 14 | 89.7, 14 of 14 |
+| saw | 81.6, 13 of 13 | 81.8, 13 of 13 |
+| gate | 74.4, 13 of 14 | 74.6, 14 of 14 |
+| sub | 78.4, 15 of 15 | 76.6, 14 of 15 |
+| vibrato | 62.5, 12 of 17 | **80.5, 17 of 17** |
+| wobble | 42.4, 18 of 19 | **70.6, 19 of 19** |
+| pluck | 85.9, 16 of 17 | 86.2, 14 of 14 |
+| bass | 39.7, 10 of 17 | 35.4, 8 of 14 |
+| high | 61.9, 10 of 14 | 54.7, 11 of 14 (Volume shape lost: Gate plus a filter envelope) |
+| pad | 89.5, 11 of 14 | **95.6, 14 of 14** |
+| short | 34.9, 12 of 17 | **71.1, 14 of 14** |
+| chord | 78.4, 14 of 14 | 78.5, 14 of 14 |
+| square@rec | 38.7, 9 of 14 | 15.0, 9 of 14 |
+| gate@rec | 25.2, 5 of 14 | 19.0, **10 of 14** |
+| pluck@rec | 37.8, 6 of 14 | 14.5, **10 of 14** |
+| bass@rec | 9.3, 7 of 17 | 12.3, 5 of 17 |
+| pad@rec | 20.0, 13 of 17 | 18.0, 13 of 14 |
+| short@rec | 28.8, 7 of 14 | 14.1, **11 of 14** |
+
+Clean: closeness 68.3 → 74.6%, settings back 86 → 94%. Recorded: settings back 52 → 68%, while the closeness
+number falls 26.6 → 15.5%: closeness (the plain metric) still looks 80 dB down, so it still rewards a patch
+that imitates the room's echo and noise, which the S-1 would add again when played in that room. Left open:
+"high" (the fake-gate basin; starts at once find it), "bass" (a small speaker's low cut removes the note
+itself), and whether the closeness number should get the same 50 dB range.
+
+Tyler's six takes, cold, Thorough, closeness (the old measure), old loss → floor: 10.9 → 12.8 (B3), 27.7 → 23.6
+and 18.1 → 10.7 (whistles), 11.5 → 5.7, 6.4 → 5.7 and 22.0 → 11.3 (voice); every take kept its note. A voice
+has no true patch to count settings against, so his ears decide: the A/B files are local only.

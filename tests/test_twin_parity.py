@@ -59,6 +59,14 @@ OFFLINE_TOL = 0.01
 REALTIME_TOL = 0.1
 MIN_DISTINCT = 1.5
 
+
+@pytest.fixture(autouse=True)
+def _full_range_yardstick(monkeypatch):
+    """The thresholds above were measured with the full-range log-mel (about 100 dB). The matcher's loss
+    stops 50 dB under the peak since round 14 (``twin.LOSS_FLOOR_DB``); parity keeps the strict yardstick,
+    so a port error far under the note still shows."""
+    monkeypatch.setattr(twin_mod, "LOSS_FLOOR_DB", None)
+
 # CC maps (S-1 numbers). Unlisted CCs take s1.json defaults, exactly as cc_to_k does.
 PATCHES: dict[str, dict[int, int]] = {
     "bright_saw": {20: 127, 19: 0, 21: 0, 74: 127, 71: 0, 73: 0, 75: 60, 30: 100, 72: 40},

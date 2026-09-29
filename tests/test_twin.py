@@ -233,6 +233,24 @@ def test_spectral_loss_zero_for_identical_positive_for_different():
     assert float(spectral_loss(a, b, tw.sr)) > 1.0
 
 
+def test_loss_ignores_what_lies_50_db_below_the_peak(monkeypatch):
+    """Round 14: hiss 70 dB under a note (a room, resampling residue) must not count like the note
+    itself; hiss 20 dB under it still counts. Before the floor, the quiet hiss alone scored about 7.4,
+    more than two different patches usually differ by."""
+    from synth.match import twin as twin_module
+
+    sr = 16000
+    t = np.arange(int(0.5 * sr)) / sr
+    note = 0.5 * np.sin(2 * np.pi * 440 * t) * np.minimum(1.0, t / 0.01) * np.exp(-t / 0.4)
+    hiss = np.random.default_rng(3).standard_normal(t.size) * np.sqrt(np.mean(note ** 2))
+    quiet, loud = note + 10 ** (-70 / 20) * hiss, note + 10 ** (-20 / 20) * hiss
+    assert twin_module.LOSS_FLOOR_DB == 50.0
+    assert float(spectral_loss(note, quiet, sr)) < 0.01
+    assert float(spectral_loss(note, loud, sr)) > 1.0
+    monkeypatch.setattr(twin_module, "LOSS_FLOOR_DB", None)    # the old loss: the quiet hiss counted
+    assert float(spectral_loss(note, quiet, sr)) > 5.0
+
+
 # ── the search machinery, proven without hardware ─────────────────────────────
 
 

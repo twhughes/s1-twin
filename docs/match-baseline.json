@@ -1,148 +1,148 @@
 {
  "thorough": {
-  "made": "2026-09-28",
-  "commit": "6296ee2",
+  "made": "2026-09-29",
+  "commit": "9982d0d",
   "cases": {
    "square": {
-    "closeness": 89.8,
-    "worst_closeness": 89.8,
+    "closeness": 89.7,
+    "worst_closeness": 89.7,
     "good": 14,
     "total": 14,
     "switches": true,
     "seeds": 1
    },
    "saw": {
-    "closeness": 81.6,
-    "worst_closeness": 81.6,
+    "closeness": 81.8,
+    "worst_closeness": 81.8,
     "good": 13,
     "total": 13,
     "switches": true,
     "seeds": 1
    },
    "gate": {
-    "closeness": 74.4,
-    "worst_closeness": 74.4,
-    "good": 13,
+    "closeness": 74.6,
+    "worst_closeness": 74.6,
+    "good": 14,
     "total": 14,
     "switches": true,
     "seeds": 1
    },
    "sub": {
-    "closeness": 78.4,
-    "worst_closeness": 78.4,
-    "good": 15,
+    "closeness": 76.6,
+    "worst_closeness": 76.6,
+    "good": 14,
     "total": 15,
     "switches": true,
     "seeds": 1
    },
    "vibrato": {
-    "closeness": 62.5,
-    "worst_closeness": 62.5,
-    "good": 12,
+    "closeness": 80.5,
+    "worst_closeness": 80.5,
+    "good": 17,
     "total": 17,
-    "switches": false,
+    "switches": true,
     "seeds": 1
    },
    "wobble": {
-    "closeness": 42.4,
-    "worst_closeness": 42.4,
-    "good": 18,
+    "closeness": 70.6,
+    "worst_closeness": 70.6,
+    "good": 19,
     "total": 19,
     "switches": true,
     "seeds": 1
    },
    "pluck": {
-    "closeness": 85.9,
-    "worst_closeness": 85.9,
-    "good": 16,
-    "total": 17,
-    "switches": true,
-    "seeds": 1
-   },
-   "bass": {
-    "closeness": 39.7,
-    "worst_closeness": 39.7,
-    "good": 10,
-    "total": 17,
-    "switches": true,
-    "seeds": 1
-   },
-   "high": {
-    "closeness": 61.9,
-    "worst_closeness": 61.9,
-    "good": 10,
+    "closeness": 86.2,
+    "worst_closeness": 86.2,
+    "good": 14,
     "total": 14,
     "switches": true,
     "seeds": 1
    },
-   "pad": {
-    "closeness": 89.5,
-    "worst_closeness": 89.5,
+   "bass": {
+    "closeness": 35.4,
+    "worst_closeness": 35.4,
+    "good": 8,
+    "total": 14,
+    "switches": true,
+    "seeds": 1
+   },
+   "high": {
+    "closeness": 54.7,
+    "worst_closeness": 54.7,
     "good": 11,
+    "total": 14,
+    "switches": false,
+    "seeds": 1
+   },
+   "pad": {
+    "closeness": 95.6,
+    "worst_closeness": 95.6,
+    "good": 14,
     "total": 14,
     "switches": true,
     "seeds": 1
    },
    "short": {
-    "closeness": 34.9,
-    "worst_closeness": 34.9,
-    "good": 12,
-    "total": 17,
+    "closeness": 71.1,
+    "worst_closeness": 71.1,
+    "good": 14,
+    "total": 14,
     "switches": true,
     "seeds": 1
    },
    "chord": {
-    "closeness": 78.4,
-    "worst_closeness": 78.4,
+    "closeness": 78.5,
+    "worst_closeness": 78.5,
     "good": 14,
     "total": 14,
     "switches": true,
     "seeds": 1
    },
    "square@rec": {
-    "closeness": 38.7,
-    "worst_closeness": 38.7,
+    "closeness": 15.0,
+    "worst_closeness": 15.0,
     "good": 9,
     "total": 14,
     "switches": true,
     "seeds": 1
    },
    "gate@rec": {
-    "closeness": 25.2,
-    "worst_closeness": 25.2,
-    "good": 5,
+    "closeness": 19.0,
+    "worst_closeness": 19.0,
+    "good": 10,
     "total": 14,
     "switches": true,
     "seeds": 1
    },
    "pluck@rec": {
-    "closeness": 37.8,
-    "worst_closeness": 37.8,
-    "good": 6,
+    "closeness": 14.5,
+    "worst_closeness": 14.5,
+    "good": 10,
     "total": 14,
     "switches": true,
     "seeds": 1
    },
    "bass@rec": {
-    "closeness": 9.3,
-    "worst_closeness": 9.3,
-    "good": 7,
+    "closeness": 12.3,
+    "worst_closeness": 12.3,
+    "good": 5,
     "total": 17,
     "switches": true,
     "seeds": 1
    },
    "pad@rec": {
-    "closeness": 20.0,
-    "worst_closeness": 20.0,
+    "closeness": 18.0,
+    "worst_closeness": 18.0,
     "good": 13,
-    "total": 17,
+    "total": 14,
     "switches": true,
     "seeds": 1
    },
    "short@rec": {
-    "closeness": 28.8,
-    "worst_closeness": 28.8,
-    "good": 7,
+    "closeness": 14.1,
+    "worst_closeness": 14.1,
+    "good": 11,
     "total": 14,
     "switches": true,
     "seeds": 1

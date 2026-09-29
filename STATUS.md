@@ -1,5 +1,5 @@
 # STATUS — synth
-*updated 2026-09-28 evening (**recordings, voices and a reproduction suite; not yet pushed**); 2026-09-27 late night (**published: github.com/twhughes/s1-twin, tylerwhughes.com/s1-twin/, CI green**); 2026-09-27 night (**Tyler's first-use fixes are in (round 2): one-screen plate, global transport + shortcuts, record + self-test in Match; 840 tests; README rebuilt** — see the round-2 bullet); earlier 2026-09-27 (the cyanotype build integrated); 2026-09-07 (venv rebuilt, merge prep); 2026-08-08 (soft synth + twin); 2026-08-07 (chassis build); 2026-08-01 (canonical s1.json)*
+*updated 2026-09-28 night (**Record takes this Mac's own sound (Logic Pro); not yet pushed**); 2026-09-28 evening (**recordings, voices and a reproduction suite; not yet pushed**); 2026-09-27 late night (**published: github.com/twhughes/s1-twin, tylerwhughes.com/s1-twin/, CI green**); 2026-09-27 night (**Tyler's first-use fixes are in (round 2): one-screen plate, global transport + shortcuts, record + self-test in Match; 840 tests; README rebuilt** — see the round-2 bullet); earlier 2026-09-27 (the cyanotype build integrated); 2026-09-07 (venv rebuilt, merge prep); 2026-08-08 (soft synth + twin); 2026-08-07 (chassis build); 2026-08-01 (canonical s1.json)*
 
 - **state:** active
 - **what:** The Roland S-1 hardware synth, fully present in software: one `s1` command starts a local web cockpit (FastAPI) with every panel knob and menu setting live-synced both directions, a piano-roll sequencer with MIDI clock out, auto-monitored USB audio with a live oscilloscope (drift-servo resampled passthrough, ~35 ms, glitch-free), MIDI-keyboard forwarding, .PRM export ("Save to S-1") *and* import (the librarian), synesthesia note-coloring, and a full REST/WS agent API. The Textual TUI is retired. Plus the CMA-ES sound-matching engine behind `[studio]` and now a differentiable digital twin (`match/twin.py`, autograd, `[twin]`). 615 tests. A standalone headless twin of the monitor+forwarding lives at `music/tools/s1_rig.py` (launch: `music/rig.sh`).
@@ -13,6 +13,16 @@
   launcher convention: **`synth`** (`bin/synth`) runs the venv's `synth --no-browser`
   detached, waits on `/api/status`, opens the cockpit — `synth off` stops it. Appears on the
   HQ control panel (:8800).
+- **2026-09-28 (night) — round 13, Record takes this Mac's own sound (local, not yet pushed):** Tyler: "also can
+  we record from system audio perhaps? like me playing a logic pro instrument". The Match view's "From" picker
+  offers "This Mac's sound (all apps)", and "Logic Pro" while it runs; the take then goes the way of a mic take.
+  A Swift helper (`synth/native/systap.swift`, Core Audio process taps, macOS 14.2+) is built on first use into
+  `~/.synth/bin/`; routes `/api/match/system/{sources,start,stop}`. Nothing is played: the tap only listens.
+  **Who macOS asks:** a terminal has no usage string, so macOS refused it silently and every take was silence.
+  The helper starts a copy of itself that owns its permission, with its own Info.plist, so macOS asks about the
+  helper (private `responsibility_spawnattrs_setdisclaim` + `TCCAccessPreflight`, looked up at run time, with a
+  fallback). A rebuilt helper asks again. A Bluetooth mic (AirPods: 16–24 kHz, processed) gets one plain line
+  under Record. 988 tests (31 new, on a fake helper), ruff clean, node checks green; 1470×760 at scale 1.
 - **2026-09-28 (evening) — "record sounds and just reproduce them", and why vocals fail (rounds 5 to 11; local,
   not yet pushed):**
   - **Round 5, a bug found from Tyler's own bad match:** the 16 kHz search twin took its filter ceiling

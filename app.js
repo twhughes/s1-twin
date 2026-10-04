@@ -9,6 +9,8 @@
 //   &still                 no page-load animation (reduced motion does the same)
 //   &library, &settings    open that drawer
 //   #match&replay=<slug>  on the static page, start that recorded match (see matches/index.json)
+//   &sync=music            opened by the music app (hq/music): send it every knob value, so its twin
+//                          sounds like this page (core/opener-sync.js; one way, nothing is received)
 //
 // Contexts (BUILD.md §0): when GET /api/status answers, the cockpit server is here (server mode:
 // the schema, the live state and the S-1 arrive over /api and /ws/state). Otherwise the page is
@@ -17,8 +19,8 @@
 // The sequence's transport (core/transport.js) and the keyboard shortcuts (core/shortcuts.js) live for
 // the page's life as ctx.transport and ctx.shortcuts, so a pattern keeps playing across the views.
 
-import { NAME, TAGLINE, DISCLAIMER, REPO_URL } from "./design/brand.js";
-import { createCtx } from "./core/ctx.js";
+import { NAME, TAGLINE, DISCLAIMER, REPO_URL, CHANGES_URL } from "./design/brand.js";
+import { createCtx, VOICES_KEY } from "./core/ctx.js";
 import { probe, api, wsURL, connectState, createEchoFilter, serverTransport } from "./core/server.js";
 import { loadStatic, loadStaticCurves } from "./core/static.js";
 import { createKeys } from "./core/keys.js";
@@ -26,6 +28,7 @@ import { createTransport } from "./core/transport.js";
 import { createShortcuts } from "./core/shortcuts.js";
 import { readHash } from "./core/flags.js";
 import { sendPatch } from "./core/actions.js";
+import { startOpenerSync } from "./core/opener-sync.js";
 
 const VIEWS = [
   { id: "synth", title: "Synth", load: () => import("./views/synth.js") },
@@ -227,6 +230,8 @@ async function boot() {
       "A software twin of the Roland S-1, running in your browser. Play it with A to K or a MIDI keyboard. "
       + "To sync a real S-1 and match your own sounds, ",
       Object.assign(document.createElement("a"), { href: REPO_URL, textContent: "install it from GitHub", rel: "noopener" }),
+      ". To practice jazz chords and tunes with this sound, try ",
+      Object.assign(document.createElement("a"), { href: CHANGES_URL, textContent: "Changes", rel: "noopener" }),
       ".",
     );
     intro.hidden = false;
@@ -242,10 +247,14 @@ async function boot() {
     echo,
     onError: (e) => toast(`A change did not reach the cockpit: ${e.message}`),
   }) : null;
-  const ctx = createCtx({ schema, twin, transport: upstream, server, toast });
+  // The voice count chosen in the Settings drawer last time (ctx.js: the S-1's 4 while one is linked).
+  let voices = null;
+  try { voices = Number(localStorage.getItem(VOICES_KEY)) || null; } catch { /* private mode */ }
+  const ctx = createCtx({ schema, twin, transport: upstream, server, toast, voices });
   ctx.twinInfo = info;
   ctx.keys = createKeys(ctx);
   ctx.transport = createTransport(ctx);   // before the socket opens: it follows the app from the hello on
+  startOpenerSync(ctx, { flags });        // the music app opened this page: keep its twin sounding like it
   // In the connected demo the S-1's link is pretend: the server's own word for it is ignored.
   const setStatus = (patch) => {
     if (demo) { const { sync: _s, port: _p, server: _v, ...rest } = patch; patch = rest; }
@@ -269,14 +278,12 @@ async function boot() {
     $("send").disabled = false;
   });
 
-  // The KeyHint bar: Esc while a drawer or the list of keys is open; else the view's own `hints`
-  // export, or the one key every view has. The Synth view shows no bar: on the one-screen plate its
-  // corner is the keyboard, so the plate carries its hints inline (ROUND2.md §2).
+  // The KeyHint bar (in the bottom strip on wide windows, core/app.css): Esc while a drawer or the list
+  // of keys is open; else the view's own `hints` export, or the one key every view has.
   const overlayOpen = () => document.body.classList.contains("drawer-open") || Boolean(ctx.shortcuts?.sheet.open);
   const hints = (overlay = overlayOpen()) => {
     if (!window.KeyHint) return;
     if (overlay) window.KeyHint.set([{ key: "Esc", label: "Close" }]);
-    else if (hints.view === "synth") window.KeyHint.hide();
     else window.KeyHint.set(hints.items && hints.items.length ? hints.items : [{ key: "?", label: "Keys" }]);
   };
   const drawer = drawers(ctx, hints);

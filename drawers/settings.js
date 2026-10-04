@@ -1,7 +1,8 @@
 // drawers/settings.js — the Settings drawer (DIRECTION rule 3: the settings menu and MIDI live in a
 // drawer, off the plate). The parameters core/layout.js sends here (Fine tune, wheels and bend, chord
 // voices, the MIDI messages, and any parameter nobody planned for), then the cockpit itself: sending
-// the patch, Solo or Logic mode, the S-1's audio through this Mac, and the keyboards.
+// the patch, Solo or Logic mode, the S-1's audio through this Mac, then how many notes the twin plays
+// at once in this browser, and the keyboards.
 // The shell calls mount(el, ctx) once, then open() / close() as the drawer slides in and out.
 
 import { knob } from "../design/knob.js";
@@ -9,6 +10,7 @@ import { seg } from "../design/seg.js";
 import { plateLayout } from "../core/layout.js";
 import { buildControl, bindControls } from "../core/controls.js";
 import { sendPatch } from "../core/actions.js";
+import { S1_VOICES, VOICE_CHOICES, VOICES_KEY } from "../core/ctx.js";
 
 export const id = "settings";
 export const title = "Settings";
@@ -16,6 +18,16 @@ export const title = "Settings";
 let ctx = null;
 let ui = null;
 const VELOCITY_KEY = "synth.keyVelocity";
+
+/** The words under the Voices switch, for the count that plays now ({voices, choice, locked} as ctx has them). */
+export function voicesWords({ voices, choice, locked }) {
+  if (locked) {
+    const now = `The S-1 is connected, so the twin plays ${S1_VOICES} voices, like the S-1.`;
+    return choice === S1_VOICES ? now : `${now} It goes back to ${choice} when the S-1 is unplugged.`;
+  }
+  if (voices === S1_VOICES) return `${S1_VOICES} keys sound together, like the S-1. A fifth key takes the oldest voice.`;
+  return `Up to ${voices} keys sound together; one more takes the oldest voice. The S-1 itself plays ${S1_VOICES}.`;
+}
 
 const h = (tag, attrs = {}, ...kids) => {
   const e = document.createElement(tag);
@@ -38,8 +50,9 @@ export function mount(el, context) {
   );
   el.append(...paramSections());
   if (ctx.server) el.append(...s1Section(), ...monitorSection());
-  el.append(...keyboardSection());
+  el.append(...voicesSection(), ...keyboardSection());
   ctx.on("status", render);
+  ctx.on("voices", render);
   render();
 }
 
@@ -141,6 +154,29 @@ function monitorSection() {
   ];
 }
 
+// ── how many notes the twin plays at once (ctx.voices; the S-1 has 4) ─────────
+function voicesSection() {
+  if (typeof ctx.twin.setVoices !== "function") return [];   // the stand-in twin plays one voice
+  ui.voices = seg({
+    label: `Voices (the S-1 has ${S1_VOICES})`,
+    options: VOICE_CHOICES.map((n) => ({ value: n, label: String(n) })),
+    value: ctx.voices,
+    onInput: (n) => {
+      if (ctx.setVoices(n)) {
+        try { localStorage.setItem(VOICES_KEY, String(n)); } catch { /* private mode */ }
+      }
+      render();
+    },
+  });
+  ui.voicesNote = h("p", { class: "after", role: "status" });
+  return [
+    h("h3", { text: "Voices in this browser" }),
+    h("p", { text: `How many notes the twin can play at once. Only Poly mode uses more than ${S1_VOICES}.` }),
+    h("div", { class: "row" }, ui.voices.el),
+    ui.voicesNote,
+  ];
+}
+
 // ── keyboards ────────────────────────────────────────────────────────────────
 function keyboardSection() {
   const keys = ctx.keys;
@@ -204,6 +240,14 @@ function render() {
     const db = m.running && typeof m.peak_db === "number" ? m.peak_db : -120;
     ui.meterFill.style.width = `${Math.max(0, Math.min(100, ((db + 60) / 60) * 100))}%`;
     ui.meterText.textContent = m.running ? `${Math.round(db)} dB peak` : "no signal";
+  }
+  if (ui.voices) {
+    // While an S-1 is linked the switch shows its 4 and does not move.
+    const locked = ctx.voicesLocked;
+    ui.voices.set(ctx.voices);
+    ui.voices.modeled(!locked, `The S-1 is connected: the twin plays ${S1_VOICES} voices, like the S-1.`);
+    for (const b of ui.voices.el.querySelectorAll("button")) b.disabled = locked;
+    ui.voicesNote.textContent = voicesWords({ voices: ctx.voices, choice: ctx.voiceChoice, locked });
   }
   const names = st.keyboards || [];
   ui.kbNote.textContent = !ctx.server ? "Play with the computer keys, the screen keys, or a MIDI keyboard."

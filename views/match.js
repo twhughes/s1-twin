@@ -6,16 +6,36 @@
 // Round 2 (docs/design/ROUND2.md §3), server mode only: a target can also be recorded from a
 // browser input, or made from the synth's current sound (one note, played by the twin or the
 // S-1) as a test, which ends with a report of how many settings the matcher found again.
+// Round 7 (W-rec2): the whole take is uploaded and the server finds the sound in it
+// (POST /api/match/prepare, synth/match/target_prep.py): the well draws the crop the matcher gets,
+// the found notes are marked, "Play target" plays that crop and "Play my patch" plays the marked
+// note on the synth. A to K play the synth here too.
+// Round 9 (W-voice): the found line says how the one note found is tuned and how it wavers (the
+// server's pitch tracker, synth/match/pitch.py), and after a match one or two plain lines say what
+// in the sound the S-1 could not make, and why (synth/match/reach.py: a vowel's two resonances
+// against the S-1's one filter, a pitch that wavers unevenly against its even LFO, breath).
+// Round 13 (W-sys): "From" also offers this Mac's own sound, every app or Logic Pro while it runs. The cockpit
+// records it through a Core Audio tap (synth/native/systap.py), and the take goes the way of a microphone take.
+// A Bluetooth mic (AirPods) gets one plain line under Record: it loses the top of the sound.
 
 import { knob } from "../design/knob.js";
 import { seg, GLYPHS } from "../design/seg.js";
 import * as draw from "../design/draw.js";
 import { rgbOf, lum, noteName } from "../design/colors.js";
 import { readHash } from "../core/flags.js";
-import { encodeWav, joinChunks, normalize, peakOf, trimToOnset } from "../core/wav.js";
+import { encodeWav, joinChunks, normalize, peakOf } from "../core/wav.js";
+import { fitView } from "../core/fit.js";
 
 export const id = "match";
 export const title = "Match";
+// The bottom strip's key hints on this view (app.js): A to K play the synth here too, so a patch can
+// be heard beside the target; the ? list has every key.
+export const hints = [
+  { key: "A – K", label: "Play" },
+  { key: "Z  X", label: "Octave" },
+  { key: "Space", label: "Play/pause" },
+  { key: "?", label: "Keys" },
+];
 
 // ── what the twin models: 18 knobs + 3 switches, in the plate's signal order ─────────
 export const STAGES = [
@@ -47,8 +67,10 @@ const DEFAULTS = { 20: 0, 19: 127, 21: 0, 23: 0, 15: 0, 13: 0, 76: 64, 22: 2, 74
 export function initialRun() {
   return { phase: "idle", count: 0, points: [], marks: [], notes: [], seeded: null, chord: "",
     cc: null, bestCC: null, bestWave: null, wave: null, targetWave: null, iter: 0, total: 0, restart: 0,
-    nsTotal: 0, improved: false, done: null, error: null };
+    nsTotal: 0, improved: false, done: null, error: null, trying: null, starts: 0 };
 }
+/** The words a polish frame carries in "trying" (synth/match/twin_session.py POLISH_WORDS). */
+export const POLISH_WORDS = "a final polish";
 
 const num = (x) => (typeof x === "number" && Number.isFinite(x) ? x : NaN);
 export const prettyChord = (s) => String(s || "").replaceAll("#", "♯").replaceAll("+", " + ");
@@ -65,19 +87,27 @@ export function reduceFrame(s, f) {
   if (f.target_wave) next.targetWave = f.target_wave;
   if (f.phase === "done") {
     next.done = { closeness: num(f.closeness), seconds: num(f.seconds), steps: f.steps | 0, cc: f.cc || s.bestCC,
-      notes: next.notes, matchWav: f.match_wav_b64 || null, targetWav: f.target_wav_b64 || null };
+      notes: next.notes, matchWav: f.match_wav_b64 || null, targetWav: f.target_wav_b64 || null, finished: f.finished === true };
+    next.trying = null;
     next.bestCC = f.cc || s.bestCC;
     return next;
   }
   const prev = s.points[s.points.length - 1];
-  const point = { loss: num(f.loss), best: num(f.best_loss), phase: f.phase, restart: f.restart ?? (prev ? prev.restart : 0) };
+  const point = { loss: num(f.loss), best: num(f.best_loss), phase: f.phase, restart: f.restart ?? (prev ? prev.restart : 0),
+    polish: f.trying === POLISH_WORDS };
   next.points = [...s.points, point];
-  // Leaders on the curve: where a new start begins, and where the note search begins.
+  // Leaders on the curve: where a new start begins, where the note search begins, and the polish.
   if (prev && point.phase === "note-search" && prev.phase !== "note-search") {
     next.marks = [...s.marks, { i: next.points.length - 1, label: "Nearby notes" }];
+  } else if (prev && point.polish && !prev.polish) {
+    next.marks = [...s.marks, { i: next.points.length - 1, label: "Polish" }];
   } else if (prev && point.phase === "gd" && point.restart > 0 && prev.restart !== point.restart) {
     next.marks = [...s.marks, { i: next.points.length - 1, label: `Start ${point.restart + 1}` }];
   }
+  // Round 4: a gd frame may say what it is trying (a switch setting, or the polish), and how many starts
+  // the run makes; its descents stop when they stop improving, so the step count is open-ended.
+  next.trying = f.phase === "gd" && typeof f.trying === "string" && f.trying ? f.trying : null;
+  if (Number.isFinite(f.starts)) next.starts = f.starts | 0;
   // The frame that sets (or ties) the best loss carries the best candidate so far.
   if (f.cc && Number.isFinite(point.loss) && point.loss === point.best) { next.bestCC = f.cc; next.bestWave = f.wave || s.bestWave; }
   if (f.phase === "note-search") { next.nsTotal = f.total | 0; next.improved = !!f.improved; next.iter = f.iter | 0; }
@@ -85,18 +115,31 @@ export function reduceFrame(s, f) {
   return next;
 }
 
-/** The phase in plain words, plus a detail line. */
-export function phaseText(s, { staticMode = false, loaded = false, recording = false } = {}) {
+/** The phase in plain words, plus a detail line. `target` (idle, a sound loaded): what the server
+ *  found in it, {state: "pending" | "ok" | "failed" | "unavailable", prep, error} (POST /api/match/prepare).
+ *  `where`, while recording this Mac's own sound: where to play ("in Logic Pro", "on this Mac"). */
+export function phaseText(s, { staticMode = false, loaded = false, recording = false, where = "", target = null } = {}) {
   switch (s.phase) {
     case "idle":
       if (staticMode) return { word: "Choose a recorded run", detail: "" };
-      if (recording === "opening") return { word: "Opening the input", detail: "If the browser asks, allow the microphone." };
-      if (recording) return { word: "Recording", detail: `Play the sound, then press Stop. It stops by itself at ${RECORD_MAX_S} s.` };
-      return loaded ? { word: "Ready to match", detail: "Mark the notes you hear, then press Match." }
-        : { word: "Waiting for a sound", detail: "" };
+      if (recording === "opening") {
+        return { word: "Opening the input", detail: where ? "If macOS asks about system audio, allow it." : "If the browser asks, allow the microphone." };
+      }
+      if (recording) return { word: "Recording", detail: `Play the sound${where ? ` ${where}` : ""}, then press Stop. It stops by itself at ${RECORD_MAX_S} s.` };
+      if (!loaded) return { word: "Waiting for a sound", detail: "" };
+      if (target?.state === "failed") return { word: "No clear sound", detail: target.error || "" };
+      if (target?.state === "pending") return { word: "Ready to match", detail: "Finding the sound in the take." };
+      if (target?.state === "ok" && target.prep) {
+        return { word: "Ready to match", detail: `${foundLine(target.prep)}. Check the marked notes, then press Match.` };
+      }
+      return { word: "Ready to match", detail: "Mark the notes you hear, then press Match." };
     case "connecting": return { word: "Opening the matcher", detail: "" };
     case "pitch": return { word: "Finding the notes", detail: (s.seeded ? "Marked: " : "Found: ") + s.chord };
     case "gd": {
+      if (s.starts) {
+        return { word: "Descending", detail: `Step ${s.iter}, start ${Math.min(s.restart + 1, s.starts)} of ${s.starts}`
+          + (s.trying ? `, trying ${s.trying}` : "") };
+      }
       const last = s.total && s.iter >= s.total && s.seeded;
       return { word: "Descending", detail: `Step ${s.iter} of ${s.total}` + (s.restart ? `, start ${s.restart + 1}` : "")
         + (last ? ", choosing the switches" : "") };
@@ -107,7 +150,7 @@ export function phaseText(s, { staticMode = false, loaded = false, recording = f
         + (last ? ", choosing the switches" : "") };
     }
     case "done": return { word: "Done", detail: (s.chord ? `${s.chord}, ` : "")
-      + (s.done ? `${fmtSeconds(s.done.seconds)}, ${s.done.steps} steps` : "") };
+      + (s.done ? `${fmtSeconds(s.done.seconds)}, ${s.done.steps} steps` + (s.done.finished ? ", finished early" : "") : "") };
     case "stopped": return { word: "Stopped", detail: s.bestCC ? "The best patch so far is on the knobs." : "" };
     case "error": return { word: s.errorWord || "Could not match", detail: s.error || "" };
     case "making": return { word: "Making the test note",
@@ -137,6 +180,8 @@ export function expectedSteps(s) {
   // A recorded run may be thinned (tools/thin_match.py): its x axis is the frames it kept, not the
   // steps the live run announced, or 130 kept frames would crowd into a fifth of the well.
   if (s.frameCount) return Math.max(s.points.length, s.frameCount, 2);
+  // Round 4: the run stops when it stops improving, so the axis grows with it (from a short start).
+  if (s.starts) return Math.max(s.points.length, 40);
   return Math.max(s.points.length, 1 + (s.total || 0) + (s.nsTotal || 0), 2);
 }
 
@@ -227,9 +272,10 @@ export const CURVE_DEFAULTS = {
   attack: { lo: 0.001, hi: 2, kind: "exp" }, decay: { lo: 0.005, hi: 4, kind: "exp" },
   sustain: { lo: 0, hi: 1, kind: "linear" }, lfo_to_pitch: { lo: 0, hi: 12, kind: "linear" },
   lfo_to_cutoff: { lo: 0, hi: 4, kind: "linear" }, lfo_depth: { lo: 0, hi: 1, kind: "linear" },
+  env_to_cutoff: { lo: 0, hi: 6, kind: "linear" },
 };
 const CURVE_OF_CC = { 20: "saw_lvl", 19: "square_lvl", 21: "sub_lvl", 23: "noise_lvl", 74: "cutoff", 26: "key_follow",
-  73: "attack", 75: "decay", 30: "sustain", 13: "lfo_to_pitch", 25: "lfo_to_cutoff", 17: "lfo_depth" };
+  73: "attack", 75: "decay", 30: "sustain", 13: "lfo_to_pitch", 25: "lfo_to_cutoff", 17: "lfo_depth", 24: "env_to_cutoff" };
 const curveFor = (cc, curves) => curves?.curves?.[CURVE_OF_CC[cc]] || CURVE_DEFAULTS[CURVE_OF_CC[cc]];
 /** A knob value 0..127 in the model's units (twin.py Curve.__call__). */
 const physical = (c, v) => {
@@ -337,6 +383,14 @@ export function relevance(params, { notes = [TEST_NOTE], curves = null, found = 
 /** The settings that count in the report (ROUND2.md §3): see relevance(). */
 export const relevantCCs = (params, opts) => relevance(params, opts).ccs;
 
+/** How the report's rows split into side-by-side tables of at most `per` rows, as evenly as they go:
+ *  the tables' height is fixed, so the report fits the panel whatever the count (14 → 7 + 7, 19 → 7 + 6 + 6). */
+export function tableSplit(n, per = 7) {
+  if (!(n > 0)) return [];
+  const k = Math.ceil(n / per), base = Math.floor(n / k), extra = n % k;
+  return Array.from({ length: k }, (_, i) => base + (i < extra ? 1 : 0));
+}
+
 /**
  * How close a test came back: for each setting that shapes the note, the true value and the found
  * one, compared after the model's exact trades — the levels as a mix (the loss is loudness-blind:
@@ -360,12 +414,12 @@ export function recoveryReport(truth, found, { notes = [TEST_NOTE], curves = nul
   if (norm(fl) > 0 && norm(tl) > 0) {
     const g = norm(tl) / norm(fl);
     LEVEL_CCS.forEach((cc, i) => compare.set(cc, knobFor(C(cc), fl[i] * g)));
-    trades.push({ ccs: LEVEL_CCS, words: "the levels as a mix (the matcher hears their balance, not their loudness)" });
+    trades.push({ ccs: LEVEL_CCS, words: "the levels as a mix (their balance, not their loudness)" });
   }
   if (left.some((l) => l.kind === "trade" && l.ccs.includes(17))) {
     const dT = physical(C(17), t(17)), dF = physical(C(17), f(17));
     for (const cc of [13, 25]) compare.set(cc, knobFor(C(cc), (physical(C(cc), f(cc)) * dF) / dT));
-    trades.push({ ccs: [13, 25], words: "Vibrato and LFO amount as if Mod wheel to LFO were right" });
+    trades.push({ ccs: [13, 25], words: "the LFO amounts as if Mod wheel to LFO were right" });
   }
   if (left.some((l) => l.kind === "trade" && l.ccs.includes(26))) {
     const shift = ((physical(C(26), f(26)) - physical(C(26), t(26))) * (notes[0] - 60)) / 12;
@@ -386,21 +440,38 @@ export function recoveryReport(truth, found, { notes = [TEST_NOTE], curves = nul
     : good === total ? `All ${total} settings came back within ${within}.` : `${good} of ${total} settings came back within ${within}.`;
   const said = [];
   const silent = left.filter((l) => l.kind === "silent"), stand = left.filter((l) => l.kind === "trade");
+  // Short sentences: the report shares one fixed-height panel with the knobs (views/match.js layout).
   const items = (ls) => ls.map((l) => `${l.name} (${l.why})`).join("; ");   // names can hold "and" themselves
-  if (silent.length) said.push(`Left out, because they do not change this sound, so they cannot come back: ${items(silent)}.`);
-  if (stand.length) said.push(`Also left out, because they stand in for another setting: ${items(stand)}.`);
+  if (silent.length) said.push(`Left out, as they do not change this sound and so cannot come back: ${items(silent)}.`);
+  if (stand.length) said.push(`Also left out: ${items(stand)}.`);
   const usedTrades = trades.filter((tr) => rows.some((r) => r.traded && tr.ccs.includes(r.cc)));
-  if (usedTrades.length) said.push(`* Compared after a trade: ${usedTrades.map((tr) => tr.words).join("; ")}. The knobs below show what it set.`);
+  if (usedTrades.length) said.push(`* Compared as the matcher hears them: ${usedTrades.map((tr) => tr.words).join("; ")}.`);
   if (ccs.includes(12) && !MATCHER_LFO_WAVES.includes(t(12))) {
     said.push(`The matcher tries only Triangle, Square and Saw for the LFO wave, so ${valueText(12, t(12))} cannot come back.`);
   }
   if (unison) said.push("Unison was on: the matcher plays one voice, so this sound cannot come back exactly.");
   if (source === "s1") {
-    said.push("This note came from the S-1, and the twin is not yet calibrated to a real S-1, so a setting can be found off even when the sound is close.");
-    if (!synced) said.push("The S-1 kept its own patch (this app did not send it one), so the true values here are this app's knobs and may not be the S-1's.");
+    said.push("From the S-1: the twin is not yet calibrated to it, so a setting can be off even when the sound is close.");
+    if (!synced) said.push("No patch was sent to the S-1, so the true values are this app's knobs and may not be its own.");
   }
   return { rows, good, total, summary, notes: said };
 }
+
+// ── the view's short copy ────────────────────────────────────────────────────────────
+/** Words the one-screen layout (core/fit.js) holds to their lines at 1470 × 760: the left column's notes
+ *  to one line of its 330 px, the right column's to one line of about 1,000 px (match.check.mjs). */
+export const COPY = {
+  intro: "Give it one note or a chord of up to four. The matcher turns the twin's knobs until the twin sounds like it.",
+  test: "A test: can the matcher find the knobs as set now?",
+  notes: "Mark up to four, or let the matcher find them.",
+  search: "Quick: 15 s. Thorough: 2 min. Deep: 5 to 10 min.",
+  loss: "The loss, lower is closer. The bright line is the best so far.",
+  plume: "Solid: the target. Dotted: the guess.",
+  closeness: "Closeness is the app's own measure of how alike the two sound. No one has checked it by ear yet, so trust your ears first.",
+  honest: "The matcher finds a patch that sounds like the target, not always the one that made it, and the twin is not yet calibrated to a real S-1.",
+};
+/** Beside Match, for a test target: its notes, and that it starts from scratch and searches thoroughly. */
+export const testGoWords = (notes) => `${notes.map(noteName).join(" + ")}, from scratch: a minute or two`;
 
 // ── pure: recording ─────────────────────────────────────────────────────────────────
 /** True for the S-1's USB audio input (CoreAudio calls it "S-1"; synth/audio.py S1_DEVICE_MARKERS). */
@@ -433,98 +504,304 @@ export function recordError(e) {
 }
 /** A peak level as 0..1 on a −60..0 dBFS scale: the live recording well. */
 export const meterLevel = (peak) => Math.max(0, Math.min(1, (20 * Math.log10(Math.max(peak, 1e-9)) + 60) / 60));
+/** True for a Bluetooth headset's microphone (AirPods and the like): 16 to 24 kHz, and heavily processed. */
+export const isBluetoothLabel = (label) => /airpods|bluetooth|\bbeats\b|powerbeats|buds|hands-?free/i.test(String(label || ""));
+export const BLUETOOTH_WORDS = "AirPods and other Bluetooth mics lose the top of the sound; the Mac's own mic or a USB mic matches better.";
+
+// ── pure: this Mac's own sound (round 13, W-sys; synth/native/systap.py, /api/match/system/...) ──────
+// The "From" picker offers it beside the browser inputs: every app's sound, and Logic Pro while it runs.
+// Record starts the cockpit's tap, Stop (or RECORD_MAX_S) ends it, and the take then goes the way of a
+// microphone take. The static page has no server, so no system sound.
+export const SYSTEM = "system:";                  // a "From" value: "system:" (every app) or "system:<bundle id>"
+/** The picker's options for this Mac's sound, from the server's sources ({app, label}). */
+export function systemOptions(sources) {
+  return (Array.isArray(sources) ? sources : []).filter((s) => s && typeof s.label === "string" && s.label)
+    .map((s) => ({ value: SYSTEM + (typeof s.app === "string" ? s.app : ""), label: s.label }));
+}
+/** The app a "From" value records: null for every app, a bundle id, or undefined for a browser input. */
+export function systemApp(value) {
+  if (typeof value !== "string" || !value.startsWith(SYSTEM)) return undefined;
+  return value.slice(SYSTEM.length) || null;
+}
+/** Where to play, in the status line: "in Logic Pro", or "on this Mac" for every app. */
+export const systemWhere = (app, label) => (app ? `in ${label || "that app"}` : "on this Mac");
+/** A failed start or stop, in plain words: the server's own, else that the app could not be reached. */
+export const systemError = (e) => (e && e.status && e.message ? e.message
+  : "Could not reach the app. Check that it is still running, then press Record again.");
+
+// ── pure: the target the matcher gets (round 7; the server decides, POST /api/match/prepare) ────
+/** Seconds as the found line says them: "2.1 s" (to the hundredth when `fine`: a short sound). */
+const secs = (t, fine = false) => `${t.toFixed(fine ? 2 : 1)} s`;
+/** The one line under a prepared target: "Note C3, held 0.8 s, from 2.1 s to 3.4 s" ("Notes C3 + E3",
+ *  and no "held" when the key-up could not be seen). One note the pitch tracker followed says its
+ *  tuning and wobble ("Note C♯3, 28 cents flat, wavering ±36 cents, …"), or "No clear pitch, maybe
+ *  C♯4" when the tracker is unsure. */
+export function foundLine(prep) {
+  const notes = Array.isArray(prep?.notes) ? prep.notes.filter(Number.isFinite) : [];
+  const parts = [];
+  const followed = notes.length === 1 && Number.isFinite(prep?.cents);   // the tracker's own note
+  if (followed && Number.isFinite(prep.confidence) && prep.confidence < UNSURE) parts.push(`No clear pitch, maybe ${noteName(notes[0])}`);
+  else if (notes.length) parts.push(`${notes.length > 1 ? "Notes" : "Note"} ${notes.map(noteName).join(" + ")}`, ...pitchWords(prep));
+  if (Number.isFinite(prep?.gate_s)) parts.push(`held ${secs(prep.gate_s)}`);
+  const [t0, t1] = Array.isArray(prep?.crop) ? prep.crop : [];
+  if (Number.isFinite(t0) && Number.isFinite(t1)) {
+    const fine = t1 - t0 < 0.3 || secs(t0) === secs(t1);
+    parts.push(`from ${secs(t0, fine)} to ${secs(t1, fine)}`);
+  }
+  const line = parts.join(", ");
+  return line ? line[0].toUpperCase() + line.slice(1) : "The sound";
+}
+/** The notes to pre-mark on "Which notes?": the ones found, at most four. */
+export const foundNotes = (prep) => [...new Set((Array.isArray(prep?.notes) ? prep.notes : [])
+  .filter((n) => Number.isInteger(n) && n >= 0 && n <= 127))].sort((a, b) => a - b).slice(0, 4);
+/** The keyboard's lowest C (it shows two octaves from there) for these notes: the C at or under the
+ *  lowest; `fallback` when there are none. */
+export function lowCFor(notes, fallback = 48) {
+  if (!notes.length) return fallback;
+  const lo = Math.min(...notes);
+  return Math.max(0, Math.min(96, lo - (lo % 12)));
+}
+/** What "Play my patch" plays: the marked notes, else the found ones (at most four). */
+export function patchNotes(seeds, prep) {
+  const marked = [...(seeds || [])].filter(Number.isFinite).sort((a, b) => a - b);
+  return (marked.length ? marked : foundNotes(prep)).slice(0, 4);
+}
+/** How long "Play my patch" holds its keys: the target's own held time, else its length (a pluck:
+ *  the key is simply held while it sounds), 0.3 to 4 s; 1.2 s when nothing is known. */
+export function patchHold(prep) {
+  if (Number.isFinite(prep?.gate_s) && prep.gate_s > 0) return Math.min(4, Math.max(0.05, prep.gate_s));
+  const [t0, t1] = Array.isArray(prep?.crop) ? prep.crop : [];
+  if (Number.isFinite(t0) && Number.isFinite(t1) && t1 > t0) return Math.min(4, Math.max(0.3, t1 - t0));
+  return TEST_GATE;
+}
+/** Where the crop lies in the take, as fractions of it: {from, to, keyUp (null if unseen)}. */
+export function cropMarks(prep) {
+  const d = prep?.duration, [t0, t1] = Array.isArray(prep?.crop) ? prep.crop : [];
+  if (!(d > 0) || !Number.isFinite(t0) || !Number.isFinite(t1)) return null;
+  const f = (t) => Math.max(0, Math.min(1, t / d));
+  const up = Number.isFinite(prep.gate_s) && Number.isFinite(prep.onset) ? prep.onset + prep.gate_s : NaN;
+  return { from: f(t0), to: f(t1), keyUp: Number.isFinite(up) && up < t1 ? f(up) : null };
+}
+/** The server's outline of the take (one 0..1 peak a slice) at `cols` columns, each the loudest it covers. */
+export function outlineColumns(peaks, cols) {
+  const n = Array.isArray(peaks) ? peaks.length : 0, out = new Float32Array(Math.max(0, cols | 0));
+  if (!n || !out.length) return out;
+  for (let c = 0; c < out.length; c++) {
+    const a = Math.floor((c * n) / out.length), b = Math.max(a + 1, Math.floor(((c + 1) * n) / out.length));
+    let m = 0;
+    for (let i = a; i < Math.min(n, b); i++) m = Math.max(m, Number(peaks[i]) || 0);
+    out[c] = m;
+  }
+  return out;
+}
+/** The x of a fraction of the take in a well `w` px wide (design/draw.js maps with PAD = 10; match.check.mjs holds them together). */
+export const WELL_PAD = 10;
+export const wellX = (w, frac) => WELL_PAD + frac * (w - 2 * WELL_PAD);
+/** A marker dragged to `frac` of the take (0..1): the new crop, [t0, t1] seconds, at least 50 ms long. */
+export function dragCrop(crop, which, frac, duration, least = 0.05) {
+  const t = Math.max(0, Math.min(1, frac)) * duration;
+  const [t0, t1] = crop;
+  const r = (v) => Math.round(v * 1000) / 1000;
+  return which === "from" ? [r(Math.max(0, Math.min(t, t1 - least))), t1] : [t0, r(Math.min(duration, Math.max(t, t0 + least)))];
+}
+
+// ── pure: the pitch the tracker heard, and what the S-1 cannot make (round 9, W-voice) ─────────────
+// POST /api/match/prepare adds cents, wobble, confidence (synth/match/pitch.py) and reach
+// (synth/match/reach.py): {resonances: [{hz, db}], vowel_like, breath_db, wobble, irregular, vibrato_hz}.
+export const UNSURE = 0.5;       // a pitch tracker less sure than this says "No clear pitch"
+export const IN_TUNE = 5;        // cents: nearer the note than this goes unsaid
+export const STEADY = 10;        // cents: a wobble narrower than this goes unsaid
+export const UNEVEN = 20;        // cents: pitch movement no even LFO wave follows, worth a sentence
+export const BREATHY = -3;       // dB: breath this near the tone, or louder, is worth a sentence
+export const RESONANT = 40;      // Resonance (CC71) from here makes a peak worth naming
+export const NEAR_OCTAVES = 0.5; // the match's filter peak is "at" a resonance within half an octave of it
+/** A pitch movement's size: "±36 cents"; from a semitone up, "±7.2 semitones". */
+export function spanWords(c) {
+  const a = Math.abs(c);
+  if (a < 99.5) return `±${Math.round(a)} cents`;
+  const st = (a / 100).toFixed(1);
+  return `±${st} semitone${st === "1.0" ? "" : "s"}`;
+}
+/** The one note's pitch, for the found line: ["28 cents flat", "wavering ±36 cents"]; [] when it is in
+ *  tune and steady (a synth note), or unknown. */
+export function pitchWords(prep) {
+  const out = [];
+  const c = prep?.cents, w = prep?.wobble;
+  if (Number.isFinite(c) && Math.abs(c) >= IN_TUNE) out.push(`${Math.round(Math.abs(c))} cents ${c < 0 ? "flat" : "sharp"}`);
+  if (Number.isFinite(w) && w >= STEADY) out.push(`wavering ${spanWords(w)}`);
+  return out;
+}
+/** Hz as the reach lines say them, to the nearest 10 ("490", "1220"). */
+const hzWords = (hz) => String(Math.round(hz / 10) * 10);
+const COUNT = ["", "one", "two", "three"];
+/** Where the found patch puts its filter's peak, in Hz, at `note`: Cutoff, moved by Key follow and by
+ *  Env amount at the sustain level (twin.py render: log2 cutoff + key follow + env amount × env). */
+export function filterPeak(cc, note, curves = null) {
+  const C = (n) => curveFor(n, curves);
+  const fc = physical(C(74), read(cc, 74));
+  const kf = physical(C(26), read(cc, 26)) * (note - 60) / 12;
+  const env = physical(C(24), read(cc, 24)) * physical(C(30), read(cc, 30));
+  return fc * 2 ** (kf + env);
+}
+/**
+ * What in the sound the S-1 could not make, and why: one or two plain sentences after a match ([] when
+ * nothing applies). `reach` is /api/match/prepare's; `cc` the found patch (the done frame's), `notes`
+ * its notes. A vowel first (two or more resonances against the S-1's one filter; where the match put its
+ * one, by Cutoff and Resonance), then a pitch that wavers unevenly (against the even, repeating LFO),
+ * then breath. Plain words: no jargon but "resonance" (and the knob names the view shows).
+ */
+export function reachLines(reach, { cc = null, notes = [TEST_NOTE], curves = null } = {}) {
+  if (!reach || typeof reach !== "object") return [];
+  const said = [];
+  const res = (Array.isArray(reach.resonances) ? reach.resonances : [])
+    .filter((r) => Number.isFinite(r?.hz) && r.hz > 0).sort((a, b) => a.hz - b.hz);
+  if (reach.vowel_like === true && res.length >= 2) {
+    const n = Math.min(3, res.length), list = res.slice(0, n);
+    said.push(`your sound has ${COUNT[n]} resonances, near ${listText(list.map((r) => hzWords(r.hz)))} Hz, like a vowel.`);
+    const which = n === 2 ? ["the lower one", "the upper one"] : ["the lowest one", `the one near ${hzWords(list[1].hz)} Hz`, "the highest one"];
+    if (!cc) said.push("The S-1's filter makes one.");
+    else if (read(cc, 71) < RESONANT) said.push("The S-1's filter makes one, and the match keeps its Resonance low.");
+    else {
+      const peak = filterPeak(cc, Math.min(...(notes.length ? notes : [TEST_NOTE])), curves);
+      const dist = list.map((r) => Math.abs(Math.log2(peak / r.hz)));
+      const at = dist.indexOf(Math.min(...dist));
+      said.push(dist[at] <= NEAR_OCTAVES ? `The S-1's filter makes one, so the match keeps ${which[at]}.`
+        : `The S-1's filter makes one, and the match puts it near ${hzWords(peak)} Hz, ${peak < list[0].hz ? "below" : peak > list[n - 1].hz ? "above" : "between"} them.`);
+    }
+  }
+  if (Number.isFinite(reach.irregular) && reach.irregular >= UNEVEN) {
+    const vib = cc && physical(curveFor(13, curves), read(cc, 13)) * physical(curveFor(17, curves), read(cc, 17)) >= 0.05;
+    said.push(`${said.length ? "Your pitch also wavers" : "your pitch wavers"} unevenly (${spanWords(reach.irregular)}), and the S-1 wavers a pitch only evenly, `
+      + (vib ? "so the match follows it with an even vibrato." : "so the match holds one pitch."));
+  }
+  if (said.length < 3 && Number.isFinite(reach.breath_db) && reach.breath_db >= BREATHY) {
+    said.push(`${said.length ? "Your sound is also" : "your sound is"} about as much breath as tone, and the S-1 adds noise only as a plain hiss through the same filter.`);
+  }
+  if (!said.length) return [];
+  return [`Out of the S-1's reach: ${said[0]}`, ...said.slice(1)];
+}
 
 // ── the view ─────────────────────────────────────────────────────────────────────────
 const CSS = `
-.v-match { position: relative; z-index: 1; max-width: 1480px; margin: 0 auto; padding: 30px var(--gutter) 56px; }
-.v-match .mx-grid { display: grid; grid-template-columns: minmax(0, 340px) minmax(0, 1fr); gap: var(--gap); align-items: start; }
-.v-match .mx-input > * + * { margin-top: 18px; }
+/* One screen (core/fit.js): above 1180 px the view is laid out at 1470 px and must fit 1470 × 760 under the
+   header and above the bottom strip at 100% (natural height about 660 px or less, in every state). The right
+   column's panel has one fixed height and shows the knobs, or the report after a test. At 1180 px and below
+   the view stacks and scrolls. */
+.v-match { position: relative; z-index: 1; max-width: 1480px; margin: 0 auto; padding: 12px var(--gutter) 8px; }
+.v-match .mx-grid { display: grid; grid-template-columns: minmax(0, 330px) minmax(0, 1fr); gap: var(--gap); align-items: start; }
+.v-match .mx-hidden { display: none !important; }
+.v-match code { font: 400 12.5px ui-monospace, "SF Mono", Menlo, monospace; color: var(--ink); background: var(--deep); padding: 1px 5px; border-radius: 3px; white-space: nowrap; }
+
+/* the left column: the target, the notes, the search */
+.v-match .mx-input > * + * { margin-top: 10px; }
+.v-match .mx-input > .mx-recmsg { margin-top: 5px; }
+.v-match .mx-listen { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 10px; }
 .v-match .mx-input .heading { margin-bottom: 0; }
-.v-match .mx-input .note { margin: 6px 0 0; max-width: 40ch; }
-.v-match .mx-drop { position: relative; min-height: 150px; display: flex; flex-direction: column; align-items: center; justify-content: center;
-  gap: 6px; text-align: center; padding: 18px; cursor: pointer; outline: 1.25px dashed var(--ink-3); outline-offset: -1px; }
+.v-match .mx-input .note { margin: 3px 0 0; max-width: none; }
+.v-match .mx-drop { position: relative; height: 96px; display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 4px; text-align: center; padding: 8px 14px; cursor: pointer; outline: 1.25px dashed var(--ink-3); outline-offset: -1px; }
 .v-match .mx-drop:hover, .v-match .mx-drop.over { outline-color: var(--ink); }
 .v-match .mx-drop:focus-visible { outline: 1.5px dashed var(--ink); outline-offset: 3px; }
 .v-match .mx-drop canvas { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
-.v-match .mx-drop p { position: relative; margin: 0; font-size: 14px; color: var(--ink); max-width: 30ch; }
+.v-match .mx-drop p { position: relative; margin: 0; font-size: 14px; color: var(--ink); }
 .v-match .mx-drop .mx-file { font-size: 12.5px; color: var(--ink-2); font-variant-numeric: tabular-nums; }
-.v-match .mx-drop.loaded { justify-content: flex-end; }
-.v-match .mx-drop.loaded p.mx-ask { display: none; }
-.v-match .mx-sub { font: italic 400 19px/1.2 var(--serif); margin: 0; }
-.v-match .mx-input > .mx-sub { margin-top: 26px; }
-.v-match .mx-keys { position: relative; height: 70px; display: flex; background: var(--deep); border-radius: 3px; user-select: none; -webkit-user-select: none; }
+.v-match .mx-drop.loaded, .v-match .mx-drop.recording { justify-content: flex-end; }
+.v-match .mx-drop.loaded p.mx-ask, .v-match .mx-drop.recording p.mx-ask { display: none; }
+.v-match .mx-drop.recording { outline-style: solid; outline-color: var(--ink); }
+.v-match .mx-rec { display: flex; align-items: center; gap: 10px 14px; }
+.v-match .mx-rec .pill.on { border-color: var(--ink); }
+.v-match .mx-from { display: flex; align-items: center; gap: 8px; flex: 1 1 150px; min-width: 0; font-size: 13px; color: var(--ink-2); }
+.v-match .mx-from select { flex: 1; min-width: 0; background: var(--deep); color: var(--ink); border: 1px solid var(--ink-3); border-radius: 3px;
+  padding: 7px 5px 7px 7px; font: 400 13px var(--sans); }   /* room for "This Mac's sound (all apps)" beside the arrow */
+.v-match .mx-from select:disabled { opacity: .45; }
+.v-match .mx-recmsg:empty { display: none; }
+/* up to three lines under Record (macOS's permission words are that long): the test's own note steps aside meanwhile, so
+   the column keeps its height in every state */
+.v-match .mx-input > .mx-recmsg:not(:empty) ~ .mx-testbox .note { display: none; }
+.v-match .mx-test { text-align: left; padding: 1px 0; }
+.v-match .mx-test:disabled { opacity: .45; cursor: default; color: var(--ink-2); }
+.v-match .mx-sub { font: italic 400 19px/1.1 var(--serif); margin: 0; }
+.v-match .mx-input > .mx-sub { margin-top: 18px; }
+.v-match .mx-keys { position: relative; height: 56px; margin-top: 8px; display: flex; background: var(--deep); border-radius: 3px; user-select: none; -webkit-user-select: none; }
 .v-match .mx-keys button { font: inherit; padding: 0; margin: 0; }
 .v-match .mx-wk { position: relative; flex: 1; border: 0; border-right: 1px solid var(--ink-4); background: none; cursor: pointer;
-  display: flex; align-items: flex-end; justify-content: center; padding-bottom: 6px !important; font-size: 10.5px; color: var(--ink-3); border-radius: 0; }
+  display: flex; align-items: flex-end; justify-content: center; padding-bottom: 4px !important; font-size: 10.5px; color: var(--ink-3); border-radius: 0; }
 .v-match .mx-wk.last { border-right: 0; }
-.v-match .mx-bk { position: absolute; top: 0; height: 42px; background: var(--field); border: 1px solid var(--ink-3); border-top: 0;
+.v-match .mx-bk { position: absolute; top: 0; height: 34px; background: var(--field); border: 1px solid var(--ink-3); border-top: 0;
   border-radius: 0 0 2px 2px; cursor: pointer; z-index: 2; color: var(--ink-3); font-size: 10px; }
 .v-match .mx-keys [aria-pressed="true"] { background: rgb(var(--pc)); color: var(--on-pc); box-shadow: inset 0 0 0 1.5px var(--ink); }
 .v-match .mx-keys.found [aria-pressed="true"] { box-shadow: inset 0 0 0 1.5px var(--ink), inset 0 0 0 3px var(--deep); }
 .v-match .mx-keys button:focus-visible { outline-offset: -3px; }
 .v-match .mx-keys[aria-disabled="true"] button { cursor: default; }
-.v-match .mx-keyrow { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 16px; margin-top: 8px; }
+.v-match .mx-keyrow { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 16px; margin-top: 3px; }
+.v-match .mx-keyrow .quiet { padding: 2px 0; }
 .v-match .mx-keyrow .mx-marked { color: var(--ink-2); font-size: 13px; margin-right: auto; font-variant-numeric: tabular-nums; }
-.v-match .mx-go { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; }
+.v-match .mx-segs { gap: 10px 30px; }
+.v-match .mx-go { display: flex; align-items: center; gap: 6px 16px; flex-wrap: wrap; }
+.v-match .mx-recorded { list-style: none; margin: 0; padding: 0; }
+.v-match .mx-recorded button { background: none; border: 0; border-bottom: 1px solid var(--ink-4); cursor: pointer; width: 100%;
+  text-align: left; padding: 8px 0; color: var(--ink-2); font-size: 14.5px; display: flex; justify-content: space-between; gap: 12px; }
+.v-match .mx-recorded button:hover, .v-match .mx-recorded button[aria-current="true"] { color: var(--ink); }
+.v-match .mx-recorded small { font-size: 12.5px; color: var(--ink-2); font-variant-numeric: tabular-nums; white-space: nowrap; }
+
+/* the right column: the wells, one status row, the panel (knobs or report), one honest line */
 .v-match .mx-run { min-width: 0; }
 .v-match .mx-wells { display: grid; grid-template-columns: minmax(0, 1.6fr) minmax(0, 1fr); gap: 24px; }
 .v-match .mx-wells figure { margin: 0; min-width: 0; }
-.v-match .mx-wells canvas { height: 214px; }
-.v-match .mx-status { margin: 26px 0 0; display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 16px; min-height: 30px; }
-.v-match .mx-word { font: italic 400 26px/1.1 var(--serif); }
-.v-match .mx-detail { color: var(--ink-2); font-size: 13.5px; font-variant-numeric: tabular-nums; }
-.v-match .mx-tag { flex-basis: 100%; font-size: 12.5px; color: var(--ink-2); }
+.v-match .mx-wells canvas { height: 150px; }
+.v-match .mx-wells figcaption { margin-top: 7px; font-size: 19px; }
+.v-match .mx-wells figcaption .note { display: inline; margin: 0 0 0 10px; font-size: 12.5px; }
+.v-match .mx-tag { display: block; margin: 12px 0 -4px; font-size: 12.5px; color: var(--ink-2); }
 .v-match .mx-tag b { font-weight: 500; color: var(--ink); border: 1.25px solid var(--ink-3); border-radius: 999px; padding: 2px 9px; margin-right: 8px; }
-.v-match .mx-result { margin-top: 18px; display: flex; flex-wrap: wrap; align-items: center; gap: 14px 28px; }
-.v-match .mx-close { display: flex; align-items: baseline; gap: 10px; }
-.v-match .mx-close b { font: 300 44px/1 var(--sans); font-variant-numeric: tabular-nums; letter-spacing: -0.01em; }
+.v-match .mx-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 26px; margin-top: 12px; min-height: 40px; }
+.v-match .mx-status { margin: 0; display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 14px; }
+.v-match .mx-word { font: italic 400 24px/1.1 var(--serif); }
+.v-match .mx-detail { color: var(--ink-2); font-size: 13.5px; font-variant-numeric: tabular-nums; }
+.v-match .mx-result { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 24px; }
+.v-match .mx-close { display: flex; align-items: baseline; gap: 9px; }
+.v-match .mx-close b { font: 300 36px/1 var(--sans); font-variant-numeric: tabular-nums; letter-spacing: -0.01em; }
 .v-match .mx-close span { font-size: 13.5px; color: var(--ink-2); }
-.v-match .mx-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 12px; }
-.v-match .mx-result .note { flex-basis: 100%; margin: 0; max-width: 62ch; }
-.v-match .mx-knobs { margin-top: 34px; display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 30px var(--gap); }
-.v-match .mx-stage .row { gap: 16px 10px; }
-.v-match .mx-stage h3 { font: italic 400 22px/1.15 var(--serif); margin: 0 0 14px; }
+.v-match .mx-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; }
+.v-match .mx-run > .mx-closenote, .v-match .mx-run > .mx-warn, .v-match .mx-run > .mx-reach { margin: 3px 0 0; max-width: none; }
+.v-match .mx-run > .mx-reach { color: var(--ink); }
+.v-match .mx-panelhead { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 28px; margin-top: 14px; }
+.v-match .mx-panelhead .seg .k-label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+.v-match .mx-panelhead .mx-close b { font-size: 26px; }
+.v-match .mx-panel { margin-top: 14px; height: 260px; overflow-y: auto; }
+/* four stages side by side, widths set by their controls (Oscillator: 4 dials a row, then 3 and Sub octave) */
+.v-match .mx-knobs { display: grid; grid-template-columns: minmax(0, 1.95fr) minmax(0, 1.3fr) minmax(0, 1.3fr) minmax(0, 1fr); gap: 0 22px; }
+.v-match .mx-stage h3 { font: italic 400 19px/1.15 var(--serif); margin: 0 0 8px; }
+.v-match .mx-stage .row { gap: 10px 8px; }
+.v-match .mx-knobs .knob { width: 68px; }
+.v-match .mx-knobs .knob svg { width: 44px; height: 44px; }
+.v-match .mx-knobs .k-label { margin-top: 3px; white-space: nowrap; }
+.v-match .mx-knobs .seg-opts { gap: 4px 7px; }
 .v-match .mx-knobs svg, .v-match .mx-knobs .seg-opts button { pointer-events: none; cursor: default; }
-.v-match .mx-honest { margin-top: 34px !important; max-width: 70ch !important; }
-.v-match .mx-recorded { list-style: none; margin: 0; padding: 0; }
-.v-match .mx-recorded button { background: none; border: 0; border-bottom: 1px solid var(--ink-4); cursor: pointer; width: 100%;
-  text-align: left; padding: 9px 0; color: var(--ink-2); font-size: 14.5px; display: flex; justify-content: space-between; gap: 12px; }
-.v-match .mx-recorded button:hover, .v-match .mx-recorded button[aria-current="true"] { color: var(--ink); }
-.v-match .mx-recorded small { font-size: 12.5px; color: var(--ink-2); font-variant-numeric: tabular-nums; white-space: nowrap; }
-.v-match code { font: 400 12.5px ui-monospace, "SF Mono", Menlo, monospace; color: var(--ink); background: var(--deep); padding: 1px 5px; border-radius: 3px; white-space: nowrap; }
-.v-match .mx-drop.recording { justify-content: flex-end; outline-style: solid; outline-color: var(--ink); }
-.v-match .mx-drop.recording p.mx-ask { display: none; }
-.v-match .mx-rec { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 14px; margin-top: 12px !important; }
-.v-match .mx-rec .pill.on { border-color: var(--ink); }
-.v-match .mx-from { display: flex; align-items: center; gap: 8px; flex: 1 1 170px; min-width: 0; font-size: 13px; color: var(--ink-2); }
-.v-match .mx-from select { flex: 1; min-width: 0; background: var(--deep); color: var(--ink); border: 1px solid var(--ink-3); border-radius: 3px;
-  padding: 7px 8px; font: 400 13.5px var(--sans); }
-.v-match .mx-from select:disabled { opacity: .45; }
-.v-match .mx-input .mx-recmsg { margin-top: 10px; }
-.v-match .mx-recmsg:empty { display: none; }
-.v-match .mx-test { text-align: left; }
-.v-match .mx-test:disabled { opacity: .45; cursor: default; color: var(--ink-2); }
-.v-match .mx-testbox .note { margin-top: 0; }
-.v-match .mx-report { margin-top: 34px; }
-.v-match .mx-report h3 { font: italic 400 22px/1.15 var(--serif); margin: 0 0 12px; }
-.v-match .mx-rtables { display: grid; grid-template-columns: repeat(auto-fit, minmax(270px, 1fr)); gap: 0 36px; margin-top: 16px; }
-.v-match .mx-rtable { width: 100%; border-collapse: collapse; font-size: 13.5px; font-variant-numeric: tabular-nums; }
-.v-match .mx-rtable th, .v-match .mx-rtable td { font-weight: 400; text-align: right; padding: 6px 0 6px 12px; border-bottom: 1px solid var(--ink-4); white-space: nowrap; }
+.v-match .mx-run > .mx-honest { margin: 10px 0 0; max-width: none; }
+.v-match .mx-rtables { display: grid; grid-template-columns: repeat(var(--cols, 2), minmax(0, 1fr)); gap: 0 32px; }
+.v-match .mx-rtable { width: 100%; border-collapse: collapse; font-size: 13px; line-height: 1.25; font-variant-numeric: tabular-nums; }
+.v-match .mx-rtable th, .v-match .mx-rtable td { font-weight: 400; text-align: right; padding: 3px 0 3px 10px; border-bottom: 1px solid var(--ink-4); white-space: nowrap; }
 .v-match .mx-rtable th:first-child { text-align: left; padding-left: 0; white-space: normal; color: var(--ink-2); }
-.v-match .mx-rtable thead th { font-size: 12px; color: var(--ink-2); padding-top: 0; }
+.v-match .mx-rtable thead th { font-size: 11.5px; color: var(--ink-2); padding-top: 0; }
 .v-match .mx-rtable td:last-child { color: var(--ink-2); }
 .v-match .mx-rtable tr.off th:first-child, .v-match .mx-rtable tr.off td:last-child { color: var(--ink); }
 .v-match .mx-rtable tr.off td:last-child { font-weight: 500; }
-.v-match .mx-rnotes .note { max-width: 70ch; margin-top: 10px; }
-.v-match .mx-hidden { display: none !important; }
-@media (max-width: 1100px) {
+.v-match .mx-rnotes { margin: 9px 0 0; max-width: none; font-size: 12.5px; line-height: 1.4; }
+
+/* stacked (1180 px and below): one column that scrolls; the panel takes the height it needs */
+@media (max-width: 1180px) {
+  .v-match { padding: 24px var(--gutter) 48px; }
   .v-match .mx-grid { grid-template-columns: minmax(0, 1fr); }
   .v-match .mx-input .note { max-width: 60ch; }
+  .v-match .mx-wells canvas { height: 180px; }
+  .v-match .mx-panel { height: auto; overflow: visible; }
+  .v-match .mx-knobs { grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 24px 30px; }
+  .v-match .mx-rtables { grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); }
 }
 @media (max-width: 640px) {
   .v-match .mx-wells { grid-template-columns: minmax(0, 1fr); }
-  .v-match .mx-wells canvas { height: 180px; }
-  .v-match .mx-close b { font-size: 36px; }
+  .v-match .mx-wells figcaption .note { display: block; margin: 3px 0 0; }
+  .v-match .mx-close b { font-size: 32px; }
   .v-match .mx-rtables { grid-template-columns: minmax(0, 1fr); }
   .v-match .mx-rtable + .mx-rtable thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
 }
@@ -542,7 +819,7 @@ export function unmount() {
   try { current.destroy(); } finally { current = null; }
 }
 
-export default { id, title, mount, unmount };
+export default { id, title, mount, unmount, hints };
 
 // A tiny element builder: h("div", {class: "x", onclick: fn}, child, "text", …)
 function h(tag, attrs = {}, ...kids) {
@@ -570,6 +847,7 @@ function createView(root, ctx) {
   let running = false;          // a live match or a replay is streaming
   let recorded = false;         // the frames on screen come from a recorded run
   let socket = null;
+  let finishing = false;        // "finish" was sent; the done frame is on its way
   let replayTimers = [];
   let fileBytes = null, targetBuffer = null, targetLabel = "";
   let quality = "quick", startFrom = "scratch";
@@ -581,8 +859,18 @@ function createView(root, ctx) {
   let destroyed = false;
   let test = null;              // the loaded target is a test of the current sound: {truth, notes, note, source, synced, unison}
   let making = false;           // the test note is being made (rendered by the twin, or played by the S-1)
-  let rec = null;               // a recording in progress (see startRecording)
+  let rec = null;               // a recording in progress (see startRecording; startSystem for this Mac's sound)
   let inputs = [], chosenInput = "";
+  let systemSources = [];       // this Mac's own sound, as the server offers it: [{app, label}]
+  let recError = "";            // under Record: what went wrong with the last take (else a Bluetooth word)
+  // What the server found in the loaded target (POST /api/match/prepare): the crop the matcher gets,
+  // the key-up, the notes, warnings. state: "none" | "pending" | "ok" | "failed" (no clear sound) |
+  // "unavailable" (the server could not say; the match still crops on its own).
+  let prep = null, prepState = "none", prepError = "", prepToken = 0;
+  let cropOverride = null;      // [t0, t1]: the crop's edges as the user dragged them
+  let drag = null;              // a crop mark being dragged: {which: "from" | "to", crop: [t0, t1], moved}
+  let swallowClick = false;     // the click that ends a drag is not a click on the well
+  let patch = null;             // "Play my patch": {notes, timer} while its keys are held
 
   // ── layout ──────────────────────────────────────────────────────────────────────
   const view = h("section", { class: "v-match", "aria-label": "Match a sound", "data-phase": "idle" });
@@ -591,12 +879,18 @@ function createView(root, ctx) {
   view.append(h("div", { class: "mx-grid" }, input, runCol));
   root.append(view);
   disposers.push(() => view.remove());
+  // one screen: the view's design size, scaled down evenly to fit a smaller window (core/fit.js)
+  const fit = fitView(view, { onFit: (s) => { view.dataset.fit = String(s); } });
+  disposers.push(() => fit.destroy());
+  // A to K play the synth here too (core/keys.js), so a patch can be heard beside the target.
+  ctx.keys?.qwerty(true);
+  disposers.push(() => ctx.keys?.qwerty(false));
 
   input.append(
     h("h2", { class: "heading", text: "Match a sound" }),
     h("p", { class: "note", text: staticMode
       ? "The matcher turns the twin's knobs by gradient descent until the twin sounds like a recording. This page cannot run it, so here are real runs, recorded on a computer and replayed step by step."
-      : "Give it a recording of one note or a chord of up to four. The matcher turns the twin's knobs by gradient descent until the twin sounds like it." }),
+      : COPY.intro }),
   );
 
   // server mode: the drop well (or Record, or a test note), the notes, the search budget
@@ -607,27 +901,33 @@ function createView(root, ctx) {
   const dropFile = h("p", { class: "mx-file" });
   const drop = h("div", { class: "well mx-drop", role: "button", tabindex: "0", "data-role": "drop",
     "aria-label": "Drop a sound here, or press Enter to choose a file" }, dropCanvas, dropAsk, dropFile, fileInput);
-  const playTargetEarly = h("button", { type: "button", class: "quiet", disabled: true, "data-action": "play-target-early",
-    onclick: () => playBuffer("target") }, "Play target");
-  const earlyRow = h("div", { class: "mx-go mx-hidden" }, playTargetEarly);
+  // Listening, before a match: the crop the matcher gets, and the synth's own sound on the marked note.
+  const playCrop = h("button", { type: "button", class: "pill", disabled: true, "data-action": "play-crop",
+    onclick: () => playBuffer("crop") }, "Play target");
+  const playPatchBtn = h("button", { type: "button", class: "pill", disabled: true, "data-action": "play-patch",
+    onclick: () => playPatch() }, "Play my patch");
+  const resetCrop = h("button", { type: "button", class: "quiet mx-hidden", "data-action": "reset-crop",
+    onclick: () => setCrop(null) }, "Reset crop");
+  const listenRow = h("div", { class: "mx-listen mx-hidden", "data-role": "listen" }, playCrop, playPatchBtn, resetCrop);
   const recBtn = h("button", { type: "button", class: "pill", "data-action": "record",
     onclick: () => (rec ? stopRecording() : startRecording()) }, "Record");
-  const inputSel = h("select", { "data-role": "input", onchange: () => { chosenInput = inputSel.value; } },
+  const inputSel = h("select", { "data-role": "input", onchange: () => { chosenInput = inputSel.value; recError = ""; paintRecMsg(); } },
     h("option", { value: "" }, "The default input"));
   const recRow = h("div", { class: "mx-rec" }, recBtn, h("label", { class: "mx-from" }, h("span", { text: "From" }), inputSel));
   const recMsg = h("p", { class: "note mx-recmsg", role: "status", "data-role": "record-message" });
   const testBtn = h("button", { type: "button", class: "quiet mx-test", "data-action": "test-current", onclick: () => matchCurrentSound() },
     "Match the synth's current sound");
   const testBox = h("div", { class: "mx-testbox" }, testBtn,
-    h("p", { class: "note", text: "A test of the matcher: one note of the synth as it is set now, matched from scratch. Then it shows which settings it found again." }));
+    h("p", { class: "note", text: COPY.test }));
 
   const keys = h("div", { class: "mx-keys", role: "group", "aria-label": "Notes to match" });
   const marked = h("span", { class: "mx-marked", "aria-live": "polite" });
-  const qualitySeg = seg({ label: "Search", value: quality, options: [{ value: "quick", label: "Quick" }, { value: "thorough", label: "Thorough" }],
+  const qualitySeg = seg({ label: "Search", value: quality, options: [{ value: "quick", label: "Quick" },
+    { value: "thorough", label: "Thorough" }, { value: "deep", label: "Deep" }],
     onInput: (v) => { quality = v; } });
-  const startSeg = seg({ label: "Start from", value: startFrom, options: [{ value: "scratch", label: "Scratch" }, { value: "current", label: "The synth's knobs" }],
+  const startSeg = seg({ label: "Start from", value: startFrom, options: [{ value: "scratch", label: "Scratch" }, { value: "current", label: "Current knobs" }],
     onInput: (v) => { startFrom = v; } });
-  const matchBtn = h("button", { type: "button", class: "pill", disabled: true, "data-action": "match", onclick: () => (running ? stopRun() : startMatch()) }, "Match");
+  const matchBtn = h("button", { type: "button", class: "pill", disabled: true, "data-action": "match", onclick: () => (running ? finishRun() : startMatch()) }, "Match");
   const goNote = h("span", { class: "note", style: "margin:0" });
 
   if (!staticMode) {
@@ -635,19 +935,19 @@ function createView(root, ctx) {
       drop,
       recRow,
       recMsg,
-      earlyRow,
+      listenRow,
       testBox,
       h("div", {},
         h("h3", { class: "mx-sub", text: "Which notes?" }),
-        h("p", { class: "note", text: "Mark the notes you hear, up to four. This is the sure way. Leave them empty and the matcher looks for them." }),
-        h("div", { style: "margin-top:12px" }, keys),
+        h("p", { class: "note", text: COPY.notes }),
+        keys,
         h("div", { class: "mx-keyrow" }, marked,
           h("button", { type: "button", class: "quiet", onclick: () => shiftKeys(-12) }, "Lower"),
           h("button", { type: "button", class: "quiet", onclick: () => shiftKeys(12) }, "Higher"),
-          h("button", { type: "button", class: "quiet", onclick: () => { seeds.clear(); paintKeys(); } }, "Clear")),
+          h("button", { type: "button", class: "quiet", onclick: () => { seeds.clear(); paintKeys(); syncControls(); } }, "Clear")),
       ),
-      h("div", { class: "row", style: "gap:14px 34px" }, qualitySeg.el, startSeg.el),
-      h("p", { class: "note", text: "Quick is one short descent. Thorough makes four starts and keeps the best; it takes several times longer." }),
+      h("div", { class: "row mx-segs" }, qualitySeg.el, startSeg.el),
+      h("p", { class: "note", text: COPY.search }),
       h("div", { class: "mx-go" }, matchBtn, goNote),
     );
   }
@@ -664,39 +964,52 @@ function createView(root, ctx) {
     );
   }
 
-  // the run: two wells, the status line, the result, the knobs
+  // the run: two wells, one status row (the result joins it when done), then one panel of fixed height that
+  // shows the knobs, or after a test the report (a switch picks), and one honest line
   const lossCanvas = h("canvas", { class: "well", role: "img", "aria-label": "The loss, falling as the matcher descends" });
   const plumeCanvas = h("canvas", { class: "well", role: "img", "aria-label": "The target and the current guess, drawn as plumes" });
   const word = h("span", { class: "mx-word", "aria-live": "polite" });
   const detail = h("span", { class: "mx-detail" });
   const tag = h("span", { class: "mx-tag mx-hidden", "data-role": "recorded" });
   const closeNum = h("b");
-  const closeNote = h("p", { class: "note", text: "Closeness is the app's own measure of how alike the two sound. No one has checked it by ear yet, so trust your ears first." });
+  const closeNote = h("p", { class: "note mx-closenote", text: COPY.closeness });
+  const warnLine = h("p", { class: "note mx-warn mx-hidden", role: "status", "data-role": "warnings" });
+  // after a match: what in the sound the S-1 could not make, and why (reachLines)
+  const reachLine = h("p", { class: "note mx-reach mx-hidden", "data-role": "reach" });
   const playTarget = h("button", { type: "button", class: "pill", "data-action": "play-target", onclick: () => playBuffer("target") }, "Play target");
   const playMatch = h("button", { type: "button", class: "pill", "data-action": "play-match", onclick: () => playBuffer("match") }, "Play match");
   const loadBtn = h("button", { type: "button", class: "pill", "data-action": "load", onclick: loadIntoSynth }, "Load into the synth");
   const againBtn = h("button", { type: "button", class: "quiet", "data-action": "again", onclick: () => (recorded ? replayAgain() : startMatch()) }, "Match again");
   const closeBlock = h("div", { class: "mx-close" }, closeNum, h("span", { text: "closeness" }));
   const result = h("div", { class: "mx-result mx-hidden", "data-role": "result" },
-    closeBlock, h("div", { class: "mx-actions" }, playTarget, playMatch, loadBtn, againBtn), closeNote);
-  // after a test of the current sound: how many settings came back
+    closeBlock, h("div", { class: "mx-actions" }, playTarget, playMatch, loadBtn, againBtn));
+  // after a test of the current sound: how many settings came back, or the knobs it set
+  let panelShows = "report";
+  const panelSeg = seg({ label: "Show", value: panelShows,
+    options: [{ value: "report", label: "How close it came back" }, { value: "knobs", label: "The knobs" }],
+    onInput: (v) => { panelShows = v; paintPanel(); } });
   const reportNum = h("b"), reportWords = h("span");
+  const panelHead = h("div", { class: "mx-panelhead mx-hidden", "data-role": "panel-switch" },
+    panelSeg.el, h("div", { class: "mx-close", "data-role": "report-summary" }, reportNum, " ", reportWords));
   const reportTables = h("div", { class: "mx-rtables" });
-  const reportNotes = h("div", { class: "mx-rnotes" });
+  const reportNotes = h("p", { class: "note mx-rnotes" });
   const report = h("section", { class: "mx-report mx-hidden", "data-role": "report", "aria-label": "How close the test came back" },
-    h("h3", { text: "How close it came back" }), h("div", { class: "mx-close" }, reportNum, " ", reportWords), reportTables, reportNotes);
+    reportTables, reportNotes);
   const knobsBox = h("div", { class: "mx-knobs", "aria-label": "The twin's knobs, as the matcher sets them" });
   runCol.append(
     h("div", { class: "mx-wells" },
       h("figure", {}, lossCanvas, h("figcaption", { class: "caption" }, "Descent",
-        h("span", { class: "note", text: "The loss, lower is closer. The bright line is the best so far." }))),
+        h("span", { class: "note", text: COPY.loss }))),
       h("figure", {}, plumeCanvas, h("figcaption", { class: "caption" }, "Target and guess",
-        h("span", { class: "note", text: "Solid: the target. Dotted: the twin's current guess. Each loop is one cycle." })))),
-    h("p", { class: "mx-status", role: "status" }, tag, word, detail),
-    result,
-    report,
-    knobsBox,
-    h("p", { class: "note mx-honest", text: "The matcher finds a patch that sounds like the target, not always the patch that made it. The twin's curves are not yet calibrated to a real S-1, so a match is only as true as the twin." }),
+        h("span", { class: "note", text: COPY.plume })))),
+    tag,
+    h("div", { class: "mx-row" }, h("p", { class: "mx-status", role: "status" }, word, detail), result),
+    warnLine,
+    reachLine,
+    closeNote,
+    panelHead,
+    h("div", { class: "mx-panel" }, knobsBox, report),
+    h("p", { class: "note mx-honest", text: COPY.honest }),
   );
 
   // the knobs and switches (read-only here: they show the matcher's hand)
@@ -794,6 +1107,7 @@ function createView(root, ctx) {
     else seeds.add(n);
     audition(n);
     paintKeys();
+    syncControls();                 // "Play my patch" plays the marked notes
   }
   // A short audition of a marked key. Its note-off is never cancelled (a stuck note on the
   // S-1 is worse than a late one); unmount sends any pending note-offs at once.
@@ -809,7 +1123,7 @@ function createView(root, ctx) {
 
   // ── the target: a file, a recording, or a test note, all loaded the same way ─────────
   const busy = () => running || making || !!rec;
-  drop.addEventListener("click", () => { if (!busy()) fileInput.click(); });
+  drop.addEventListener("click", () => { if (swallowClick) { swallowClick = false; return; } if (!busy()) fileInput.click(); });
   drop.addEventListener("keydown", (e) => { if ((e.key === "Enter" || e.key === " ") && !busy()) { e.preventDefault(); fileInput.click(); } });
   ["dragenter", "dragover"].forEach((ev) => drop.addEventListener(ev, (e) => { e.preventDefault(); drop.classList.add("over"); }));
   ["dragleave", "drop"].forEach((ev) => drop.addEventListener(ev, (e) => { e.preventDefault(); drop.classList.remove("over"); }));
@@ -821,7 +1135,8 @@ function createView(root, ctx) {
     if (f.size > 25 * 1024 * 1024) { setError("That file is too large (25 MB max). Trim it to a few seconds of the sound."); return; }
     await loadTarget(await f.arrayBuffer(), f.name);
   }
-  /** Make `bytes` the target, named `name` in the well ("Recording, 2.4 s"); `testInfo` when it is a test note. */
+  /** Make `bytes` the target, named `name` in the well ("Recording, 2.4 s"); `testInfo` when it is a test note.
+   *  The whole take goes to the server, which finds the sound in it (prepare()); the well then draws the crop. */
   async function loadTarget(bytes, name, testInfo = null) {
     if (running) return;
     fileBytes = bytes;
@@ -829,38 +1144,140 @@ function createView(root, ctx) {
     targetLabel = name;
     test = testInfo;
     run = initialRun(); recorded = false;
+    prep = null; prepError = ""; cropOverride = null; decoded.crop = null;
+    prepState = staticMode ? "none" : "pending";
     drop.classList.add("loaded");
     dropFile.textContent = name;
-    goNote.textContent = test ? `The test gives the matcher its note (${test.notes.map(noteName).join(" + ")}), starts from scratch, and searches thoroughly, so it takes a minute or two.` : "";
+    goNote.textContent = test ? testGoWords(test.notes) : "";
+    listenRow.classList.remove("mx-hidden");
     syncControls();
     renderAll();
+    if (!staticMode) prepare(bytes, ++prepToken);       // not awaited: a test's match starts at once
     try {
       targetBuffer = await ac().decodeAudioData(fileBytes.slice(0));
       targetLabel = `${name}, ${targetBuffer.duration.toFixed(1)} s`;
-      playTargetEarly.disabled = false;
-      earlyRow.classList.remove("mx-hidden");
     } catch (_) {
-      playTargetEarly.disabled = true;   // e.g. AIFF: the browser cannot decode it; the server still can
-      earlyRow.classList.add("mx-hidden");
+      targetBuffer = null;               // e.g. AIFF: the browser cannot decode it; the server still can
+      if (prep) targetLabel = `${name}, ${prep.duration.toFixed(1)} s`;
     }
-    if (!rec) dropFile.textContent = targetLabel;
+    if (!rec && fileBytes === bytes) dropFile.textContent = targetLabel;
+    syncControls();
+    drawDrop();
+  }
+  /** Ask the server what the matcher will get from `bytes` (with the user's own edges when `crop`), and
+   *  show it: the crop in the well, the found line, the warnings; `mark`: mark the found notes (a new target). */
+  async function prepare(bytes, mine, { crop = null, mark = true } = {}) {
+    let answer = null, failed = null;
+    try {
+      const q = crop ? `?crop=${crop[0].toFixed(3)},${crop[1].toFixed(3)}` : "";
+      answer = await ctx.server.api("POST", `/api/match/prepare${q}`, bytes, { form: true });
+    } catch (e) { failed = e; }
+    if (mine !== prepToken || destroyed) return;          // a newer target (or crop) took over
+    if (answer && Array.isArray(answer.crop)) {
+      prep = answer; prepState = "ok"; decoded.crop = null;
+      if (!targetBuffer && fileBytes === bytes) targetLabel = targetLabel.replace(/(, [\d.]+ s)?$/, `, ${prep.duration.toFixed(1)} s`);
+      if (mark && !test && !running) {                   // mark what was found; the keys can change it
+        seeds.clear();
+        foundNotes(prep).forEach((n) => seeds.add(n));
+        showRunNotes = false;
+        const low = lowCFor([...seeds], lowC);
+        if (low !== lowC) { lowC = low; buildKeys(); }
+      }
+    } else {
+      prep = null;
+      prepState = failed?.status === 422 ? "failed" : "unavailable";
+      prepError = failed?.status === 422 ? failed.message : "";
+    }
+    if (!rec && fileBytes === bytes) dropFile.textContent = targetLabel;
+    syncControls();
+    renderAll();
     drawDrop();
   }
   function drawDrop() {
+    // the crop on the well itself, for anything that reads the page (a test, a screen reader's label)
+    const shown = drag && prep ? drag.crop : prep?.crop;
+    drop.dataset.crop = shown ? shown.join(",") : "";
+    drop.dataset.duration = prep ? String(prep.duration) : "";
     if (!dropCanvas.isConnected) return;
     const [c, w, hh] = draw.fit(dropCanvas);
-    if (rec && rec.sr) {                 // recording: each 20 ms's peak on a dB scale, drawn up to the record head
-      const frac = Math.min(1, rec.total / (RECORD_MAX_S * rec.sr));
-      c.save(); c.translate(0, -12);
-      draw.hatchShape(c, w, hh, Array.from(rec.bins, meterLevel), { step: 2, reveal: frac });
-      draw.playhead(c, w, hh, frac);
-      c.restore();
+    const above = Math.max(20, hh - 22);  // the sound draws above the well's name line
+    if (rec && rec.system) {             // this Mac's sound: the record head only (the level stays in the cockpit)
+      if (rec.t0) draw.playhead(c, w, above, Math.min(1, systemSeconds(rec) / RECORD_MAX_S));
       return;
     }
-    if (!targetBuffer) return;
-    const data = targetBuffer.getChannelData(0);
-    const top = draw.peaksPerColumn(data, Math.max(2, Math.floor(w / 2)));
-    c.save(); c.translate(0, -12); draw.hatchShape(c, w, hh, top, { step: 2 }); c.restore();
+    if (rec && rec.sr) {                 // recording: each 20 ms's peak on a dB scale, drawn up to the record head
+      const frac = Math.min(1, rec.total / (RECORD_MAX_S * rec.sr));
+      draw.hatchShape(c, w, above, Array.from(rec.bins, meterLevel), { step: 2, reveal: frac });
+      draw.playhead(c, w, above, frac);
+      return;
+    }
+    const cols = Math.max(2, Math.floor(w / 2));
+    const marks = cropMarks(drag && prep ? { ...prep, crop: drag.crop } : prep);
+    const top = prep?.peaks?.length ? outlineColumns(prep.peaks, cols)
+      : targetBuffer ? draw.peaksPerColumn(targetBuffer.getChannelData(0), cols) : null;
+    if (!top) return;
+    if (!marks) { draw.hatchShape(c, w, above, top, { step: 2 }); return; }
+    // The take, dimmed; the crop the matcher gets, clear; thin marks at its edges; the key-up, dotted.
+    draw.hatchShape(c, w, above, top, { step: 2, alpha: 0.2, edge: draw.INK3 });
+    const x0 = wellX(w, marks.from), x1 = wellX(w, marks.to);
+    c.save();
+    c.beginPath(); c.rect(x0, 0, Math.max(1, x1 - x0), hh); c.clip();
+    draw.hatchShape(c, w, above, top, { step: 2 });
+    c.restore();
+    draw.playhead(c, w, above, marks.from);
+    draw.playhead(c, w, above, marks.to);
+    if (marks.keyUp != null && wellX(w, marks.keyUp) - x0 > 12) {   // the words only where they fit before the end mark
+      draw.keyUpMark(c, w, above, marks.keyUp, x1 - wellX(w, marks.keyUp) > 46 ? "key up" : "");
+    }
+  }
+
+  // ── the crop's edges, by hand: drag a mark in the well; the server reads the sound between them ──
+  /** Where a pointer is in the well: the canvas's own px (the view may be scaled to fit) and the take's fraction. */
+  function wellPoint(clientX) {
+    const r = dropCanvas.getBoundingClientRect(), w = dropCanvas.clientWidth || 1;
+    const x = ((clientX - r.left) / (r.width || 1)) * w;
+    return { x, w, frac: (x - WELL_PAD) / Math.max(1, w - 2 * WELL_PAD) };
+  }
+  /** The mark within reach of the pointer ("from" or "to"), or null. */
+  function markNear(clientX) {
+    const marks = cropMarks(prep);
+    if (!marks || prepState !== "ok" || busy()) return null;
+    const { x, w } = wellPoint(clientX);
+    const d0 = Math.abs(x - wellX(w, marks.from)), d1 = Math.abs(x - wellX(w, marks.to));
+    return Math.min(d0, d1) > 7 ? null : d0 < d1 || (d0 === d1 && x < wellX(w, marks.from)) ? "from" : "to";
+  }
+  drop.addEventListener("pointerdown", (e) => {
+    const which = markNear(e.clientX);
+    if (!which) return;
+    e.preventDefault();
+    drop.setPointerCapture?.(e.pointerId);
+    drag = { which, crop: [...prep.crop], moved: false };
+  });
+  drop.addEventListener("pointermove", (e) => {
+    if (!drag) { drop.style.cursor = markNear(e.clientX) ? "ew-resize" : ""; return; }
+    drag.crop = dragCrop(drag.crop, drag.which, wellPoint(e.clientX).frac, prep.duration);
+    drag.moved = true;
+    scheduleDrop();
+  });
+  const endDrag = (e) => {
+    if (!drag) return;
+    const d = drag;
+    drag = null;
+    if (e?.type === "pointerup") { swallowClick = true; setTimeout(() => { swallowClick = false; }, 0); }
+    if (d.moved && prep && (d.crop[0] !== prep.crop[0] || d.crop[1] !== prep.crop[1])) setCrop(d.crop);
+    else drawDrop();
+  };
+  drop.addEventListener("pointerup", endDrag);
+  drop.addEventListener("pointercancel", endDrag);
+  /** Use the user's edges (`crop` = [t0, t1] seconds), or the found ones again (null). The notes stay as marked. */
+  function setCrop(crop) {
+    if (!fileBytes || staticMode || busy()) return;
+    cropOverride = crop;
+    decoded.crop = null;
+    if (crop && prep) prep = { ...prep, crop };           // the new edges show at once; the server's reading follows
+    prepState = "pending";
+    syncControls(); renderAll(); drawDrop();
+    prepare(fileBytes, ++prepToken, { crop, mark: false });
   }
 
   // ── recording a target from a browser input ────────────────────────────────────────
@@ -898,14 +1315,39 @@ function createView(root, ctx) {
     echoCancellation: false, noiseSuppression: false, autoGainControl: false } });
   const stopTracks = (stream) => stream?.getTracks().forEach((t) => { try { t.stop(); } catch (_) { /* gone */ } });
 
+  let inputsAsked = 0;          // the newest refreshInputs wins: an older, slower answer is dropped
   async function refreshInputs() {
-    try { inputs = ((await media()?.enumerateDevices?.()) || []).filter((d) => d.kind === "audioinput"); } catch (_) { inputs = []; }
-    if (destroyed) return;
-    const want = pickInput(inputs, chosenInput);
-    inputSel.replaceChildren(...inputOptions(inputs).map((o) => h("option", { value: o.value }, o.label)));
-    inputSel.value = inputs.some((d) => d.deviceId === want) ? want : inputSel.options[0]?.value ?? "";
+    const mine = ++inputsAsked;
+    let got = [];
+    try { got = ((await media()?.enumerateDevices?.()) || []).filter((d) => d.kind === "audioinput"); } catch (_) { got = []; }
+    if (destroyed || mine !== inputsAsked) return;
+    inputs = got;
+    paintInputs();
   }
   const onDeviceChange = () => { refreshInputs(); };
+  /** This Mac's own sound, as the cockpit can record it: every app, and Logic Pro while it runs. */
+  async function refreshSources() {
+    let got = [];
+    try { got = (await ctx.server.api("GET", "/api/match/system/sources"))?.sources || []; } catch (_) { got = []; }
+    if (destroyed) return;
+    systemSources = got;
+    if (!rec) paintInputs();
+  }
+  const onFocus = () => { if (!rec) refreshSources(); };   // back from Logic Pro: is it running now?
+  /** The "From" picker: the browser's inputs, then this Mac's own sound. The user's choice holds while it
+   *  is offered (Logic Pro comes back to it); else the S-1, else the default input. */
+  function paintInputs() {
+    const options = [...inputOptions(inputs), ...systemOptions(systemSources)], values = options.map((o) => o.value);
+    inputSel.replaceChildren(...options.map((o) => h("option", { value: o.value }, o.label)));
+    const want = values.includes(chosenInput) ? chosenInput : pickInput(inputs, chosenInput);
+    inputSel.value = values.includes(want) ? want : values[0] ?? "";
+    paintRecMsg();
+  }
+  /** Under Record: what went wrong with the last take, else a word about a Bluetooth mic when one is chosen. */
+  function paintRecMsg() {
+    const device = systemApp(inputSel.value) === undefined ? inputs.find((d) => d.deviceId === inputSel.value) : null;
+    recMsg.textContent = recError || (device && isBluetoothLabel(device.label) ? BLUETOOTH_WORDS : "");
+  }
 
   async function recorderNode(A, token) {
     if (A.audioWorklet && typeof AudioWorkletNode === "function") {
@@ -930,9 +1372,12 @@ function createView(root, ctx) {
 
   async function startRecording() {
     if (busy() || staticMode) return;
-    recMsg.textContent = "";
+    recError = ""; paintRecMsg();
+    const app = systemApp(inputSel.value);
+    if (app !== undefined) { startSystem(app); return; }
     if (!media()?.getUserMedia) {
-      recMsg.textContent = "This browser cannot record here. Open the app in Chrome, Safari or Firefox on this computer.";
+      recError = "This browser cannot record here. Open the app in Chrome, Safari or Firefox on this computer.";
+      paintRecMsg();
       return;
     }
     const token = rec = { chunks: [], total: 0, bins: new Float32Array(REC_BINS), sr: 0, stream: null, source: null, node: null, sink: null };
@@ -966,7 +1411,7 @@ function createView(root, ctx) {
     } catch (e) {
       teardownRecording(token);
       if (rec === token) rec = null;
-      recMsg.textContent = recordError(e);
+      recError = recordError(e); paintRecMsg();
       syncControls(); renderAll();
     }
   }
@@ -999,6 +1444,7 @@ function createView(root, ctx) {
   async function stopRecording() {
     const token = rec;
     if (!token || token.stopping) return;
+    if (token.system) { stopSystem(token); return; }
     token.stopping = true;
     if (token.worklet && token.node) {   // the worklet sends what it still holds, then "done"
       await new Promise((resolve) => {
@@ -1019,13 +1465,77 @@ function createView(root, ctx) {
     const samples = joinChunks(token.chunks, RECORD_MAX_S * token.sr);
     const peak = peakOf(samples);
     if (peak < 1e-4) {
-      recMsg.textContent = "The recording is silent. Check that the input is plugged in and turned up, then press Record again.";
+      recError = "The recording is silent. Check that the input is plugged in and turned up, then press Record again.";
+      paintRecMsg();
       dropFile.textContent = targetLabel;
       syncControls(); renderAll(); drawDrop();
       return;
     }
-    await loadTarget(encodeWav(trimToOnset(samples, token.sr), token.sr), "Recording");
-    if (peak < 0.01) recMsg.textContent = "The recording is very quiet. It can still be matched, but a louder take matches better.";
+    // The whole take goes up: the server finds the sound in it (the lead-in, the room, the click of Stop).
+    await loadTarget(encodeWav(samples, token.sr), "Recording");
+  }
+
+  // ── recording this Mac's own sound (round 13): the cockpit's tap, not a browser input ──────────────
+  // POST /api/match/system/start starts it; Stop, or RECORD_MAX_S, collects the take (/stop, a WAV),
+  // and the take is loaded like a microphone take. The well shows the record head only: the level
+  // stays in the cockpit.
+  const systemSeconds = (token) => (token.t0 ? (performance.now() - token.t0) / 1000 : 0);
+  async function startSystem(app) {
+    const label = systemSources.find((s) => (s.app ?? null) === app)?.label || "";
+    const token = rec = { system: true, app, where: systemWhere(app, label),
+      name: app ? `Recording from ${label || "that app"}` : "Recording from this Mac", t0: 0, ticker: 0 };
+    stopSound();
+    syncControls(); renderAll();
+    try {
+      await ctx.server.api("POST", "/api/match/system/start", { app });
+    } catch (e) {
+      if (rec !== token) return;           // stopped meanwhile: nothing to say
+      rec = null;
+      recError = systemError(e); paintRecMsg();
+      syncControls(); renderAll();
+      if (e?.status === 409 && app) refreshSources();      // e.g. Logic Pro was closed
+      return;
+    }
+    if (rec !== token) {                   // Stop was pressed (or the view closed) while it started
+      ctx.server.api("POST", "/api/match/system/stop").catch(() => {});
+      return;
+    }
+    token.t0 = performance.now();
+    token.ticker = setInterval(() => {
+      if (rec !== token || token.stopping) return;
+      const t = systemSeconds(token);
+      dropFile.textContent = `Recording, ${fmtSeconds(Math.min(t, RECORD_MAX_S))}`;
+      scheduleDrop();
+      if (t >= RECORD_MAX_S) stopRecording();
+    }, 100);
+    drop.classList.add("recording");
+    dropFile.textContent = `Recording, ${fmtSeconds(0)}`;
+    syncControls(); renderAll(); drawDrop();
+  }
+  async function stopSystem(token) {
+    token.stopping = true;
+    clearInterval(token.ticker);
+    if (!token.t0) {                       // still starting: its answer stops it (startSystem)
+      rec = null;
+      dropFile.textContent = targetLabel;
+      syncControls(); renderAll(); drawDrop();
+      return;
+    }
+    syncControls();
+    let bytes = null, failed = null;
+    try {
+      bytes = await (await ctx.server.api("POST", "/api/match/system/stop")).arrayBuffer();
+    } catch (e) { failed = e; }
+    if (rec !== token) return;             // the view closed meanwhile
+    rec = null;
+    drop.classList.remove("recording");
+    if (!bytes) {
+      recError = systemError(failed); paintRecMsg();
+      dropFile.textContent = targetLabel;
+      syncControls(); renderAll(); drawDrop();
+      return;
+    }
+    await loadTarget(bytes, token.name);
   }
 
   // ── a test: match the synth's current sound ────────────────────────────────────────
@@ -1034,7 +1544,7 @@ function createView(root, ctx) {
   // scratch with the note given: never from the knobs, which would start at the answer.
   async function matchCurrentSound() {
     if (busy() || staticMode) return;
-    recMsg.textContent = "";
+    recError = ""; paintRecMsg();
     const note = testNote(seeds);
     const { notes, unison } = soundingNotes(note, ctx.params);
     const from = ctx.soundSource === "s1" ? "s1" : "twin";
@@ -1060,10 +1570,9 @@ function createView(root, ctx) {
     making = false;
     if (destroyed) return;
     await loadTarget(bytes, `${from === "s1" ? "The S-1's" : "The twin's"} current sound, ${noteName(note)}`, info);
-    // A test searches thoroughly: from scratch, one Quick descent often stops in a wrong valley
+    // A test searches at least thoroughly: from scratch, one Quick descent often stops in a wrong valley
     // (Saw traded for Square and Sub), which would grade the matcher on bad luck, not on the model.
-    quality = "thorough";
-    qualitySeg.set("thorough");
+    if (quality !== "deep") { quality = "thorough"; qualitySeg.set("thorough"); }
     startMatch();
   }
   const plain = (msg) => Object.assign(new Error(msg), { plain: true });
@@ -1085,18 +1594,30 @@ function createView(root, ctx) {
 
   // ── the recovery report (after a test) ─────────────────────────────────────────────
   let reported = null;                   // the done frame the report was built for
+  const hasReport = () => !!(test && !recorded && run.phase === "done" && run.done?.cc);
   function renderReport() {
-    const show = !!(test && !recorded && run.phase === "done" && run.done?.cc);
-    report.classList.toggle("mx-hidden", !show);
-    if (!show || reported === run.done) return;
-    reported = run.done;
-    const r = recoveryReport(test.truth, run.done.cc, { notes: test.notes, curves: ctx.twin?.curves,
-      source: test.source, synced: test.synced, unison: test.unison });
-    reportNum.textContent = r.total ? `${r.good} of ${r.total}` : "–";
-    reportWords.textContent = r.total ? `settings came back within ${WITHIN}` : "no setting shapes this sound";
-    const half = r.rows.length > 8 ? Math.ceil(r.rows.length / 2) : r.rows.length;
-    reportTables.replaceChildren(...[r.rows.slice(0, half), r.rows.slice(half)].filter((rows) => rows.length).map(reportTable));
-    reportNotes.replaceChildren(...r.notes.map((text) => h("p", { class: "note", text })));
+    if (hasReport() && reported !== run.done) {
+      reported = run.done;
+      const r = recoveryReport(test.truth, run.done.cc, { notes: test.notes, curves: ctx.twin?.curves,
+        source: test.source, synced: test.synced, unison: test.unison });
+      reportNum.textContent = r.total ? `${r.good} of ${r.total}` : "–";
+      reportWords.textContent = r.total ? `settings came back within ${WITHIN}` : "no setting shapes this sound";
+      let at = 0;
+      const tables = tableSplit(r.rows.length).map((n) => reportTable(r.rows.slice(at, (at += n))));
+      reportTables.style.setProperty("--cols", String(Math.max(2, tables.length)));
+      reportTables.replaceChildren(...tables);
+      reportNotes.textContent = r.notes.join(" ");
+      panelShows = "report";              // a new report opens on itself
+      panelSeg.set("report");
+    }
+    paintPanel();
+  }
+  /** The panel: the report after a test (unless the switch says the knobs), else the knobs. */
+  function paintPanel() {
+    const has = hasReport(), showReport = has && panelShows === "report";
+    panelHead.classList.toggle("mx-hidden", !has);
+    report.classList.toggle("mx-hidden", !showReport);
+    knobsBox.classList.toggle("mx-hidden", showReport);
   }
   function reportTable(rows) {
     const th = (text) => h("th", { scope: "col", text });
@@ -1112,24 +1633,29 @@ function createView(root, ctx) {
     return audio;
   }
   function stopSound() { if (source) { try { source.stop(); } catch (_) { /* already stopped */ } source = null; } }
-  const decoded = { target: null, match: null };
+  const decoded = { target: null, match: null, crop: null };
   async function wavBuffer(b64) {
     const bin = atob(b64), bytes = new Uint8Array(bin.length);
     for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
     return ac().decodeAudioData(bytes.buffer);
   }
+  /** "crop": the crop the matcher gets (the server's, else the whole take while the server cannot say);
+   *  "target" and "match": the done frame's A/B. */
   async function playBuffer(which) {
     try {
       const A = ac();
       if (A.state === "suspended") await A.resume();
       let buf = decoded[which];
+      if (!buf && which === "crop" && prep?.wav_b64) buf = decoded.crop = await wavBuffer(prep.wav_b64);
+      if (!buf && which === "crop" && prepState === "unavailable") buf = targetBuffer;
       if (!buf && which === "target" && targetBuffer && !run.done) buf = targetBuffer;
-      if (!buf && run.done) {
+      if (!buf && run.done && which !== "crop") {
         const b64 = which === "target" ? run.done.targetWav : run.done.matchWav;
         if (b64) buf = decoded[which] = await wavBuffer(b64);
       }
       if (!buf) return;
       stopSound();
+      stopPatch();
       source = A.createBufferSource();
       source.buffer = buf;
       const g = A.createGain(); g.gain.value = 0.9;
@@ -1138,6 +1664,24 @@ function createView(root, ctx) {
     } catch (e) {
       ctx.toast?.("Could not play that sound in this browser.");
     }
+  }
+
+  // ── "Play my patch": the synth's own sound (the S-1 when it sounds, else the twin), on the marked
+  // note (else the one found), held as long as the target's key was ─────────────────────────
+  function playPatch() {
+    const notes = patchNotes(seeds, prep);
+    if (!notes.length) return;
+    stopPatch();
+    stopSound();
+    try { notes.forEach((n) => ctx.note(n, true, 100)); } catch (_) { /* sound is a courtesy */ }
+    patch = { notes, timer: setTimeout(stopPatch, patchHold(prep) * 1000) };
+  }
+  function stopPatch() {
+    if (!patch) return;
+    const { notes, timer } = patch;
+    patch = null;
+    clearTimeout(timer);
+    for (const n of notes) { try { ctx.note(n, false); } catch (_) { /* courtesy */ } }
   }
 
   // ── a live match ────────────────────────────────────────────────────────────────
@@ -1151,11 +1695,15 @@ function createView(root, ctx) {
     setRunning(true);
     renderAll();
     revealRun();
-    const q = new URLSearchParams({ throttle: "0.02", quality });
+    finishing = false;
+    // Quick keeps a small pause between frames, so its short run stays watchable; the long searches
+    // stream as fast as they compute (the view draws at its own frame rate anyway).
+    const q = new URLSearchParams({ throttle: quality === "quick" ? "0.02" : "0", quality });
     // A test gives the matcher its own note and always starts from scratch (the knobs are the answer).
     const notes = test ? test.notes : [...seeds].sort((a, b) => a - b);
     if (notes.length) q.set("notes", notes.join(","));
     if (!test && startFrom === "current") q.set("init", JSON.stringify(initMap(ctx.params)));
+    if (cropOverride) q.set("crop", cropOverride.map((t) => t.toFixed(3)).join(","));
     let ws;
     try { ws = ctx.server.ws(`/ws/match?${q}`); } catch (e) { setError("Could not open the matcher. Check that the app is still running, then try again."); return; }
     socket = ws;
@@ -1164,17 +1712,27 @@ function createView(root, ctx) {
     ws.onmessage = (ev) => {
       let f; try { f = JSON.parse(ev.data); } catch (_) { return; }
       apply(f);
-      if (f.phase === "done" || f.phase === "error") { socket = null; setRunning(false); try { ws.close(); } catch (_) { /* closed */ } }
+      if (f.phase === "done" || f.phase === "error") { socket = null; finishing = false; setRunning(false); try { ws.close(); } catch (_) { /* closed */ } }
     };
     ws.onclose = () => {
       if (socket !== ws) return;
       socket = null;
+      finishing = false;
       if (run.phase !== "done" && run.phase !== "error" && run.phase !== "stopped") {
         setError("The connection to the app closed before the match finished. Check that the app is still running, then try again.");
       }
     };
   }
+  /** Stop means finish: the server ends the search at its next step and still sends the done frame
+   *  (the best so far, scored, with A/B). With no open socket, stop as before: close, keep the best. */
+  function finishRun() {
+    if (socket && socket.readyState === 1 && !recorded) {
+      try { socket.send("finish"); finishing = true; syncControls(); return; } catch (_) { /* fall back below */ }
+    }
+    stopRun();
+  }
   function stopRun() {
+    finishing = false;
     if (socket) { const ws = socket; socket = null; try { ws.close(); } catch (_) { /* closed */ } }
     replayTimers.forEach(clearTimeout); replayTimers = [];
     if (running) run = { ...run, phase: "stopped" };
@@ -1195,8 +1753,12 @@ function createView(root, ctx) {
   /** What each control can do now: a run, a recording and a test note each hold the target. */
   function syncControls() {
     const b = busy();
-    matchBtn.textContent = running ? "Stop" : "Match";
-    matchBtn.disabled = !running && (!fileBytes || making || !!rec);
+    matchBtn.textContent = !running ? "Match" : finishing ? "Finishing" : "Finish now";
+    matchBtn.disabled = running ? finishing : (!fileBytes || making || !!rec || prepState === "failed");
+    playCrop.disabled = !(prep?.wav_b64 || (prepState === "unavailable" && targetBuffer)) || !!rec;
+    playPatchBtn.disabled = !patchNotes(seeds, prep).length || !!rec;
+    resetCrop.classList.toggle("mx-hidden", !cropOverride);
+    resetCrop.disabled = b;
     drop.setAttribute("aria-disabled", String(b));
     recBtn.textContent = rec ? "Stop" : "Record";
     recBtn.classList.toggle("on", !!rec);
@@ -1346,9 +1908,21 @@ function createView(root, ctx) {
   }
   function renderAll() {
     // While recording, the status line speaks for the take (the last run stays until it replaces the target).
-    const t = rec ? phaseText(initialRun(), { recording: rec.sr ? true : "opening" }) : phaseText(run, { staticMode, loaded: !!fileBytes });
+    const target = { state: prepState, prep, error: prepError };
+    const live = rec && (rec.system ? rec.t0 : rec.sr);
+    const t = rec ? phaseText(initialRun(), { recording: live ? true : "opening", where: rec.system ? rec.where : "" })
+      : phaseText(run, { staticMode, loaded: !!fileBytes, target });
     word.textContent = t.word;
     detail.textContent = t.detail;
+    // what to know about the take, while it waits for a match
+    const warns = !rec && run.phase === "idle" && prepState === "ok" ? prep.warnings || [] : [];
+    warnLine.textContent = warns.join(" ");
+    warnLine.classList.toggle("mx-hidden", !warns.length);
+    // after a match of a sound (not a test of the synth's own): what the S-1 could not make, and why
+    const reach = !rec && !test && !recorded && run.phase === "done" && run.done?.cc && prepState === "ok"
+      ? reachLines(prep?.reach, { cc: run.done.cc, notes: run.done.notes, curves: ctx.twin?.curves }) : [];
+    reachLine.textContent = reach.join(" ");
+    reachLine.classList.toggle("mx-hidden", !reach.length);
     tag.classList.toggle("mx-hidden", !(recorded && currentRec));
     if (recorded && currentRec) {
       tag.replaceChildren(h("b", { text: "Recorded run" }),
@@ -1386,7 +1960,10 @@ function createView(root, ctx) {
   if (staticMode) loadIndex();
   else {
     refreshInputs();
+    refreshSources();
     media()?.addEventListener?.("devicechange", onDeviceChange);
+    window.addEventListener("focus", onFocus);
+    disposers.push(() => window.removeEventListener("focus", onFocus));
     disposers.push(() => media()?.removeEventListener?.("devicechange", onDeviceChange));
   }
 
@@ -1397,9 +1974,19 @@ function createView(root, ctx) {
       replayTimers.forEach(clearTimeout); replayTimers = [];
       if (raf) cancelAnimationFrame(raf);
       if (dropRaf) cancelAnimationFrame(dropRaf);
-      if (rec) { const token = rec; rec = null; teardownRecording(token); }   // the input's light goes off
+      if (rec) {
+        const token = rec;
+        rec = null;
+        if (!token.system) teardownRecording(token);                          // the input's light goes off
+        else if (token.t0 && !token.stopping) {                               // the cockpit's tap stops too
+          clearInterval(token.ticker);
+          ctx.server.api("POST", "/api/match/system/stop").catch(() => {});
+        }
+      }
       if (recorderURL) URL.revokeObjectURL(recorderURL);
       for (const [n, t] of auditions) { clearTimeout(t); noteOff(n); }
+      prepToken++;                      // a late answer from the server finds nothing to fill
+      stopPatch();
       stopSound();
       if (audio) { audio.close().catch(() => {}); audio = null; }
       for (const d of disposers.reverse()) { try { d(); } catch (_) { /* keep tearing down */ } }

@@ -50,7 +50,7 @@ export const SHEET = [
     { keys: ["?"], does: "Show this list of keys" },
     { keys: ["Esc"], does: "Close a drawer or this list" },
   ] },
-  { title: "Synth", rows: [
+  { title: "Synth and Match", rows: [
     { keys: ["A", "K"], join: "to", does: "Play notes (the row above plays the black keys)" },
     { keys: ["Z", "X"], join: "and", does: "Octave down and up" },
   ] },

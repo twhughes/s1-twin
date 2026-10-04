@@ -233,28 +233,40 @@ function worstSpur(x, sr, f0, H) {
 }
 
 // ── 6. speed: 4 voices x 1 s of real-time processing at 48 kHz ────────────────
-// CPU time is the cost of the code; wall time also counts waiting for a busy machine.
+// CPU time is the cost of the code; wall time also counts waiting for a busy machine. The page may ask
+// for 16 voices (VOICE_COUNTS), so a 16-note chord gets the same test, plus its slowest 128-sample block
+// against the block's own real-time budget (2.67 ms at 48 kHz).
 {
   const sr = 48000;
   const busy = { 20: 100, 19: 90, 21: 80, 23: 60, 15: 40, 74: 60, 71: 90, 24: 100, 25: 80, 3: 90, 17: 110,
     13: 20, 73: 5, 75: 60, 30: 80, 72: 60 };
-  let cpu = Infinity, wall = Infinity;
-  for (let run = 0; run < 3; run++) {
-    const e = new Engine({ sr, curves });
-    e.setAll(busy);
-    for (const n of [48, 55, 60, 64]) e.noteOn(n);
-    const B = 128, o = new Float64Array(B), f = new Float64Array(B), a = new Float64Array(B);
-    for (let k = 0; k < 400; k++) e.process(o, f, a, B); // let the JIT settle
-    const c0 = process.cpuUsage();
-    const t0 = performance.now();
-    for (let k = 0; k < sr / B; k++) e.process(o, f, a, B);
-    const c = process.cpuUsage(c0);
-    wall = Math.min(wall, (performance.now() - t0) / 1000);
-    cpu = Math.min(cpu, (c.user + c.system) / 1e6);
+  const chords = { 4: [48, 55, 60, 64], 16: [36, 40, 43, 47, 48, 52, 55, 59, 60, 64, 67, 71, 72, 76, 79, 83] };
+  for (const voices of [4, 16]) {
+    let cpu = Infinity, wall = Infinity, worst = Infinity;
+    for (let run = 0; run < 3; run++) {
+      const e = new Engine({ sr, curves, maxVoices: voices });
+      e.setAll({ ...busy, 80: 2 });
+      for (const n of chords[voices]) e.noteOn(n);
+      const B = 128, o = new Float64Array(B), f = new Float64Array(B), a = new Float64Array(B);
+      for (let k = 0; k < 400; k++) e.process(o, f, a, B); // let the JIT settle
+      const c0 = process.cpuUsage();
+      const t0 = performance.now();
+      let slowest = 0;
+      for (let k = 0; k < sr / B; k++) {
+        const b0 = performance.now();
+        e.process(o, f, a, B);
+        slowest = Math.max(slowest, performance.now() - b0);
+      }
+      const c = process.cpuUsage(c0);
+      wall = Math.min(wall, (performance.now() - t0) / 1000);
+      cpu = Math.min(cpu, (c.user + c.system) / 1e6);
+      worst = Math.min(worst, slowest);
+    }
+    console.log(`speed: ${voices} voices x 1 s at 48 kHz (modulated worst case): CPU ${(cpu * 1000).toFixed(0)} ms ` +
+      `(ratio ${cpu.toFixed(3)}), wall ${(wall * 1000).toFixed(0)} ms (ratio ${wall.toFixed(3)}), ` +
+      `slowest block ${worst.toFixed(2)} ms`);
+    check(`${voices} voices: real time with room to spare (CPU ratio < 0.5)`, cpu < 0.5, `ratio ${cpu.toFixed(3)}`);
   }
-  console.log(`speed: 4 voices x 1 s at 48 kHz (modulated worst case): CPU ${(cpu * 1000).toFixed(0)} ms ` +
-    `(ratio ${cpu.toFixed(3)}), wall ${(wall * 1000).toFixed(0)} ms (ratio ${wall.toFixed(3)})`);
-  check('real time with room to spare (CPU ratio < 0.5)', cpu < 0.5, `ratio ${cpu.toFixed(3)}`);
 }
 
 if (failures) {

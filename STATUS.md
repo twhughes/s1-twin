@@ -1,5 +1,5 @@
 # STATUS — synth
-*updated 2026-09-29 (**the loss ignores what lies 50 dB under the note; the optimizer race; not yet pushed**); 2026-09-28 night (**Record takes this Mac's own sound (Logic Pro); not yet pushed**); 2026-09-28 evening (**recordings, voices and a reproduction suite; not yet pushed**); 2026-09-27 late night (**published: github.com/twhughes/s1-twin, tylerwhughes.com/s1-twin/, CI green**); 2026-09-27 night (**Tyler's first-use fixes are in (round 2): one-screen plate, global transport + shortcuts, record + self-test in Match; 840 tests; README rebuilt** — see the round-2 bullet); earlier 2026-09-27 (the cyanotype build integrated); 2026-09-07 (venv rebuilt, merge prep); 2026-08-08 (soft synth + twin); 2026-08-07 (chassis build); 2026-08-01 (canonical s1.json)*
+*updated 2026-10-04, later (**the music app can follow this page's sound: opened with `#sync=music`, the page sends its whole sound once, then every knob change, to the window that opened it — `core/opener-sync.js` + its check, one way, nothing received; the public page and the README link to Changes (tylerwhughes.com/changes/)**); 2026-10-04 (**the twin plays 8 or 16 notes at once on the web; 4 with an S-1 connected; not yet pushed or deployed**); 2026-09-29 (**the loss ignores what lies 50 dB under the note; the optimizer race; not yet pushed**); 2026-09-28 night (**Record takes this Mac's own sound (Logic Pro); not yet pushed**); 2026-09-28 evening (**recordings, voices and a reproduction suite; not yet pushed**); 2026-09-27 late night (**published: github.com/twhughes/s1-twin, tylerwhughes.com/s1-twin/, CI green**); 2026-09-27 night (**Tyler's first-use fixes are in (round 2): one-screen plate, global transport + shortcuts, record + self-test in Match; 840 tests; README rebuilt** — see the round-2 bullet); earlier 2026-09-27 (the cyanotype build integrated); 2026-09-07 (venv rebuilt, merge prep); 2026-08-08 (soft synth + twin); 2026-08-07 (chassis build); 2026-08-01 (canonical s1.json)*
 
 - **state:** active
 - **what:** The Roland S-1 hardware synth, fully present in software: one `s1` command starts a local web cockpit (FastAPI) with every panel knob and menu setting live-synced both directions, a piano-roll sequencer with MIDI clock out, auto-monitored USB audio with a live oscilloscope (drift-servo resampled passthrough, ~35 ms, glitch-free), MIDI-keyboard forwarding, .PRM export ("Save to S-1") *and* import (the librarian), synesthesia note-coloring, and a full REST/WS agent API. The Textual TUI is retired. Plus the CMA-ES sound-matching engine behind `[studio]` and now a differentiable digital twin (`match/twin.py`, autograd, `[twin]`). 615 tests. A standalone headless twin of the monitor+forwarding lives at `music/tools/s1_rig.py` (launch: `music/rig.sh`).
@@ -13,6 +13,29 @@
   launcher convention: **`synth`** (`bin/synth`) runs the venv's `synth --no-browser`
   detached, waits on `/api/status`, opens the cockpit — `synth off` stops it. Appears on the
   HQ control panel (:8800).
+- **2026-10-04 — more than 4 notes on the web (local, not yet pushed or deployed):** Tyler: "in s1 twin I'd
+  like to play more than 4 notes at a time. I know the S-1 doesn't allow that, but I would on the web."
+  **Engine:** the browser twin's voice count is a setting, 4 / 8 / 16 (`dsp.js` `VOICE_COUNTS`, `S1_VOICES`,
+  `voiceCount()`; an Engine with no count is still 4, so parity is untouched). `createTwin({voices,
+  destination})`, `twin.voices`, `twin.setVoices(n)` (a RangeError past the three); the worklet takes
+  `processorOptions.voices` and a `{type:'voices'}` message that rebuilds the voices like new curves (every
+  knob kept, notes sounding stop). Only Poly uses voices past 4; Mono / Unison / Chord are unchanged.
+  **The page's rule** (`core/ctx.js`: `ctx.voices`, `setVoices`, `on("voices")`): 8 on the static page, 4 in
+  the cockpit until chosen, and **4 whenever an S-1 is linked** (port listening/synced, or the connected
+  demo). Settings → **Voices in this browser**: a 4 · 8 · 16 switch, "Voices (the S-1 has 4)", saved in
+  localStorage (`synth.twinVoices`); while linked it shows 4, dimmed and locked, and says why. No new key.
+  **CPU** (node 25 on this M3, 48 kHz, the busy modulated patch, engine + effects): 4 voices 2% of real
+  time, 8 → 4%, 16 → 8%; the slowest 128-sample block (a 16-note attack, or a knob drag over 16 held notes)
+  0.68 of 2.67 ms. So 16 stays offered. **Also:** `createTwin({destination})` for the music cockpit's new
+  `twin` sound driver (it vendors twin/ — see music STATUS), and `close()` now stops the processor (it
+  returned true forever, so a closed twin kept running). **Checks:** new `twin/voices.check.mjs` (67: 8 voices
+  sound 8 notes and the 9th steals, 16 and the 17th, the voice modes; the worklet rebuild keeps knobs;
+  `createTwin` over a fake Web Audio driving the real processor; the ctx rule incl. the S-1 lock; the
+  drawer's words), run by `tests/test_plate_js.py`; `dsp.check.mjs` times 16 voices too. Headless Chrome on
+  a scratch build (random ports, throwaway profile): the drawer starts at 8, 16 survives a reload, the
+  connected demo locks at 4, the real AudioWorklet gets louder from 1 to 4 to 8 notes and `setVoices(4)`
+  caps it. pytest 992 passed, ruff clean, every node check green. README "Play it" and BUILD.md §2.2/§2.3
+  say it. Not heard by ear yet.
 - **2026-09-29 — rounds 12 and 14, the search against the loss (local, not yet pushed):** Tyler: "u sure this
   is the best algorithm for optimization?", then "yea 1,2 please" (starts at once on every core; CMA-ES first).
   **Diagnosis first:** the loss at the true patch against the found one, per suite case. The search missed a

@@ -31,7 +31,9 @@ output is drawn as a *plume*: each loop is one cycle of the sound, and sharper t
 tone. A held note colors the chain by its pitch.
 
 The whole synth fits one laptop screen. Play it from your computer keyboard or a MIDI keyboard
-(Chrome). A piano-roll sequencer keeps playing while you turn the knobs.
+(Chrome). A piano-roll sequencer keeps playing while you turn the knobs. The S-1 plays 4 notes at
+once. On the web page the twin plays 8, and Settings offers 4, 8 or 16; while a real S-1 is
+connected, the twin plays 4, like the hardware.
 
 | Key | What it does |
 |---|---|
@@ -41,6 +43,9 @@ The whole synth fits one laptop screen. Play it from your computer keyboard or a
 | <kbd>Shift</kbd> <kbd>Space</kbd> | Stop |
 | <kbd>1</kbd> <kbd>2</kbd> <kbd>3</kbd> | Synth, Sequencer, Match |
 | <kbd>?</kbd> | Show every key |
+
+To practice with this sound, try [Changes](https://tylerwhughes.com/changes/): chord drills and
+jazz tunes, played on this twin. Open the twin from there and Changes plays whatever you dial in here.
 
 ## Teach it
 

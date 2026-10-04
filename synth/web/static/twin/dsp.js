@@ -590,6 +590,20 @@ const FRAME_SPAN = 8; // hops a framed ladder lives (2 of input + 6 of ringing)
 // Unison detune spread in cents. The twin does not model unison: an uncalibrated guess.
 export const UNISON_DETUNE = [-9, -3, 3, 9];
 
+/** The S-1 plays 4 notes at once: the twin's voice count whenever it stands in for an S-1. */
+export const S1_VOICES = 4;
+/**
+ * The voice counts a page may ask for (worklet.js, audio.js). More than the S-1's 4 is a
+ * browser extra, like the effects: each voice is still twin.py's one-note model.
+ */
+export const VOICE_COUNTS = [4, 8, 16];
+
+/** `n` when it is one of VOICE_COUNTS, else `fallback`: a stray value never reaches the audio thread. */
+export function voiceCount(n, fallback = S1_VOICES) {
+  const v = Number(n);
+  return VOICE_COUNTS.includes(v) ? v : fallback;
+}
+
 /** Everything a Voice reads, computed once per CC change. */
 function voiceParams(ccMap, curves) {
   const p = physical(ccMap, curves);
@@ -1142,10 +1156,12 @@ export class Voice {
 }
 
 /**
- * The polyphonic twin: up to maxVoices Voices plus the S-1's voice modes
- * (CC80 Mono / Unison / Poly / Chord, chord voices from CC81-83 + CC85-87,
- * glide from CC31 / CC65 / CC5, Range CC14, damper CC64). The voice layer is
- * browser behavior around the model — twin.py renders one note at a time.
+ * The polyphonic twin: maxVoices Voices (the S-1's 4 by default; a page may ask for
+ * 8 or 16, VOICE_COUNTS) plus the S-1's voice modes (CC80 Mono / Unison / Poly /
+ * Chord, chord voices from CC81-83 + CC85-87, glide from CC31 / CC65 / CC5, Range
+ * CC14, damper CC64). Only Poly uses voices past the fourth: Unison stacks 4, Chord
+ * plays the key + 3. The voice layer is browser behavior around the model — twin.py
+ * renders one note at a time.
  */
 export class Engine {
   constructor({ sr, curves, modelSr, maxVoices = 4, noiseSeed = 0 }) {

@@ -17,6 +17,9 @@
 //   ctx.on(…) returns an off() function     ctx.status   the latest status object
 //   ctx.on("note", fn)    fn({note, on, velocity, sound}) for every note from any key source
 //   ctx.on("server", fn)  fn(msg) for every raw /ws/state message (transport, position, sequence, …)
+//   ctx.voices            how many notes the twin sounds at once: the S-1's 4 while an S-1 is linked,
+//                         else the choice (VOICE_CHOICES). ctx.voiceChoice, ctx.voicesLocked,
+//                         ctx.setVoices(n), ctx.on("voices", fn) fn({voices, choice, locked})
 //   ctx.keys              the keyboard service (core/keys.js), attached by the shell
 //   ctx.transport         the sequence's transport (core/transport.js), attached by the shell
 //   ctx.shortcuts         the keyboard shortcuts (core/shortcuts.js), attached by the shell
@@ -26,16 +29,29 @@
 // ways, but its patch may differ until the patch is sent; or it is still connecting), "offline".
 // Notes follow the sound you hear: while the S-1's port is open ("listening" or "synced") they go
 // to the hardware, otherwise to the twin. `status.link` keeps the server's own word.
+//
+// Voices. The S-1 plays 4 notes at once. In the browser the twin may play 8 or 16 (the choice;
+// default 8 on the static page, 4 in the cockpit), but while an S-1 is linked (its port open, or the
+// connected demo) the twin stands in for it and plays 4, whatever the choice.
 
 import { allParams } from "./layout.js";
 
 const SYNC_OF_LINK = { synced: "synced", listening: "pending", connecting: "pending", disconnected: "offline" };
 const PORT_OPEN = new Set(["listening", "synced"]);
 
+/** The S-1's own polyphony: the twin's voice count while an S-1 is linked. */
+export const S1_VOICES = 4;
+/** The voice counts the page offers (twin/dsp.js VOICE_COUNTS; twin/voices.check.mjs keeps them equal). */
+export const VOICE_CHOICES = [4, 8, 16];
+/** Where the page keeps the choice (localStorage; app.js reads it, the Settings drawer writes it). */
+export const VOICES_KEY = "synth.twinVoices";
+/** The choice before anyone makes one: 8 on the static page, the S-1's 4 in the cockpit. */
+export const defaultVoices = (server) => (server ? S1_VOICES : 8);
+
 /** The three-word sync state for a server link state. */
 export const syncOf = (link) => SYNC_OF_LINK[link] || "offline";
 
-export function createCtx({ schema, values = null, twin, transport = null, server = null, toast = () => {} }) {
+export function createCtx({ schema, values = null, twin, transport = null, server = null, toast = () => {}, voices = null }) {
   const range = new Map(allParams(schema).map((p) => [p.cc, [p.min, p.max]]));
   const clamp = (cc, v) => {
     const [lo, hi] = range.get(cc) || [0, 127];
@@ -54,6 +70,21 @@ export function createCtx({ schema, values = null, twin, transport = null, serve
   let status = { sync: "offline", link: "disconnected", port: null, monitor: null, keyboards: [], mode: "solo" };
   const held = new Map();                    // note -> where its note-on went ("s1" | "twin")
   const soundOf = (st) => (PORT_OPEN.has(st.link) && transport ? "s1" : "twin");
+
+  let voiceChoice = VOICE_CHOICES.includes(Number(voices)) ? Number(voices) : defaultVoices(server);
+  let shown = { voices: 0, choice: 0, locked: null };   // what the twin and the "voices" listeners last got
+  const linked = () => PORT_OPEN.has(status.link);
+  /** Give the twin the count that applies now, and tell the listeners when anything changed. */
+  function applyVoices() {
+    const locked = linked();
+    const now = { voices: locked ? S1_VOICES : voiceChoice, choice: voiceChoice, locked };
+    if (now.voices !== shown.voices) {
+      try { twin.setVoices?.(now.voices); } catch (e) { console.error(e); }
+    }
+    const changed = now.voices !== shown.voices || now.choice !== shown.choice || now.locked !== shown.locked;
+    shown = now;
+    if (changed) emit("voices", { ...now });
+  }
 
   function apply(cc, v, source, upstream) {
     if (!range.has(cc)) return false;
@@ -75,6 +106,20 @@ export function createCtx({ schema, values = null, twin, transport = null, serve
     keys: null,
     get soundSource() { return soundOf(status); },
     get status() { return status; },
+    /** How many notes the twin sounds at once now: the S-1's 4 while one is linked, else the choice. */
+    get voices() { return shown.voices; },
+    /** The count chosen for this browser (4, 8 or 16). It applies whenever no S-1 is linked. */
+    get voiceChoice() { return voiceChoice; },
+    /** True while an S-1 is linked: the twin plays the S-1's 4 voices, whatever the choice. */
+    get voicesLocked() { return linked(); },
+    /** Choose 4, 8 or 16 voices. Returns true when the choice changed (anything else is ignored). */
+    setVoices(n) {
+      const v = Number(n);
+      if (!VOICE_CHOICES.includes(v) || v === voiceChoice) return false;
+      voiceChoice = v;
+      applyVoices();
+      return true;
+    },
 
     set(cc, v, { source = "ui" } = {}) {
       return apply(Number(cc), v, source, source !== "midi");
@@ -120,6 +165,7 @@ export function createCtx({ schema, values = null, twin, transport = null, serve
       next.sync = syncOf(next.link);
       status = next;
       if (before !== soundOf(status)) releaseAll(before);
+      applyVoices();
       emit("status", status);
     },
     /** A note that reached the S-1 by another path (a hardware keyboard): show it, send nothing. */
@@ -140,5 +186,6 @@ export function createCtx({ schema, values = null, twin, transport = null, serve
   }
 
   try { twin.setAll(Object.fromEntries(params)); } catch (e) { console.error(e); }
+  applyVoices();
   return ctx;
 }

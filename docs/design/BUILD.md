@@ -65,6 +65,8 @@ ctx.twin                   // the browser twin (2.3), always present
 ctx.server                 // null in static mode; else {api(method, path, body), ws(path) -> WebSocket}
 ctx.toast(msg)
 ctx.soundSource            // "s1" | "twin"
+ctx.voices                 // notes the twin sounds at once: 4 while an S-1 is linked, else the choice (4 | 8 | 16;
+                           // default 8 static, 4 cockpit); ctx.setVoices(n), ctx.on("voices", fn) (2026-10-04)
 ```
 
 View modules (`views/*.js`) export `{id, title, mount(root, ctx), unmount()}`. The shell (`app.js`) owns the
@@ -74,6 +76,8 @@ header, nav, drawers, and routing (`#synth`, `#sequencer`, `#match`). Views neve
 
 ```js
 const twin = await createTwin({curves})      // curves = twin/curves.json unless calibrated curves are served
+                                             // + {voices: 4 | 8 | 16 (default 4, the S-1's), destination: AudioNode}
+twin.voices / twin.setVoices(n)              // notes at once; a change rebuilds the voices (knobs kept)
 twin.set(cc, v) / twin.setAll({cc: v})       // CC space 0..127 — the same numbers the S-1 uses
 twin.noteOn(note, vel) / twin.noteOff(note) / twin.allOff()
 twin.resume()                                // call from a user gesture

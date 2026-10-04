@@ -9,16 +9,19 @@
 //   twin.taps.filter.getFloatTimeDomainData(buf)
 //   const st = await twin.renderStages({note: 48});   // deterministic stage buffers
 //                                                      // ({exact: true}: Twin.render itself)
+//   twin.setVoices(8);                         // 8 notes at once (the S-1 has 4)
 //
 // Honesty: the default curves are UNCALIBRATED stand-ins (twin.calibrated === false)
 // until the hardware session fits them. modeled(cc) is true only for the CCs twin.py
 // models (what the matcher can fit); audible(cc) is true for every control that changes
 // what the browser twin sounds like (the model, plus voice modes, Range, damper and the
-// effects). The Synth view dims only controls where audible(cc) is false.
+// effects). The Synth view dims only controls where audible(cc) is false. The voice
+// count is the same kind of browser extra: 4 like the S-1 unless the page asks for more.
 
-import { Engine, mergeCurves, modulators, renderNote } from './dsp.js';
+import { Engine, S1_VOICES, VOICE_COUNTS, mergeCurves, modulators, renderNote } from './dsp.js';
 import { FX_DEFAULTS, Fx, master } from './fx.js';
 
+export { S1_VOICES, VOICE_COUNTS };
 export const STAGES = ['osc', 'filter', 'amp', 'fx', 'out'];
 /**
  * Controls the browser plays around the model: portamento time / mode / switch (5, 31,
@@ -78,11 +81,23 @@ function rms(buf) {
   return Math.sqrt(s / buf.length);
 }
 
+/** A voice count the twin offers (VOICE_COUNTS), or a RangeError that says which ones are. */
+function checkVoices(n) {
+  const v = Number(n);
+  if (VOICE_COUNTS.includes(v)) return v;
+  const offered = `${VOICE_COUNTS.slice(0, -1).join(', ')} or ${VOICE_COUNTS.at(-1)}`;
+  throw new RangeError(`twin: voices must be ${offered}, not ${n}`);
+}
+
 /**
- * Build the twin. Options: {curves, context, latencyHint}. Call twin.resume() from a
- * user gesture before the first note (browsers start audio suspended).
+ * Build the twin. Options: {curves, context, latencyHint, voices, destination}.
+ * `voices`: how many notes sound at once, 4 (the S-1's own, the default), 8 or 16.
+ * `destination`: the node the 'out' stage plays into (default: the context's speakers).
+ * Call twin.resume() from a user gesture before the first note (browsers start audio
+ * suspended).
  */
-export async function createTwin({ curves, context, latencyHint = 'interactive' } = {}) {
+export async function createTwin({ curves, context, latencyHint = 'interactive', voices = S1_VOICES, destination } = {}) {
+  let nVoices = checkVoices(voices);
   const cv = await loadCurves(curves);
   const Ctx = globalThis.AudioContext || globalThis.webkitAudioContext;
   const ac = context || new Ctx({ latencyHint });
@@ -94,7 +109,7 @@ export async function createTwin({ curves, context, latencyHint = 'interactive' 
     numberOfInputs: 0,
     numberOfOutputs: STAGES.length,
     outputChannelCount: STAGES.map(() => 1),
-    processorOptions: { curves: cv, params },
+    processorOptions: { curves: cv, params, voices: nVoices },
   });
   const taps = {};
   STAGES.forEach((name, k) => {
@@ -104,7 +119,7 @@ export async function createTwin({ curves, context, latencyHint = 'interactive' 
     node.connect(an, k);
     taps[name] = an;
   });
-  node.connect(ac.destination, STAGES.indexOf('out'));
+  node.connect(destination || ac.destination, STAGES.indexOf('out'));
   const levelBuf = new Float32Array(taps.out.fftSize);
   let current = cv;
 
@@ -159,6 +174,20 @@ export async function createTwin({ curves, context, latencyHint = 'interactive' 
       current = mergeCurves(current, next);
       post({ type: 'curves', curves: current });
     },
+    /** How many notes sound at once: 4 (the S-1's), 8 or 16. */
+    get voices() {
+      return nVoices;
+    },
+    /**
+     * Play n notes at once (4, 8 or 16; anything else is a RangeError). The voices are
+     * rebuilt, like new curves: notes sounding now stop, and every knob keeps its value.
+     */
+    setVoices(n) {
+      const v = checkVoices(n);
+      if (v === nVoices) return;
+      nVoices = v;
+      post({ type: 'voices', voices: v });
+    },
 
     /** True if twin.py models this CC: what the matcher can fit. */
     modeled(cc) {
@@ -201,7 +230,7 @@ export async function createTwin({ curves, context, latencyHint = 'interactive' 
       const gateSec = Math.min(secs, Math.max(0, gate ?? secs * current.gate_fraction));
       const gateFraction = secs > 0 ? gateSec / secs : 0;
       const n = Math.max(1, Math.round(secs * sr));
-      const eng = new Engine({ sr, curves: current });
+      const eng = new Engine({ sr, curves: current, maxVoices: nVoices });
       eng.setAll(params);
       const specs = eng.voicesFor(Number(note));
       const sum = { osc: new Float64Array(n), filter: new Float64Array(n), amp: new Float64Array(n) };
@@ -248,8 +277,9 @@ export async function createTwin({ curves, context, latencyHint = 'interactive' 
       };
     },
 
-    /** Tear down the graph (and the context, if createTwin made it). */
+    /** Tear down the graph (and the context, if createTwin made it). The processor ends too. */
     async close() {
+      post({ type: 'stop' });
       node.disconnect();
       for (const an of Object.values(taps)) an.disconnect();
       node = null;

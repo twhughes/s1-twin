@@ -14,7 +14,9 @@ import pytest
 STATIC = Path(__file__).resolve().parent.parent / "synth" / "web" / "static"
 CHECKS = ["core/layout.check.mjs", "core/ctx.check.mjs", "core/transport.check.mjs",
           "core/shortcuts.check.mjs", "core/wav.check.mjs", "core/fit.check.mjs", "views/sequencer.check.mjs",
-          "views/match.check.mjs", "design/kit.check.mjs"]
+          "views/match.check.mjs", "design/kit.check.mjs",
+          "twin/voices.check.mjs",    # 4 / 8 / 16 voices: engine, worklet, createTwin, the page's S-1 rule
+          "core/opener-sync.check.mjs"]   # the music app's sync: values once, then each change, one way
 
 
 @pytest.mark.parametrize("check", CHECKS)
